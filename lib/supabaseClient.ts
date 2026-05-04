@@ -4,19 +4,27 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
 let cached: SupabaseClient | null = null;
 
+function readKey(): string | undefined {
+  // Supabase 新命名（sb_publishable_*）优先，兼容旧的 anon key。
+  return (
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  );
+}
+
 export function getSupabase(): SupabaseClient {
   if (cached) return cached;
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const key = readKey();
 
-  if (!url || !anonKey) {
+  if (!url || !key) {
     throw new Error(
-      "Supabase 环境变量未配置。请在 .env.local 设置 NEXT_PUBLIC_SUPABASE_URL 和 NEXT_PUBLIC_SUPABASE_ANON_KEY。",
+      "Supabase 环境变量未配置。请在 .env.local 设置 NEXT_PUBLIC_SUPABASE_URL 和 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY（或 NEXT_PUBLIC_SUPABASE_ANON_KEY）。",
     );
   }
 
-  cached = createClient(url, anonKey, {
+  cached = createClient(url, key, {
     auth: {
       persistSession: false,
       autoRefreshToken: false,
@@ -30,8 +38,5 @@ export function getSupabase(): SupabaseClient {
 }
 
 export function isSupabaseConfigured(): boolean {
-  return Boolean(
-    process.env.NEXT_PUBLIC_SUPABASE_URL &&
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-  );
+  return Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && readKey());
 }

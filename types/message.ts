@@ -13,5 +13,7 @@ export interface Message {
   longitude: number | null;
   address: string | null;
   map_url: string | null;
+  effect_id: string | null;
+  effect_caption: string | null;
   created_at: string;
 }

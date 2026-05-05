@@ -9,7 +9,7 @@ import ChatMessage from "@/components/ChatMessage";
 import EffectOverlay from "@/components/EffectOverlay";
 import EnvWarning from "@/components/EnvWarning";
 import { clearSession, loadSession, saveSession, type LocalSession } from "@/lib/authLocal";
-import { detectEffect, type Effect } from "@/lib/effects";
+import { effectFromColumns, transformForSending, type Effect } from "@/lib/effects";
 import { humanizeError } from "@/lib/errors";
 import { validateMember } from "@/lib/familyService";
 import { listMembers } from "@/lib/memberService";
@@ -107,8 +107,11 @@ export default function ChatPage() {
             isNew = true;
             return [...prev, incoming];
           });
-          if (isNew && incoming.message_type === "text") {
-            tryTriggerEffect(incoming.id, incoming.content);
+          if (isNew) {
+            tryTriggerEffect(
+              incoming.id,
+              effectFromColumns(incoming.effect_id, incoming.effect_caption),
+            );
           }
           // If the sender isn't in our member map yet (e.g. they just joined
           // and the family_members realtime event hasn't landed), refresh.
@@ -210,26 +213,40 @@ export default function ChatPage() {
         longitude: partial.longitude ?? null,
         address: partial.address ?? null,
         map_url: partial.map_url ?? null,
+        effect_id: partial.effect_id ?? null,
+        effect_caption: partial.effect_caption ?? null,
         created_at: new Date().toISOString(),
       };
       return [...prev, optimistic];
     });
   }
 
-  function tryTriggerEffect(messageId: string, content: string | null) {
+  function tryTriggerEffect(messageId: string, eff: Effect | null) {
+    if (!eff) return;
     if (triggeredEffectIdsRef.current.has(messageId)) return;
     triggeredEffectIdsRef.current.add(messageId);
-    const eff = detectEffect(content);
-    if (eff) setEffect(eff);
+    setEffect(eff);
   }
 
   async function handleSendText(text: string) {
     if (!session) return;
     setSending(true);
     try {
-      const id = await sendMessage(session, { type: "text", content: text });
-      pushOptimistic({ id, message_type: "text", content: text });
-      tryTriggerEffect(id, text);
+      const { content, effect: eff } = transformForSending(text);
+      const id = await sendMessage(session, {
+        type: "text",
+        content,
+        effect_id: eff?.id ?? null,
+        effect_caption: eff?.caption ?? null,
+      });
+      pushOptimistic({
+        id,
+        message_type: "text",
+        content,
+        effect_id: eff?.id ?? null,
+        effect_caption: eff?.caption ?? null,
+      });
+      tryTriggerEffect(id, eff);
     } catch (err) {
       alert(humanizeError(err));
     } finally {

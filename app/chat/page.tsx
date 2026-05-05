@@ -111,26 +111,24 @@ export default function ChatPage() {
         },
         (payload) => {
           const incoming = payload.new as Message;
-          let isNew = false;
           setMessages((prev) => {
             if (prev.some((m) => m.id === incoming.id)) return prev;
-            isNew = true;
             return [...prev, incoming];
           });
-          if (isNew) {
-            // Prefer the structured effect columns, but fall back to the
-            // legacy content-based detection for messages from older clients
-            // that still ship the raw #XXXX code in the text.
-            const eff =
-              effectFromColumns(
-                incoming.effect_id,
-                incoming.effect_caption,
-              ) ??
-              (incoming.message_type === "text"
-                ? detectEffect(incoming.content)
-                : null);
-            tryTriggerEffect(incoming.id, eff);
-          }
+          // Always attempt the effect — tryTriggerEffect dedupes by id via
+          // the ref, so re-runs (Realtime echo, polling) are safe. Doing
+          // this OUTSIDE the setMessages updater avoids React 18's batched
+          // updater scheduling, which kept the previous "isNew" closure
+          // false for subsequent triggers.
+          const eff =
+            effectFromColumns(
+              incoming.effect_id,
+              incoming.effect_caption,
+            ) ??
+            (incoming.message_type === "text"
+              ? detectEffect(incoming.content)
+              : null);
+          tryTriggerEffect(incoming.id, eff);
           // If the sender isn't in our member map yet (e.g. they just joined
           // and the family_members realtime event hasn't landed), refresh.
           if (

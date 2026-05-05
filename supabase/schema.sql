@@ -120,6 +120,7 @@ security definer
 set search_path = public, extensions
 language plpgsql
 as $$
+#variable_conflict use_column
 declare
   v_family_id uuid;
   v_code text;
@@ -190,6 +191,7 @@ security definer
 set search_path = public, extensions
 language plpgsql
 as $$
+#variable_conflict use_column
 declare
   v_family families%rowtype;
   v_member_id uuid;
@@ -210,7 +212,7 @@ begin
 
   select * into v_family
     from families
-   where family_code = upper(trim(p_family_code))
+   where families.family_code = upper(trim(p_family_code))
    limit 1;
 
   if not found then
@@ -223,10 +225,10 @@ begin
 
   if exists (
     select 1
-      from family_members
-     where family_id = v_family.id
-       and nickname = v_clean_nickname
-       and status = 'active'
+      from family_members fm
+     where fm.family_id = v_family.id
+       and fm.nickname = v_clean_nickname
+       and fm.status = 'active'
   ) then
     raise exception 'nickname_taken';
   end if;
@@ -274,6 +276,7 @@ security definer
 set search_path = public, extensions
 language plpgsql
 as $$
+#variable_conflict use_column
 begin
   return query
   select fm.id,

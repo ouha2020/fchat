@@ -12,7 +12,7 @@ export async function listMessages(
   const { data, error } = await sb
     .from("messages")
     .select(
-      "id, family_id, sender_member_id, message_type, content, image_url, audio_url, audio_duration_ms, latitude, longitude, address, map_url, created_at",
+      "id, family_id, sender_member_id, message_type, content, image_url, audio_url, audio_duration_ms, latitude, longitude, address, map_url, effect_id, effect_caption, created_at",
     )
     .eq("family_id", familyId)
     .order("created_at", { ascending: false })
@@ -31,6 +31,8 @@ interface SendMessageInput {
   longitude?: number | null;
   address?: string | null;
   map_url?: string | null;
+  effect_id?: string | null;
+  effect_caption?: string | null;
 }
 
 export async function sendMessage(
@@ -50,6 +52,8 @@ export async function sendMessage(
     p_longitude: input.longitude ?? null,
     p_address: input.address ?? null,
     p_map_url: input.map_url ?? null,
+    p_effect_id: input.effect_id ?? null,
+    p_effect_caption: input.effect_caption ?? null,
   });
   if (error) throw error;
   return data as string;

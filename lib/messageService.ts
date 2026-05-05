@@ -12,7 +12,7 @@ export async function listMessages(
   const { data, error } = await sb
     .from("messages")
     .select(
-      "id, family_id, sender_member_id, message_type, content, image_url, latitude, longitude, address, map_url, created_at",
+      "id, family_id, sender_member_id, message_type, content, image_url, audio_url, audio_duration_ms, latitude, longitude, address, map_url, created_at",
     )
     .eq("family_id", familyId)
     .order("created_at", { ascending: false })
@@ -25,6 +25,8 @@ interface SendMessageInput {
   type: MessageType;
   content?: string | null;
   image_url?: string | null;
+  audio_url?: string | null;
+  audio_duration_ms?: number | null;
   latitude?: number | null;
   longitude?: number | null;
   address?: string | null;
@@ -42,6 +44,8 @@ export async function sendMessage(
     p_message_type: input.type,
     p_content: input.content ?? null,
     p_image_url: input.image_url ?? null,
+    p_audio_url: input.audio_url ?? null,
+    p_audio_duration_ms: input.audio_duration_ms ?? null,
     p_latitude: input.latitude ?? null,
     p_longitude: input.longitude ?? null,
     p_address: input.address ?? null,
@@ -70,5 +74,34 @@ export async function uploadChatImage(
   if (error) throw error;
 
   const { data } = sb.storage.from("chat-images").getPublicUrl(path);
+  return data.publicUrl;
+}
+
+export async function uploadChatAudio(
+  familyId: string,
+  blob: Blob,
+  mimeType: string,
+): Promise<string> {
+  const sb = getSupabase();
+  const ext = mimeType.includes("webm")
+    ? "webm"
+    : mimeType.includes("mp4")
+      ? "m4a"
+      : mimeType.includes("ogg")
+        ? "ogg"
+        : "bin";
+  const path = `${familyId}/${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2, 8)}.${ext}`;
+
+  const { error } = await sb.storage
+    .from("chat-audios")
+    .upload(path, blob, {
+      contentType: mimeType || "audio/webm",
+      upsert: false,
+    });
+  if (error) throw error;
+
+  const { data } = sb.storage.from("chat-audios").getPublicUrl(path);
   return data.publicUrl;
 }

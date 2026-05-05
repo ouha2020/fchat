@@ -11,8 +11,14 @@ import { clearSession, loadSession, saveSession, type LocalSession } from "@/lib
 import { humanizeError } from "@/lib/errors";
 import { validateMember } from "@/lib/familyService";
 import { listMembers } from "@/lib/memberService";
-import { listMessages, sendMessage, uploadChatImage } from "@/lib/messageService";
+import {
+  listMessages,
+  sendMessage,
+  uploadChatAudio,
+  uploadChatImage,
+} from "@/lib/messageService";
 import { getCurrentLocation, createGoogleMapUrl } from "@/lib/locationService";
+import type { RecordingResult } from "@/lib/recordingService";
 import { getSupabase, isSupabaseConfigured } from "@/lib/supabaseClient";
 import type { FamilyMember } from "@/types/member";
 import type { Message } from "@/types/message";
@@ -189,6 +195,8 @@ export default function ChatPage() {
         message_type: partial.message_type,
         content: partial.content ?? null,
         image_url: partial.image_url ?? null,
+        audio_url: partial.audio_url ?? null,
+        audio_duration_ms: partial.audio_duration_ms ?? null,
         latitude: partial.latitude ?? null,
         longitude: partial.longitude ?? null,
         address: partial.address ?? null,
@@ -231,6 +239,39 @@ export default function ChatPage() {
         message_type: "image",
         image_url: url,
         content: "图片消息",
+      });
+    } catch (err) {
+      alert(humanizeError(err));
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function handleSendAudio(result: RecordingResult) {
+    if (!session) return;
+    if (result.blob.size > 12 * 1024 * 1024) {
+      alert("语音文件太大");
+      return;
+    }
+    setSending(true);
+    try {
+      const url = await uploadChatAudio(
+        session.family_id,
+        result.blob,
+        result.mimeType,
+      );
+      const id = await sendMessage(session, {
+        type: "audio",
+        audio_url: url,
+        audio_duration_ms: result.durationMs,
+        content: "语音消息",
+      });
+      pushOptimistic({
+        id,
+        message_type: "audio",
+        audio_url: url,
+        audio_duration_ms: result.durationMs,
+        content: "语音消息",
       });
     } catch (err) {
       alert(humanizeError(err));
@@ -339,6 +380,7 @@ export default function ChatPage() {
         onSendText={handleSendText}
         onPickImage={handlePickImage}
         onSendLocation={handleSendLocation}
+        onSendAudio={handleSendAudio}
       />
     </div>
   );

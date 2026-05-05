@@ -74,8 +74,9 @@ export default function ChatPage() {
   useEffect(() => {
     if (!session) return;
     const sb = getSupabase();
-    const channel = sb
-      .channel(`family-chat-${session.family_id}`)
+
+    const messagesChannel = sb
+      .channel(`messages:${session.family_id}`)
       .on(
         "postgres_changes",
         {
@@ -92,6 +93,15 @@ export default function ChatPage() {
           });
         },
       )
+      .subscribe((status) => {
+        if (typeof window !== "undefined") {
+          // eslint-disable-next-line no-console
+          console.log(`[realtime messages] ${status}`);
+        }
+      });
+
+    const membersChannel = sb
+      .channel(`members:${session.family_id}`)
       .on(
         "postgres_changes",
         {
@@ -108,8 +118,34 @@ export default function ChatPage() {
       )
       .subscribe();
 
+    // Fallback: poll messages every 8s in case Realtime drops events or the
+    // table is not in the supabase_realtime publication. Optimistic dedup
+    // by id keeps this safe.
+    const interval = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      listMessages(session.family_id)
+        .then((rows) => {
+          setMessages((prev) => {
+            const seen = new Set(prev.map((m) => m.id));
+            const merged = [...prev];
+            for (const r of rows) {
+              if (!seen.has(r.id)) merged.push(r);
+            }
+            merged.sort(
+              (a, b) =>
+                new Date(a.created_at).getTime() -
+                new Date(b.created_at).getTime(),
+            );
+            return merged;
+          });
+        })
+        .catch(() => undefined);
+    }, 8000);
+
     return () => {
-      sb.removeChannel(channel);
+      sb.removeChannel(messagesChannel);
+      sb.removeChannel(membersChannel);
+      window.clearInterval(interval);
     };
   }, [session]);
 

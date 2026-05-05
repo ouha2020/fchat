@@ -14,6 +14,7 @@ import { humanizeError } from "@/lib/errors";
 import { validateMember } from "@/lib/familyService";
 import { listMembers } from "@/lib/memberService";
 import {
+  deleteMessage,
   listMessages,
   sendMessage,
   uploadChatAudio,
@@ -125,6 +126,21 @@ export default function ChatPage() {
           }
         },
       )
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "messages",
+          filter: `family_id=eq.${session.family_id}`,
+        },
+        (payload) => {
+          const updated = payload.new as Message;
+          setMessages((prev) =>
+            prev.map((m) => (m.id === updated.id ? { ...m, ...updated } : m)),
+          );
+        },
+      )
       .subscribe((status) => {
         if (typeof window !== "undefined") {
           // eslint-disable-next-line no-console
@@ -215,10 +231,30 @@ export default function ChatPage() {
         map_url: partial.map_url ?? null,
         effect_id: partial.effect_id ?? null,
         effect_caption: partial.effect_caption ?? null,
+        deleted_at: null,
+        deleted_by_member_id: null,
         created_at: new Date().toISOString(),
       };
       return [...prev, optimistic];
     });
+  }
+
+  async function handleDeleteMessage(messageId: string) {
+    if (!session) return;
+    const ok = window.confirm("删除这条消息？所有家人将看到「消息已撤回」。");
+    if (!ok) return;
+    try {
+      await deleteMessage(session, messageId);
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === messageId
+            ? { ...m, deleted_at: new Date().toISOString(), deleted_by_member_id: session.member_id }
+            : m,
+        ),
+      );
+    } catch (err) {
+      alert(humanizeError(err));
+    }
   }
 
   function tryTriggerEffect(messageId: string, eff: Effect | null) {
@@ -401,14 +437,27 @@ export default function ChatPage() {
             还没有消息，发个招呼吧 👋
           </div>
         ) : (
-          messages.map((m) => (
-            <ChatMessage
-              key={m.id}
-              message={m}
-              sender={m.sender_member_id ? memberMap.get(m.sender_member_id) ?? null : null}
-              isMine={m.sender_member_id === session.member_id}
-            />
-          ))
+          messages.map((m) => {
+            const isMine = m.sender_member_id === session.member_id;
+            const canDelete =
+              m.message_type !== "system" &&
+              !m.deleted_at &&
+              (isMine || session.is_admin);
+            return (
+              <ChatMessage
+                key={m.id}
+                message={m}
+                sender={
+                  m.sender_member_id
+                    ? memberMap.get(m.sender_member_id) ?? null
+                    : null
+                }
+                isMine={isMine}
+                canDelete={canDelete}
+                onRequestDelete={canDelete ? handleDeleteMessage : undefined}
+              />
+            );
+          })
         )}
       </div>
 

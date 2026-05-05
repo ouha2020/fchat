@@ -52,8 +52,13 @@ create table if not exists messages (
   map_url text,
   effect_id text,
   effect_caption text,
+  deleted_at timestamptz,
+  deleted_by_member_id uuid references family_members(id) on delete set null,
   created_at timestamptz not null default now()
 );
+
+-- Realtime UPDATE events need full row payloads (e.g. for delete_message).
+alter table messages replica identity full;
 
 create index if not exists messages_family_id_created_at_idx
   on messages (family_id, created_at desc);
@@ -591,6 +596,64 @@ grant execute on function create_family(text, text, text, text) to anon, authent
 grant execute on function join_family(text, text, text) to anon, authenticated;
 grant execute on function validate_member(uuid, text) to anon, authenticated;
 grant execute on function send_message(uuid, text, text, text, text, text, int, double precision, double precision, text, text, text, text) to anon, authenticated;
+
+-- =====================================================================
+-- RPC: soft-delete a message (sender or family admin)
+-- =====================================================================
+
+create or replace function delete_message(
+  p_member_id uuid,
+  p_member_token text,
+  p_message_id uuid
+)
+returns void
+security definer
+set search_path = public, extensions
+language plpgsql
+as $$
+declare
+  v_msg messages%rowtype;
+  v_member family_members%rowtype;
+begin
+  select * into v_member
+    from family_members
+   where id = p_member_id
+     and member_token_hash = hash_secret(p_member_token)
+     and status = 'active';
+  if not found then
+    raise exception 'unauthorized';
+  end if;
+
+  select * into v_msg
+    from messages
+   where id = p_message_id
+     and family_id = v_member.family_id;
+  if not found then
+    raise exception 'message_not_found';
+  end if;
+
+  if v_msg.deleted_at is not null then
+    return;
+  end if;
+  if v_msg.message_type = 'system' then
+    raise exception 'cannot_delete_system';
+  end if;
+  if v_msg.sender_member_id <> p_member_id and not v_member.is_admin then
+    raise exception 'not_allowed';
+  end if;
+
+  update messages
+     set deleted_at = now(),
+         deleted_by_member_id = p_member_id
+   where id = p_message_id;
+
+  update family_members
+     set last_active_at = now()
+   where id = p_member_id;
+end;
+$$;
+
+grant execute on function delete_message(uuid, text, uuid) to anon, authenticated;
 grant execute on function update_family_name(uuid, text, text, text) to anon, authenticated;
 grant execute on function reset_family_code(uuid, text, text) to anon, authenticated;
 grant execute on function set_join_enabled(uuid, text, text, boolean) to anon, authenticated;

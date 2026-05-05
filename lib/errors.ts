@@ -13,6 +13,10 @@ const ERROR_MAP: Record<string, string> = {
   member_not_found: "成员不存在",
   cannot_remove_self: "不能移除自己",
   invalid_message_type: "不支持的消息类型",
+  invalid_effect_id: "不支持的特效",
+  message_not_found: "消息不存在",
+  cannot_delete_system: "系统消息不能删除",
+  not_allowed: "只能删除自己发的消息",
 };
 
 export function humanizeError(message: unknown): string {

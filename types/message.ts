@@ -1,4 +1,4 @@
-export type MessageType = "text" | "image" | "location" | "system";
+export type MessageType = "text" | "image" | "audio" | "location" | "system";
 
 export interface Message {
   id: string;
@@ -7,6 +7,8 @@ export interface Message {
   message_type: MessageType;
   content: string | null;
   image_url: string | null;
+  audio_url: string | null;
+  audio_duration_ms: number | null;
   latitude: number | null;
   longitude: number | null;
   address: string | null;

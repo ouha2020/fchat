@@ -2,6 +2,7 @@
 
 import RoleBadge from "./RoleBadge";
 import { formatTime } from "@/lib/format";
+import { formatDuration } from "@/lib/recordingService";
 import type { Message } from "@/types/message";
 import type { FamilyMember } from "@/types/member";
 
@@ -73,6 +74,28 @@ function Bubble({ message, isMine }: { message: Message; isMine: boolean }) {
           className="max-h-72 max-w-full rounded-2xl object-cover"
         />
       </a>
+    );
+  }
+
+  if (message.message_type === "audio" && message.audio_url) {
+    const seconds = message.audio_duration_ms
+      ? formatDuration(message.audio_duration_ms)
+      : null;
+    return (
+      <div
+        className={`${base} flex flex-col gap-1 min-w-[160px]`}
+      >
+        <div className="flex items-center gap-2">
+          <span>🎤</span>
+          <span className="text-xs">语音消息{seconds ? ` · ${seconds}` : ""}</span>
+        </div>
+        <audio
+          controls
+          preload="metadata"
+          src={message.audio_url}
+          className="w-full"
+        />
+      </div>
     );
   }
 

@@ -40,10 +40,12 @@ create table if not exists messages (
   family_id uuid not null references families(id) on delete cascade,
   sender_member_id uuid references family_members(id) on delete set null,
   message_type text not null check (
-    message_type in ('text', 'image', 'location', 'system')
+    message_type in ('text', 'image', 'audio', 'location', 'system')
   ),
   content text,
   image_url text,
+  audio_url text,
+  audio_duration_ms int,
   latitude double precision,
   longitude double precision,
   address text,
@@ -312,6 +314,8 @@ create or replace function send_message(
   p_message_type text,
   p_content text default null,
   p_image_url text default null,
+  p_audio_url text default null,
+  p_audio_duration_ms int default null,
   p_latitude double precision default null,
   p_longitude double precision default null,
   p_address text default null,
@@ -326,7 +330,7 @@ declare
   v_family_id uuid;
   v_message_id uuid;
 begin
-  if p_message_type not in ('text', 'image', 'location') then
+  if p_message_type not in ('text', 'image', 'audio', 'location') then
     raise exception 'invalid_message_type';
   end if;
 
@@ -342,11 +346,13 @@ begin
 
   insert into messages (
     family_id, sender_member_id, message_type,
-    content, image_url, latitude, longitude, address, map_url
+    content, image_url, audio_url, audio_duration_ms,
+    latitude, longitude, address, map_url
   )
   values (
     v_family_id, p_member_id, p_message_type,
-    p_content, p_image_url, p_latitude, p_longitude, p_address, p_map_url
+    p_content, p_image_url, p_audio_url, p_audio_duration_ms,
+    p_latitude, p_longitude, p_address, p_map_url
   )
   returning id into v_message_id;
 
@@ -574,7 +580,7 @@ $$;
 grant execute on function create_family(text, text, text, text) to anon, authenticated;
 grant execute on function join_family(text, text, text) to anon, authenticated;
 grant execute on function validate_member(uuid, text) to anon, authenticated;
-grant execute on function send_message(uuid, text, text, text, text, double precision, double precision, text, text) to anon, authenticated;
+grant execute on function send_message(uuid, text, text, text, text, text, int, double precision, double precision, text, text) to anon, authenticated;
 grant execute on function update_family_name(uuid, text, text, text) to anon, authenticated;
 grant execute on function reset_family_code(uuid, text, text) to anon, authenticated;
 grant execute on function set_join_enabled(uuid, text, text, boolean) to anon, authenticated;
@@ -657,3 +663,19 @@ create policy "chat-images anon upload"
   on storage.objects for insert
   to anon, authenticated
   with check (bucket_id = 'chat-images');
+
+insert into storage.buckets (id, name, public)
+values ('chat-audios', 'chat-audios', true)
+on conflict (id) do nothing;
+
+drop policy if exists "chat-audios public read" on storage.objects;
+create policy "chat-audios public read"
+  on storage.objects for select
+  to anon, authenticated
+  using (bucket_id = 'chat-audios');
+
+drop policy if exists "chat-audios anon upload" on storage.objects;
+create policy "chat-audios anon upload"
+  on storage.objects for insert
+  to anon, authenticated
+  with check (bucket_id = 'chat-audios');

@@ -6,8 +6,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import ChatInput from "@/components/ChatInput";
 import ChatMessage from "@/components/ChatMessage";
+import EffectOverlay from "@/components/EffectOverlay";
 import EnvWarning from "@/components/EnvWarning";
 import { clearSession, loadSession, saveSession, type LocalSession } from "@/lib/authLocal";
+import { detectEffect, type Effect } from "@/lib/effects";
 import { humanizeError } from "@/lib/errors";
 import { validateMember } from "@/lib/familyService";
 import { listMembers } from "@/lib/memberService";
@@ -36,6 +38,8 @@ export default function ChatPage() {
   useEffect(() => {
     membersRef.current = members;
   }, [members]);
+  const [effect, setEffect] = useState<Effect | null>(null);
+  const triggeredEffectIdsRef = useRef<Set<string>>(new Set());
 
   // Bootstrap: validate session, then load data.
   useEffect(() => {
@@ -97,10 +101,15 @@ export default function ChatPage() {
         },
         (payload) => {
           const incoming = payload.new as Message;
+          let isNew = false;
           setMessages((prev) => {
             if (prev.some((m) => m.id === incoming.id)) return prev;
+            isNew = true;
             return [...prev, incoming];
           });
+          if (isNew && incoming.message_type === "text") {
+            tryTriggerEffect(incoming.id, incoming.content);
+          }
           // If the sender isn't in our member map yet (e.g. they just joined
           // and the family_members realtime event hasn't landed), refresh.
           if (
@@ -207,12 +216,20 @@ export default function ChatPage() {
     });
   }
 
+  function tryTriggerEffect(messageId: string, content: string | null) {
+    if (triggeredEffectIdsRef.current.has(messageId)) return;
+    triggeredEffectIdsRef.current.add(messageId);
+    const eff = detectEffect(content);
+    if (eff) setEffect(eff);
+  }
+
   async function handleSendText(text: string) {
     if (!session) return;
     setSending(true);
     try {
       const id = await sendMessage(session, { type: "text", content: text });
       pushOptimistic({ id, message_type: "text", content: text });
+      tryTriggerEffect(id, text);
     } catch (err) {
       alert(humanizeError(err));
     } finally {
@@ -334,6 +351,9 @@ export default function ChatPage() {
 
   return (
     <div className="flex h-[100dvh] flex-col">
+      {effect ? (
+        <EffectOverlay effect={effect} onDone={() => setEffect(null)} />
+      ) : null}
       <header className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3">
         <div>
           <div className="text-sm text-slate-500">家庭</div>

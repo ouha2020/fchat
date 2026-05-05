@@ -93,6 +93,7 @@ create or replace function hash_secret(secret text)
 returns text
 language sql
 immutable
+set search_path = public, extensions
 as $$
   select encode(digest(secret, 'sha256'), 'hex');
 $$;
@@ -116,7 +117,7 @@ returns table (
   is_admin boolean
 )
 security definer
-set search_path = public
+set search_path = public, extensions
 language plpgsql
 as $$
 declare
@@ -186,7 +187,7 @@ returns table (
   is_admin boolean
 )
 security definer
-set search_path = public
+set search_path = public, extensions
 language plpgsql
 as $$
 declare
@@ -270,7 +271,7 @@ returns table (
   is_admin boolean
 )
 security definer
-set search_path = public
+set search_path = public, extensions
 language plpgsql
 as $$
 begin
@@ -315,7 +316,7 @@ create or replace function send_message(
 )
 returns uuid
 security definer
-set search_path = public
+set search_path = public, extensions
 language plpgsql
 as $$
 declare
@@ -401,7 +402,7 @@ create or replace function update_family_name(
 )
 returns void
 security definer
-set search_path = public
+set search_path = public, extensions
 language plpgsql
 as $$
 declare
@@ -430,7 +431,7 @@ create or replace function reset_family_code(
 )
 returns text
 security definer
-set search_path = public
+set search_path = public, extensions
 language plpgsql
 as $$
 declare
@@ -460,7 +461,7 @@ create or replace function set_join_enabled(
 )
 returns void
 security definer
-set search_path = public
+set search_path = public, extensions
 language plpgsql
 as $$
 declare
@@ -491,7 +492,7 @@ create or replace function remove_member(
 )
 returns void
 security definer
-set search_path = public
+set search_path = public, extensions
 language plpgsql
 as $$
 declare
@@ -533,7 +534,7 @@ create or replace function leave_family(
 )
 returns void
 security definer
-set search_path = public
+set search_path = public, extensions
 language plpgsql
 as $$
 declare

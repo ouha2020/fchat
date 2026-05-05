@@ -26,6 +26,10 @@ export default function ChatPage() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const membersRef = useRef<FamilyMember[]>([]);
+  useEffect(() => {
+    membersRef.current = members;
+  }, [members]);
 
   // Bootstrap: validate session, then load data.
   useEffect(() => {
@@ -91,6 +95,16 @@ export default function ChatPage() {
             if (prev.some((m) => m.id === incoming.id)) return prev;
             return [...prev, incoming];
           });
+          // If the sender isn't in our member map yet (e.g. they just joined
+          // and the family_members realtime event hasn't landed), refresh.
+          if (
+            incoming.sender_member_id &&
+            !membersRef.current.some((m) => m.id === incoming.sender_member_id)
+          ) {
+            listMembers(session.family_id)
+              .then(setMembers)
+              .catch(() => undefined);
+          }
         },
       )
       .subscribe((status) => {

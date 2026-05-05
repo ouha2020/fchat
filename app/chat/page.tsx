@@ -9,7 +9,12 @@ import ChatMessage from "@/components/ChatMessage";
 import EffectOverlay from "@/components/EffectOverlay";
 import EnvWarning from "@/components/EnvWarning";
 import { clearSession, loadSession, saveSession, type LocalSession } from "@/lib/authLocal";
-import { effectFromColumns, transformForSending, type Effect } from "@/lib/effects";
+import {
+  detectEffect,
+  effectFromColumns,
+  transformForSending,
+  type Effect,
+} from "@/lib/effects";
 import { humanizeError } from "@/lib/errors";
 import { validateMember } from "@/lib/familyService";
 import { listMembers } from "@/lib/memberService";
@@ -109,10 +114,18 @@ export default function ChatPage() {
             return [...prev, incoming];
           });
           if (isNew) {
-            tryTriggerEffect(
-              incoming.id,
-              effectFromColumns(incoming.effect_id, incoming.effect_caption),
-            );
+            // Prefer the structured effect columns, but fall back to the
+            // legacy content-based detection for messages from older clients
+            // that still ship the raw #XXXX code in the text.
+            const eff =
+              effectFromColumns(
+                incoming.effect_id,
+                incoming.effect_caption,
+              ) ??
+              (incoming.message_type === "text"
+                ? detectEffect(incoming.content)
+                : null);
+            tryTriggerEffect(incoming.id, eff);
           }
           // If the sender isn't in our member map yet (e.g. they just joined
           // and the family_members realtime event hasn't landed), refresh.

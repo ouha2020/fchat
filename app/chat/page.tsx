@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import ChatInput from "@/components/ChatInput";
 import ChatMessage from "@/components/ChatMessage";
@@ -44,8 +44,12 @@ export default function ChatPage() {
   useEffect(() => {
     membersRef.current = members;
   }, [members]);
-  const [effect, setEffect] = useState<Effect | null>(null);
+  const [effectShow, setEffectShow] = useState<{
+    effect: Effect;
+    key: string;
+  } | null>(null);
   const triggeredEffectIdsRef = useRef<Set<string>>(new Set());
+  const handleEffectDone = useCallback(() => setEffectShow(null), []);
 
   // Bootstrap: validate session, then load data.
   useEffect(() => {
@@ -274,7 +278,10 @@ export default function ChatPage() {
     if (!eff) return;
     if (triggeredEffectIdsRef.current.has(messageId)) return;
     triggeredEffectIdsRef.current.add(messageId);
-    setEffect(eff);
+    // Unique key per trigger forces React to unmount the previous overlay
+    // so the CSS keyframes restart from 0 — otherwise the second hit would
+    // reuse particles that have already animated off-screen.
+    setEffectShow({ effect: eff, key: `${messageId}-${Date.now()}` });
   }
 
   async function handleSendText(text: string) {
@@ -417,8 +424,12 @@ export default function ChatPage() {
 
   return (
     <div className="flex h-[100dvh] flex-col">
-      {effect ? (
-        <EffectOverlay effect={effect} onDone={() => setEffect(null)} />
+      {effectShow ? (
+        <EffectOverlay
+          key={effectShow.key}
+          effect={effectShow.effect}
+          onDone={handleEffectDone}
+        />
       ) : null}
       <header className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3">
         <div>

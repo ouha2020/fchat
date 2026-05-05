@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 import type { Effect, EffectId } from "@/lib/effects";
 
@@ -98,10 +98,17 @@ export default function EffectOverlay({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effect.id]);
 
+  // Keep the latest onDone in a ref so reference changes from the parent
+  // don't reset the auto-dismiss timer.
+  const onDoneRef = useRef(onDone);
   useEffect(() => {
-    const t = window.setTimeout(onDone, cfg.durationMs);
+    onDoneRef.current = onDone;
+  }, [onDone]);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => onDoneRef.current(), cfg.durationMs);
     return () => window.clearTimeout(t);
-  }, [cfg.durationMs, onDone]);
+  }, [cfg.durationMs]);
 
   return (
     <button

@@ -46,3 +46,33 @@ body {
 .card {
   @apply rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-100;
 }
+
+@keyframes effect-float {
+  0% {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate3d(var(--drift, 0), -110vh, 0)
+      rotate(var(--rotate, 0deg));
+    opacity: 0;
+  }
+}
+
+@keyframes effect-pop {
+  0% {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.1);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}

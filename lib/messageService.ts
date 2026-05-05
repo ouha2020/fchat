@@ -12,7 +12,7 @@ export async function listMessages(
   const { data, error } = await sb
     .from("messages")
     .select(
-      "id, family_id, sender_member_id, message_type, content, image_url, audio_url, audio_duration_ms, latitude, longitude, address, map_url, effect_id, effect_caption, created_at",
+      "id, family_id, sender_member_id, message_type, content, image_url, audio_url, audio_duration_ms, latitude, longitude, address, map_url, effect_id, effect_caption, deleted_at, deleted_by_member_id, created_at",
     )
     .eq("family_id", familyId)
     .order("created_at", { ascending: false })
@@ -79,6 +79,19 @@ export async function uploadChatImage(
 
   const { data } = sb.storage.from("chat-images").getPublicUrl(path);
   return data.publicUrl;
+}
+
+export async function deleteMessage(
+  session: LocalSession,
+  messageId: string,
+): Promise<void> {
+  const sb = getSupabase();
+  const { error } = await sb.rpc("delete_message", {
+    p_member_id: session.member_id,
+    p_member_token: session.member_token,
+    p_message_id: messageId,
+  });
+  if (error) throw error;
 }
 
 export async function uploadChatAudio(

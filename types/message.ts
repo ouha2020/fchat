@@ -15,5 +15,7 @@ export interface Message {
   map_url: string | null;
   effect_id: string | null;
   effect_caption: string | null;
+  deleted_at: string | null;
+  deleted_by_member_id: string | null;
   created_at: string;
 }

@@ -627,6 +627,14 @@ begin
   ) then
     execute 'alter publication supabase_realtime add table messages';
   end if;
+  if not exists (
+    select 1
+      from pg_publication_tables
+     where pubname = 'supabase_realtime'
+       and tablename = 'family_members'
+  ) then
+    execute 'alter publication supabase_realtime add table family_members';
+  end if;
 end
 $$;
 

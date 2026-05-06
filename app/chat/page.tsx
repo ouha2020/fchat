@@ -537,7 +537,7 @@ export default function ChatPage() {
           {notifPerm !== "unsupported" ? (
             <button
               type="button"
-              className="btn-ghost h-9 px-2 text-base"
+              className="btn-ghost h-11 w-11 px-0 text-2xl leading-none"
               aria-label={
                 notifPerm === "granted" ? "已开启系统通知" : "开启系统通知"
               }
@@ -553,10 +553,10 @@ export default function ChatPage() {
               {notifPerm === "granted" ? "🔔" : "🔕"}
             </button>
           ) : null}
-          <Link href="/members" className="btn-ghost h-9 px-3 text-sm">
+          <Link href="/members" className="btn-ghost h-11 px-3 text-base">
             成员
           </Link>
-          <Link href="/settings" className="btn-ghost h-9 px-3 text-sm">
+          <Link href="/settings" className="btn-ghost h-11 px-3 text-base">
             设置
           </Link>
         </div>

@@ -99,7 +99,7 @@ export default function ChatInput({
         <div className="flex items-center gap-2">
           <button
             type="button"
-            className="btn-ghost h-11 w-11 px-0 text-xl"
+            className="btn-ghost h-12 w-12 px-0 text-2xl leading-none"
             aria-label="取消录音"
             onClick={handleCancelRecording}
           >
@@ -139,7 +139,7 @@ export default function ChatInput({
         />
         <button
           type="button"
-          className="btn-ghost h-11 w-11 px-0 text-xl"
+          className="btn-ghost h-12 w-12 px-0 text-3xl leading-none"
           aria-label="发送图片"
           disabled={disabled || sending}
           onClick={() => fileRef.current?.click()}
@@ -148,7 +148,7 @@ export default function ChatInput({
         </button>
         <button
           type="button"
-          className="btn-ghost h-11 w-11 px-0 text-xl"
+          className="btn-ghost h-12 w-12 px-0 text-3xl leading-none"
           aria-label="发送位置"
           disabled={disabled || sending}
           onClick={() => onSendLocation()}
@@ -157,7 +157,7 @@ export default function ChatInput({
         </button>
         <button
           type="button"
-          className="btn-ghost h-11 w-11 px-0 text-xl"
+          className="btn-ghost h-12 w-12 px-0 text-3xl leading-none"
           aria-label="录制语音"
           disabled={disabled || sending}
           onClick={() => void handleStartRecording()}

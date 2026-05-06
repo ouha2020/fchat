@@ -538,7 +538,7 @@ export default function ChatPage() {
           {notifPerm !== "unsupported" ? (
             <button
               type="button"
-              className="btn-ghost h-9 w-9 px-0"
+              className="btn-ghost h-12 w-12 px-0"
               aria-label={
                 notifPerm === "granted" ? "已开启系统通知" : "开启系统通知"
               }
@@ -558,38 +558,38 @@ export default function ChatPage() {
                     : "/ui-icons/notify-off.png"
                 }
                 alt=""
-                width={28}
-                height={28}
-                className="h-7 w-7 object-contain"
+                width={36}
+                height={36}
+                className="h-9 w-9 object-contain"
               />
             </button>
           ) : null}
           <Link
             href="/members"
-            className="btn-ghost h-9 w-9 px-0"
+            className="btn-ghost h-12 w-12 px-0"
             aria-label="成员"
             title="成员"
           >
             <Image
               src="/ui-icons/members.png"
               alt=""
-              width={28}
-              height={28}
-              className="h-7 w-7 object-contain"
+              width={36}
+              height={36}
+              className="h-9 w-9 object-contain"
             />
           </Link>
           <Link
             href="/settings"
-            className="btn-ghost h-9 w-9 px-0"
+            className="btn-ghost h-12 w-12 px-0"
             aria-label="设置"
             title="设置"
           >
             <Image
               src="/ui-icons/settings.png"
               alt=""
-              width={28}
-              height={28}
-              className="h-7 w-7 object-contain"
+              width={36}
+              height={36}
+              className="h-9 w-9 object-contain"
             />
           </Link>
         </div>

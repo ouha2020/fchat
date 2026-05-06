@@ -55,6 +55,14 @@ export default function ChatPage() {
   const triggeredEffectIdsRef = useRef<Set<string>>(new Set());
   const handleEffectDone = useCallback(() => setEffectShow(null), []);
 
+  const handleReplayEffect = useCallback((m: Message) => {
+    const eff = effectFromColumns(m.effect_id, m.effect_caption);
+    if (!eff) return;
+    // Brand new key forces EffectOverlay to unmount + remount, restarting
+    // the CSS keyframes from frame 0 (same trick as the initial trigger).
+    setEffectShow({ effect: eff, key: `replay-${m.id}-${Date.now()}` });
+  }, []);
+
   // Notifications: in-app sound + title badge + browser notification.
   const [unreadCount, setUnreadCount] = useState(0);
   const [notifPerm, setNotifPerm] = useState<NotificationPerm>("default");
@@ -587,6 +595,7 @@ export default function ChatPage() {
                 isMine={isMine}
                 canDelete={canDelete}
                 onRequestDelete={canDelete ? handleDeleteMessage : undefined}
+                onReplayEffect={handleReplayEffect}
               />
             );
           })

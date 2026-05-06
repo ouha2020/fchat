@@ -150,14 +150,12 @@ export async function setJoinEnabled(
 
 export async function removeMember(
   session: LocalSession,
-  adminPassword: string,
   targetMemberId: string,
 ): Promise<void> {
   const sb = getSupabase();
   const { error } = await sb.rpc("remove_member", {
     p_member_id: session.member_id,
     p_member_token: session.member_token,
-    p_admin_password: adminPassword,
     p_target_member_id: targetMemberId,
   });
   if (error) throw error;

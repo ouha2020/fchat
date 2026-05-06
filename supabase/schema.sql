@@ -28,12 +28,20 @@ create table if not exists family_members (
   status text not null default 'active' check (status in ('active', 'removed')),
   last_active_at timestamptz not null default now(),
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  unique (family_id, nickname)
+  updated_at timestamptz not null default now()
 );
+
+-- Nicknames must be unique only among active members so that a removed
+-- member can be re-invited with the same nickname later.
+create unique index if not exists family_members_active_nickname_idx
+  on family_members (family_id, nickname)
+  where status = 'active';
 
 create index if not exists family_members_family_id_idx
   on family_members (family_id);
+
+-- Realtime UPDATE events (used for kicking removed members) need full row payloads.
+alter table family_members replica identity full;
 
 create table if not exists messages (
   id uuid primary key default gen_random_uuid(),
@@ -511,7 +519,6 @@ $$;
 create or replace function remove_member(
   p_member_id uuid,
   p_member_token text,
-  p_admin_password text,
   p_target_member_id uuid
 )
 returns void
@@ -520,22 +527,31 @@ set search_path = public, extensions
 language plpgsql
 as $$
 declare
-  v_family_id uuid;
+  v_caller family_members%rowtype;
   v_target family_members%rowtype;
 begin
-  v_family_id := require_admin(p_member_id, p_member_token, p_admin_password);
+  select * into v_caller
+    from family_members
+   where id = p_member_id
+     and member_token_hash = hash_secret(p_member_token)
+     and status = 'active';
+  if not found then
+    raise exception 'unauthorized';
+  end if;
+  if not v_caller.is_admin then
+    raise exception 'not_admin';
+  end if;
+  if v_caller.id = p_target_member_id then
+    raise exception 'cannot_remove_self';
+  end if;
 
   select * into v_target
     from family_members
    where id = p_target_member_id
-     and family_id = v_family_id;
-
+     and family_id = v_caller.family_id
+     and status = 'active';
   if not found then
     raise exception 'member_not_found';
-  end if;
-
-  if v_target.id = p_member_id then
-    raise exception 'cannot_remove_self';
   end if;
 
   update family_members
@@ -545,7 +561,7 @@ begin
 
   insert into messages (family_id, message_type, content)
   values (
-    v_family_id,
+    v_caller.family_id,
     'system',
     v_target.nickname || ' 已被移出家庭'
   );
@@ -657,7 +673,7 @@ grant execute on function delete_message(uuid, text, uuid) to anon, authenticate
 grant execute on function update_family_name(uuid, text, text, text) to anon, authenticated;
 grant execute on function reset_family_code(uuid, text, text) to anon, authenticated;
 grant execute on function set_join_enabled(uuid, text, text, boolean) to anon, authenticated;
-grant execute on function remove_member(uuid, text, text, uuid) to anon, authenticated;
+grant execute on function remove_member(uuid, text, uuid) to anon, authenticated;
 grant execute on function leave_family(uuid, text) to anon, authenticated;
 
 -- =====================================================================

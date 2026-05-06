@@ -10,7 +10,7 @@ import { humanizeError } from "@/lib/errors";
 import { removeMember } from "@/lib/familyService";
 import { formatRelative } from "@/lib/format";
 import { listMembers } from "@/lib/memberService";
-import { isSupabaseConfigured } from "@/lib/supabaseClient";
+import { getSupabase, isSupabaseConfigured } from "@/lib/supabaseClient";
 import type { FamilyMember } from "@/types/member";
 
 export default function MembersPage() {
@@ -37,17 +37,45 @@ export default function MembersPage() {
       .finally(() => setLoading(false));
   }, [router]);
 
+  // Live-sync the member list so other admins see removals immediately.
+  useEffect(() => {
+    if (!session) return;
+    const sb = getSupabase();
+    const channel = sb
+      .channel(`members-page:${session.family_id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "family_members",
+          filter: `family_id=eq.${session.family_id}`,
+        },
+        () => {
+          listMembers(session.family_id)
+            .then(setMembers)
+            .catch(() => undefined);
+        },
+      )
+      .subscribe();
+    return () => {
+      sb.removeChannel(channel);
+    };
+  }, [session]);
+
   async function handleRemove(target: FamilyMember) {
     if (!session) return;
     if (target.id === session.member_id) {
       alert("不能移除自己");
       return;
     }
-    const password = window.prompt(`输入管理员密码以移除「${target.nickname}」`);
-    if (!password) return;
+    const ok = window.confirm(
+      `确定将「${target.nickname}」移出家庭？\n该成员将无法再访问家庭聊天，可重新邀请加入。`,
+    );
+    if (!ok) return;
     setBusyId(target.id);
     try {
-      await removeMember(session, password, target.id);
+      await removeMember(session, target.id);
       setMembers((prev) => prev.filter((m) => m.id !== target.id));
     } catch (err) {
       alert(humanizeError(err));

@@ -256,10 +256,22 @@ export default function ChatPage() {
           table: "family_members",
           filter: `family_id=eq.${session.family_id}`,
         },
-        () => {
+        (payload) => {
           listMembers(session.family_id)
             .then(setMembers)
             .catch(() => undefined);
+          // If my own row got flipped to status='removed', kick myself out.
+          const newRow = payload.new as FamilyMember | undefined;
+          if (
+            payload.eventType === "UPDATE" &&
+            newRow &&
+            newRow.id === session.member_id &&
+            newRow.status === "removed"
+          ) {
+            clearSession();
+            alert("你已被移出该家庭");
+            router.replace("/");
+          }
         },
       )
       .subscribe();
@@ -293,7 +305,7 @@ export default function ChatPage() {
       sb.removeChannel(membersChannel);
       window.clearInterval(interval);
     };
-  }, [session]);
+  }, [session, router]);
 
   // Auto scroll to bottom on new messages.
   useEffect(() => {

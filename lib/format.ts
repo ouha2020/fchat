@@ -10,9 +10,10 @@ export function formatTime(iso: string): string {
   const mm = date.getMinutes().toString().padStart(2, "0");
   if (sameDay) return `${hh}:${mm}`;
 
+  const y = date.getFullYear();
   const m = (date.getMonth() + 1).toString().padStart(2, "0");
   const d = date.getDate().toString().padStart(2, "0");
-  return `${m}-${d} ${hh}:${mm}`;
+  return `${y}年${m}月${d}日 ${hh}:${mm}`;
 }
 
 export function formatRelative(iso: string): string {

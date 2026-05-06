@@ -15,6 +15,7 @@ interface Props {
   isMine: boolean;
   canDelete?: boolean;
   onRequestDelete?: (messageId: string) => void;
+  onReplayEffect?: (message: Message) => void;
 }
 
 export default function ChatMessage({
@@ -23,6 +24,7 @@ export default function ChatMessage({
   isMine,
   canDelete,
   onRequestDelete,
+  onReplayEffect,
 }: Props) {
   if (message.message_type === "system") {
     return (
@@ -73,6 +75,11 @@ export default function ChatMessage({
           isMine={isMine}
           canDelete={!!canDelete && !!onRequestDelete}
           onRequestDelete={() => onRequestDelete?.(message.id)}
+          onReplayEffect={
+            message.effect_id && onReplayEffect
+              ? () => onReplayEffect(message)
+              : undefined
+          }
         />
       </div>
     </div>
@@ -134,11 +141,13 @@ function Bubble({
   isMine,
   canDelete,
   onRequestDelete,
+  onReplayEffect,
 }: {
   message: Message;
   isMine: boolean;
   canDelete: boolean;
   onRequestDelete: () => void;
+  onReplayEffect?: () => void;
 }) {
   const longPressHandlers = useLongPress(onRequestDelete, canDelete);
   const longPressClass = canDelete
@@ -224,12 +233,22 @@ function Bubble({
     );
   }
 
+  const isEffect = !!message.effect_id && !!onReplayEffect;
+  const effectClass = isEffect ? "cursor-pointer hover:opacity-90" : "";
+
   return (
     <div
       {...longPressHandlers}
-      className={`${base} whitespace-pre-wrap break-words ${longPressClass}`}
+      onClick={isEffect ? onReplayEffect : undefined}
+      title={isEffect ? "点击重新播放特效" : undefined}
+      className={`${base} flex items-center gap-1.5 whitespace-pre-wrap break-words ${longPressClass} ${effectClass}`}
     >
-      {message.content}
+      <span>{message.content}</span>
+      {isEffect ? (
+        <span aria-hidden className="text-xs opacity-70">
+          ✨
+        </span>
+      ) : null}
     </div>
   );
 }

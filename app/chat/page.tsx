@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -8,7 +9,6 @@ import ChatInput from "@/components/ChatInput";
 import ChatMessage from "@/components/ChatMessage";
 import EffectOverlay from "@/components/EffectOverlay";
 import EnvWarning from "@/components/EnvWarning";
-import UiIcon from "@/components/UiIcon";
 import { clearSession, loadSession, saveSession, type LocalSession } from "@/lib/authLocal";
 import { effectFromColumns, transformForSending, type Effect, detectEffect } from "@/lib/effects";
 import { humanizeError } from "@/lib/errors";
@@ -538,9 +538,7 @@ export default function ChatPage() {
           {notifPerm !== "unsupported" ? (
             <button
               type="button"
-              className={`btn-ghost h-9 w-9 px-0 ${
-                notifPerm === "granted" ? "text-amber-500" : "text-slate-500"
-              }`}
+              className="btn-ghost h-9 w-9 px-0"
               aria-label={
                 notifPerm === "granted" ? "已开启系统通知" : "开启系统通知"
               }
@@ -553,9 +551,16 @@ export default function ChatPage() {
               }
               onClick={handleEnableNotifications}
             >
-              <UiIcon
-                name={notifPerm === "granted" ? "bell" : "bell-off"}
-                className="h-5 w-5"
+              <Image
+                src={
+                  notifPerm === "granted"
+                    ? "/ui-icons/notify-on.png"
+                    : "/ui-icons/notify-off.png"
+                }
+                alt=""
+                width={28}
+                height={28}
+                className="h-7 w-7 object-contain"
               />
             </button>
           ) : null}
@@ -565,7 +570,13 @@ export default function ChatPage() {
             aria-label="成员"
             title="成员"
           >
-            <UiIcon name="users" className="h-5 w-5" />
+            <Image
+              src="/ui-icons/members.png"
+              alt=""
+              width={28}
+              height={28}
+              className="h-7 w-7 object-contain"
+            />
           </Link>
           <Link
             href="/settings"
@@ -573,7 +584,13 @@ export default function ChatPage() {
             aria-label="设置"
             title="设置"
           >
-            <UiIcon name="settings" className="h-5 w-5" />
+            <Image
+              src="/ui-icons/settings.png"
+              alt=""
+              width={28}
+              height={28}
+              className="h-7 w-7 object-contain"
+            />
           </Link>
         </div>
       </header>

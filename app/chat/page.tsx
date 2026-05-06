@@ -468,10 +468,6 @@ export default function ChatPage() {
     setSending(true);
     try {
       const fix = await getCurrentLocation();
-      const ok = window.confirm(
-        `是否发送当前位置？\n纬度：${fix.latitude.toFixed(5)}\n经度：${fix.longitude.toFixed(5)}`,
-      );
-      if (!ok) return;
       const mapUrl = createGoogleMapUrl(fix.latitude, fix.longitude);
       const id = await sendMessage(session, {
         type: "location",

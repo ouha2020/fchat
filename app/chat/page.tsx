@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -537,7 +538,7 @@ export default function ChatPage() {
           {notifPerm !== "unsupported" ? (
             <button
               type="button"
-              className="btn-ghost h-11 w-11 px-0 text-2xl leading-none"
+              className="btn-ghost h-12 w-12 px-0"
               aria-label={
                 notifPerm === "granted" ? "已开启系统通知" : "开启系统通知"
               }
@@ -550,14 +551,46 @@ export default function ChatPage() {
               }
               onClick={handleEnableNotifications}
             >
-              {notifPerm === "granted" ? "🔔" : "🔕"}
+              <Image
+                src={
+                  notifPerm === "granted"
+                    ? "/ui-icons/notify-on.png"
+                    : "/ui-icons/notify-off.png"
+                }
+                alt=""
+                width={36}
+                height={36}
+                className="h-9 w-9 object-contain"
+              />
             </button>
           ) : null}
-          <Link href="/members" className="btn-ghost h-11 px-3 text-base">
-            成员
+          <Link
+            href="/members"
+            className="btn-ghost h-12 w-12 px-0"
+            aria-label="成员"
+            title="成员"
+          >
+            <Image
+              src="/ui-icons/members.png"
+              alt=""
+              width={36}
+              height={36}
+              className="h-9 w-9 object-contain"
+            />
           </Link>
-          <Link href="/settings" className="btn-ghost h-11 px-3 text-base">
-            设置
+          <Link
+            href="/settings"
+            className="btn-ghost h-12 w-12 px-0"
+            aria-label="设置"
+            title="设置"
+          >
+            <Image
+              src="/ui-icons/settings.png"
+              alt=""
+              width={36}
+              height={36}
+              className="h-9 w-9 object-contain"
+            />
           </Link>
         </div>
       </header>

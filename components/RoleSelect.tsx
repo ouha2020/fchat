@@ -1,11 +1,19 @@
 "use client";
 
+import Image from "next/image";
+
 import { ROLE_OPTIONS, type FamilyRole } from "@/types/family";
 
 interface Props {
   value: FamilyRole | null;
   onChange: (role: FamilyRole) => void;
 }
+
+const ROLE_ICONS: Record<FamilyRole, string> = {
+  father: "/ui-icons/role-father.png",
+  mother: "/ui-icons/role-mother.png",
+  child: "/ui-icons/role-child.png",
+};
 
 export default function RoleSelect({ value, onChange }: Props) {
   return (
@@ -23,7 +31,13 @@ export default function RoleSelect({ value, onChange }: Props) {
                 : "border-slate-200 bg-white text-slate-700 hover:border-brand-200"
             }`}
           >
-            <span className="text-2xl">{opt.emoji}</span>
+            <Image
+              src={ROLE_ICONS[opt.value]}
+              alt=""
+              width={56}
+              height={56}
+              className="h-14 w-14 object-contain"
+            />
             <span className="text-sm font-medium">{opt.label}</span>
           </button>
         );

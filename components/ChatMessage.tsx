@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useRef } from "react";
 
 import AudioBubble from "./AudioBubble";
@@ -208,7 +209,13 @@ function Bubble({
         className={`${base} flex flex-col gap-1 no-underline ${longPressClass}`}
       >
         <span className="flex items-center gap-1.5 font-medium">
-          <span>📍</span>
+          <Image
+            src="/ui-icons/location.png"
+            alt=""
+            width={20}
+            height={20}
+            className="h-5 w-5 shrink-0 object-contain"
+          />
           <span>{message.content || "发送了当前位置"}</span>
         </span>
         {message.address ? (

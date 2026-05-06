@@ -53,22 +53,58 @@ export function playNotificationSound(): void {
     void ctx.resume().catch(() => undefined);
   }
   try {
-    const t = ctx.currentTime;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.type = "sine";
-    osc.frequency.setValueAtTime(880, t);
-    osc.frequency.exponentialRampToValueAtTime(1320, t + 0.12);
-    gain.gain.setValueAtTime(0.0001, t);
-    gain.gain.exponentialRampToValueAtTime(0.18, t + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.4);
-    osc.start(t);
-    osc.stop(t + 0.45);
+    const t0 = ctx.currentTime;
+
+    // Master bus with a soft compressor so the chime stays loud without
+    // clipping on phone speakers.
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -8;
+    comp.knee.value = 6;
+    comp.ratio.value = 4;
+    comp.attack.value = 0.001;
+    comp.release.value = 0.1;
+    comp.connect(ctx.destination);
+
+    const master = ctx.createGain();
+    master.gain.value = 1.0;
+    master.connect(comp);
+
+    // Two-tone ding-dong chime, similar to common system push tones.
+    chime(ctx, master, t0, 1318); // E6
+    chime(ctx, master, t0 + 0.16, 1568); // G6
   } catch {
     // ignore
   }
+}
+
+function chime(
+  ctx: AudioContext,
+  dest: AudioNode,
+  when: number,
+  freq: number,
+): void {
+  const sine = ctx.createOscillator();
+  const tri = ctx.createOscillator();
+  sine.type = "sine";
+  tri.type = "triangle";
+  sine.frequency.value = freq;
+  tri.frequency.value = freq * 2;
+
+  const gain = ctx.createGain();
+  gain.connect(dest);
+  sine.connect(gain);
+  tri.connect(gain);
+
+  // Sharp attack, ~0.4s exponential decay — louder peak (0.85) than
+  // the previous 0.18 sine.
+  gain.gain.setValueAtTime(0.0001, when);
+  gain.gain.exponentialRampToValueAtTime(0.85, when + 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.0001, when + 0.45);
+
+  sine.start(when);
+  tri.start(when);
+  sine.stop(when + 0.5);
+  tri.stop(when + 0.5);
 }
 
 export function vibrate(pattern: number | number[]): void {

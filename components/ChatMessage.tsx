@@ -2,9 +2,9 @@
 
 import { useRef } from "react";
 
+import AudioBubble from "./AudioBubble";
 import RoleBadge from "./RoleBadge";
 import { formatTime } from "@/lib/format";
-import { formatDuration } from "@/lib/recordingService";
 import type { Message } from "@/types/message";
 import type { FamilyMember } from "@/types/member";
 
@@ -178,23 +178,12 @@ function Bubble({
   }
 
   if (message.message_type === "audio" && message.audio_url) {
-    const seconds = message.audio_duration_ms
-      ? formatDuration(message.audio_duration_ms)
-      : null;
     return (
-      <div
-        {...longPressHandlers}
-        className={`${base} flex min-w-[160px] flex-col gap-1 ${longPressClass}`}
-      >
-        <div className="flex items-center gap-2">
-          <span>🎤</span>
-          <span className="text-xs">语音消息{seconds ? ` · ${seconds}` : ""}</span>
-        </div>
-        <audio
-          controls
-          preload="metadata"
-          src={message.audio_url}
-          className="w-full"
+      <div {...longPressHandlers} className={longPressClass}>
+        <AudioBubble
+          url={message.audio_url}
+          durationMs={message.audio_duration_ms}
+          isMine={isMine}
         />
       </div>
     );

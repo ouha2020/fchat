@@ -9,12 +9,7 @@ import ChatMessage from "@/components/ChatMessage";
 import EffectOverlay from "@/components/EffectOverlay";
 import EnvWarning from "@/components/EnvWarning";
 import { clearSession, loadSession, saveSession, type LocalSession } from "@/lib/authLocal";
-import {
-  detectEffect,
-  effectFromColumns,
-  transformForSending,
-  type Effect,
-} from "@/lib/effects";
+import { effectFromColumns, transformForSending, type Effect, detectEffect } from "@/lib/effects";
 import { humanizeError } from "@/lib/errors";
 import { validateMember } from "@/lib/familyService";
 import { listMembers } from "@/lib/memberService";
@@ -26,6 +21,15 @@ import {
   uploadChatImage,
 } from "@/lib/messageService";
 import { getCurrentLocation, createGoogleMapUrl } from "@/lib/locationService";
+import {
+  getNotificationPermission,
+  installAudioUnlock,
+  playNotificationSound,
+  requestNotificationPermission,
+  showBrowserNotification,
+  vibrate,
+  type NotificationPerm,
+} from "@/lib/notify";
 import type { RecordingResult } from "@/lib/recordingService";
 import { getSupabase, isSupabaseConfigured } from "@/lib/supabaseClient";
 import type { FamilyMember } from "@/types/member";
@@ -50,6 +54,54 @@ export default function ChatPage() {
   } | null>(null);
   const triggeredEffectIdsRef = useRef<Set<string>>(new Set());
   const handleEffectDone = useCallback(() => setEffectShow(null), []);
+
+  // Notifications: in-app sound + title badge + browser notification.
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [notifPerm, setNotifPerm] = useState<NotificationPerm>("default");
+  const notifiedIdsRef = useRef<Set<string>>(new Set());
+  const sessionRef = useRef<LocalSession | null>(null);
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
+
+  // Unlock AudioContext on the first user interaction so later pings can play.
+  useEffect(() => installAudioUnlock(), []);
+
+  // Sync notification permission state on mount and when the tab regains focus.
+  useEffect(() => {
+    setNotifPerm(getNotificationPermission());
+    function onVisibility() {
+      if (!document.hidden) {
+        setUnreadCount(0);
+        setNotifPerm(getNotificationPermission());
+      }
+    }
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onVisibility);
+    };
+  }, []);
+
+  // Title badge for unread count.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const base = "家人聊天室";
+    document.title = unreadCount > 0 ? `(${unreadCount}) ${base}` : base;
+  }, [unreadCount]);
+
+  async function handleEnableNotifications() {
+    const perm = await requestNotificationPermission();
+    setNotifPerm(perm);
+    if (perm === "granted") {
+      alert("已开启浏览器通知，新消息会在标签页隐藏时弹出提醒。");
+    } else if (perm === "denied") {
+      alert("浏览器已拒绝通知权限，请在浏览器设置中手动允许。");
+    } else if (perm === "unsupported") {
+      alert("当前浏览器不支持网页通知。");
+    }
+  }
 
   // Bootstrap: validate session, then load data.
   useEffect(() => {
@@ -138,6 +190,37 @@ export default function ChatPage() {
             listMembers(session.family_id)
               .then(setMembers)
               .catch(() => undefined);
+          }
+          // Notification path — once per message id, only for inbound,
+          // non-system, non-deleted messages.
+          const me = sessionRef.current;
+          if (
+            me &&
+            incoming.sender_member_id &&
+            incoming.sender_member_id !== me.member_id &&
+            incoming.message_type !== "system" &&
+            !incoming.deleted_at &&
+            !notifiedIdsRef.current.has(incoming.id)
+          ) {
+            notifiedIdsRef.current.add(incoming.id);
+            playNotificationSound();
+            if (typeof document !== "undefined" && document.hidden) {
+              setUnreadCount((c) => c + 1);
+              vibrate(120);
+              const sender = membersRef.current.find(
+                (m) => m.id === incoming.sender_member_id,
+              );
+              const senderName = sender?.nickname ?? "家人";
+              const previewMap: Record<string, string> = {
+                image: "[图片]",
+                audio: "[语音]",
+                location: "[位置]",
+              };
+              const preview =
+                previewMap[incoming.message_type] ??
+                (incoming.content ?? "").slice(0, 80);
+              showBrowserNotification(senderName, preview);
+            }
           }
         },
       )
@@ -435,6 +518,25 @@ export default function ChatPage() {
           <div className="text-base font-semibold">{session.family_name}</div>
         </div>
         <div className="flex items-center gap-1">
+          {notifPerm !== "unsupported" ? (
+            <button
+              type="button"
+              className="btn-ghost h-9 px-2 text-base"
+              aria-label={
+                notifPerm === "granted" ? "已开启系统通知" : "开启系统通知"
+              }
+              title={
+                notifPerm === "granted"
+                  ? "已开启系统通知"
+                  : notifPerm === "denied"
+                    ? "通知被拒绝，请在浏览器设置中允许"
+                    : "开启系统通知"
+              }
+              onClick={handleEnableNotifications}
+            >
+              {notifPerm === "granted" ? "🔔" : "🔕"}
+            </button>
+          ) : null}
           <Link href="/members" className="btn-ghost h-9 px-3 text-sm">
             成员
           </Link>

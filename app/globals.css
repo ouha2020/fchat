@@ -76,3 +76,12 @@ body {
     opacity: 1;
   }
 }
+
+@keyframes audio-wave {
+  from {
+    transform: scaleY(0.45);
+  }
+  to {
+    transform: scaleY(1.15);
+  }
+}

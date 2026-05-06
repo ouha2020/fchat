@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import UiIcon from "./UiIcon";
 import { formatDuration, startRecording, type RecordingHandle, type RecordingResult } from "@/lib/recordingService";
 
 interface Props {
@@ -139,30 +140,30 @@ export default function ChatInput({
         />
         <button
           type="button"
-          className="btn-ghost h-11 w-11 px-0 text-xl"
+          className="btn-ghost h-11 w-11 px-0 text-slate-600 hover:text-brand-600"
           aria-label="发送图片"
           disabled={disabled || sending}
           onClick={() => fileRef.current?.click()}
         >
-          🖼️
+          <UiIcon name="image" className="h-5 w-5" />
         </button>
         <button
           type="button"
-          className="btn-ghost h-11 w-11 px-0 text-xl"
+          className="btn-ghost h-11 w-11 px-0 text-slate-600 hover:text-brand-600"
           aria-label="发送位置"
           disabled={disabled || sending}
           onClick={() => onSendLocation()}
         >
-          📍
+          <UiIcon name="map-pin" className="h-5 w-5" />
         </button>
         <button
           type="button"
-          className="btn-ghost h-11 w-11 px-0 text-xl"
+          className="btn-ghost h-11 w-11 px-0 text-slate-600 hover:text-brand-600"
           aria-label="录制语音"
           disabled={disabled || sending}
           onClick={() => void handleStartRecording()}
         >
-          🎤
+          <UiIcon name="mic" className="h-5 w-5" />
         </button>
         <textarea
           rows={1}

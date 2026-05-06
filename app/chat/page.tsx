@@ -8,6 +8,7 @@ import ChatInput from "@/components/ChatInput";
 import ChatMessage from "@/components/ChatMessage";
 import EffectOverlay from "@/components/EffectOverlay";
 import EnvWarning from "@/components/EnvWarning";
+import UiIcon from "@/components/UiIcon";
 import { clearSession, loadSession, saveSession, type LocalSession } from "@/lib/authLocal";
 import { effectFromColumns, transformForSending, type Effect, detectEffect } from "@/lib/effects";
 import { humanizeError } from "@/lib/errors";
@@ -529,7 +530,9 @@ export default function ChatPage() {
           {notifPerm !== "unsupported" ? (
             <button
               type="button"
-              className="btn-ghost h-9 px-2 text-base"
+              className={`btn-ghost h-9 w-9 px-0 ${
+                notifPerm === "granted" ? "text-amber-500" : "text-slate-500"
+              }`}
               aria-label={
                 notifPerm === "granted" ? "已开启系统通知" : "开启系统通知"
               }
@@ -542,14 +545,27 @@ export default function ChatPage() {
               }
               onClick={handleEnableNotifications}
             >
-              {notifPerm === "granted" ? "🔔" : "🔕"}
+              <UiIcon
+                name={notifPerm === "granted" ? "bell" : "bell-off"}
+                className="h-5 w-5"
+              />
             </button>
           ) : null}
-          <Link href="/members" className="btn-ghost h-9 px-3 text-sm">
-            成员
+          <Link
+            href="/members"
+            className="btn-ghost h-9 w-9 px-0"
+            aria-label="成员"
+            title="成员"
+          >
+            <UiIcon name="users" className="h-5 w-5" />
           </Link>
-          <Link href="/settings" className="btn-ghost h-9 px-3 text-sm">
-            设置
+          <Link
+            href="/settings"
+            className="btn-ghost h-9 w-9 px-0"
+            aria-label="设置"
+            title="设置"
+          >
+            <UiIcon name="settings" className="h-5 w-5" />
           </Link>
         </div>
       </header>

@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useRef } from "react";
 
 import AudioBubble from "./AudioBubble";
@@ -161,16 +162,19 @@ function Bubble({
   }`;
 
   if (message.message_type === "image" && message.image_url) {
+    const previewHref = `/image-preview?src=${encodeURIComponent(
+      message.image_url,
+    )}`;
+
     return (
       <div
         {...longPressHandlers}
         className={`overflow-hidden rounded-2xl ${longPressClass}`}
       >
-        <a
-          href={message.image_url}
-          target="_blank"
-          rel="noreferrer"
-          onClick={(e) => {
+        <Link
+          href={previewHref}
+          className="block"
+          onClickCapture={(e) => {
             // Don't navigate when the user is in the middle of a long-press.
             longPressHandlers.onClickCapture(e);
           }}
@@ -182,7 +186,7 @@ function Bubble({
             className="max-h-72 max-w-full rounded-2xl object-cover"
             draggable={false}
           />
-        </a>
+        </Link>
       </div>
     );
   }

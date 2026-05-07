@@ -47,7 +47,7 @@ export default function AudioBubble({ url, durationMs, isMine }: Props) {
   // Width grows with duration up to ~60s. Capped to keep bubbles readable.
   const seconds = Math.max(1, Math.round((durationMs ?? 1000) / 1000));
   const capped = Math.min(seconds, 60);
-  const width = 96 + capped * 3.2;
+  const width = Math.min(260, 164 + capped * 1.8);
 
   const baseColors = isMine
     ? "bg-brand-500 text-white"
@@ -65,7 +65,7 @@ export default function AudioBubble({ url, durationMs, isMine }: Props) {
     <button
       type="button"
       onClick={toggle}
-      style={{ width: `${width}px` }}
+      style={{ width: `${width}px`, maxWidth: "100%" }}
       className={`flex items-center gap-2 rounded-full px-3 py-2 text-sm shadow-sm transition active:scale-[0.98] ${baseColors} ${
         isMine ? "flex-row-reverse" : "flex-row"
       }`}
@@ -84,7 +84,7 @@ export default function AudioBubble({ url, durationMs, isMine }: Props) {
           </svg>
         )}
       </span>
-      <span className="flex flex-1 items-center justify-center gap-[3px]">
+      <span className="flex min-w-0 flex-1 items-center justify-center gap-[3px] overflow-hidden">
         {heights.map((h, i) => (
           <span
             key={i}
@@ -102,7 +102,7 @@ export default function AudioBubble({ url, durationMs, isMine }: Props) {
           />
         ))}
       </span>
-      <span className={`shrink-0 text-xs tabular-nums ${subColors}`}>
+      <span className={`min-w-[2.25rem] shrink-0 text-right text-xs tabular-nums ${subColors}`}>
         {formatDuration(durationMs ?? 0)}
       </span>
     </button>

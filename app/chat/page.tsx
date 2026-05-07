@@ -568,7 +568,10 @@ export default function ChatPage() {
           <Link
             href="/settings"
             className="inline-flex h-14 w-14 shrink-0 overflow-hidden rounded-[1.35rem] bg-cover bg-center bg-no-repeat transition hover:brightness-95 active:brightness-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
-            style={{ backgroundImage: "url(/ui-icons/settings.png)" }}
+            style={{
+              backgroundImage: "url(/ui-icons/settings.png)",
+              backgroundSize: "122%",
+            }}
             aria-label="设置"
             title="设置"
           />

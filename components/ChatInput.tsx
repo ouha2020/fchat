@@ -125,7 +125,7 @@ export default function ChatInput({
 
   return (
     <div className="border-t border-slate-200 bg-white px-3 py-2 sm:px-4">
-      <div className="flex items-end gap-2">
+      <div className="flex items-center gap-2">
         <input
           ref={fileRef}
           type="file"

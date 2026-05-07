@@ -31,6 +31,10 @@ import {
   vibrate,
   type NotificationPerm,
 } from "@/lib/notify";
+import {
+  getNotificationsEnabled,
+  setNotificationsEnabled,
+} from "@/lib/notificationPreference";
 import type { RecordingResult } from "@/lib/recordingService";
 import { getSupabase, isSupabaseConfigured } from "@/lib/supabaseClient";
 import type { FamilyMember } from "@/types/member";
@@ -68,11 +72,16 @@ export default function ChatPage() {
   // Notifications: in-app sound + title badge + browser notification.
   const [unreadCount, setUnreadCount] = useState(0);
   const [notifPerm, setNotifPerm] = useState<NotificationPerm>("default");
+  const [notifyEnabled, setNotifyEnabled] = useState(true);
+  const notifyEnabledRef = useRef(true);
   const notifiedIdsRef = useRef<Set<string>>(new Set());
   const sessionRef = useRef<LocalSession | null>(null);
   useEffect(() => {
     sessionRef.current = session;
   }, [session]);
+  useEffect(() => {
+    notifyEnabledRef.current = notifyEnabled;
+  }, [notifyEnabled]);
 
   useEffect(() => {
     if (!session) {
@@ -113,6 +122,14 @@ export default function ChatPage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!session) {
+      setNotifyEnabled(true);
+      return;
+    }
+    setNotifyEnabled(getNotificationsEnabled(session.family_id));
+  }, [session]);
+
   // Title badge for unread count.
   useEffect(() => {
     if (typeof document === "undefined") return;
@@ -120,10 +137,20 @@ export default function ChatPage() {
     document.title = unreadCount > 0 ? `(${unreadCount}) ${base}` : base;
   }, [unreadCount]);
 
-  async function handleEnableNotifications() {
+  async function handleToggleNotifications() {
+    if (!session) return;
+    if (notifyEnabled) {
+      setNotificationsEnabled(session.family_id, false);
+      setNotifyEnabled(false);
+      setUnreadCount(0);
+      return;
+    }
+
     const perm = await requestNotificationPermission();
     setNotifPerm(perm);
     if (perm === "granted") {
+      setNotificationsEnabled(session.family_id, true);
+      setNotifyEnabled(true);
       alert("已开启浏览器通知，新消息会在标签页隐藏时弹出提醒。");
     } else if (perm === "denied") {
       alert("浏览器已拒绝通知权限，请在浏览器设置中手动允许。");
@@ -229,6 +256,7 @@ export default function ChatPage() {
             incoming.sender_member_id !== me.member_id &&
             incoming.message_type !== "system" &&
             !incoming.deleted_at &&
+            notifyEnabledRef.current &&
             !notifiedIdsRef.current.has(incoming.id)
           ) {
             notifiedIdsRef.current.add(incoming.id);
@@ -561,22 +589,24 @@ export default function ChatPage() {
               className="inline-flex h-14 w-14 shrink-0 overflow-hidden rounded-[1.35rem] bg-cover bg-center bg-no-repeat transition hover:brightness-95 active:brightness-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
               style={{
                 backgroundImage: `url(${
-                  notifPerm === "granted"
+                  notifyEnabled && notifPerm === "granted"
                     ? "/ui-icons/notify-on.png"
                     : "/ui-icons/notify-off.png"
                 })`,
               }}
               aria-label={
-                notifPerm === "granted" ? "已开启系统通知" : "开启系统通知"
+                notifyEnabled && notifPerm === "granted"
+                  ? "关闭系统通知"
+                  : "开启系统通知"
               }
               title={
-                notifPerm === "granted"
-                  ? "已开启系统通知"
+                notifyEnabled && notifPerm === "granted"
+                  ? "关闭系统通知"
                   : notifPerm === "denied"
                     ? "通知被拒绝，请在浏览器设置中允许"
                     : "开启系统通知"
               }
-              onClick={handleEnableNotifications}
+              onClick={handleToggleNotifications}
             />
           ) : null}
           <Link

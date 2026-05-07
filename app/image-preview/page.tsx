@@ -2,7 +2,10 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense } from "react";
+import { Suspense, useRef, useState } from "react";
+
+import { loadSession } from "@/lib/authLocal";
+import { setChatBackground } from "@/lib/chatBackground";
 
 export default function ImagePreviewPage() {
   return (
@@ -20,6 +23,8 @@ function ImagePreviewContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const src = searchParams.get("src")?.trim() ?? "";
+  const lastTouchAtRef = useRef(0);
+  const [notice, setNotice] = useState<string | null>(null);
 
   function handleBack() {
     if (window.history.length > 1) {
@@ -27,6 +32,30 @@ function ImagePreviewContent() {
       return;
     }
     router.push("/chat");
+  }
+
+  function handleSetBackground() {
+    if (!src) return;
+    const session = loadSession();
+    if (!session) {
+      setNotice("请先进入家庭聊天室");
+      return;
+    }
+    const ok = window.confirm("将这张图片设置为聊天背景？");
+    if (!ok) return;
+    setChatBackground(session.family_id, src);
+    setNotice("已设置为聊天背景");
+  }
+
+  function handlePreviewTouchEnd(e: React.TouchEvent<HTMLImageElement>) {
+    const now = Date.now();
+    if (now - lastTouchAtRef.current <= 320) {
+      e.preventDefault();
+      lastTouchAtRef.current = 0;
+      handleSetBackground();
+      return;
+    }
+    lastTouchAtRef.current = now;
   }
 
   return (
@@ -41,17 +70,34 @@ function ImagePreviewContent() {
             返回
           </button>
           {src ? (
-            <a
-              href={src}
-              target="_blank"
-              rel="noreferrer"
-              className="rounded-full bg-white/12 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/20 active:bg-white/25"
-            >
-              查看原图
-            </a>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleSetBackground}
+                className="rounded-full bg-white/12 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/20 active:bg-white/25"
+              >
+                设为背景
+              </button>
+              <a
+                href={src}
+                target="_blank"
+                rel="noreferrer"
+                className="rounded-full bg-white/12 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/20 active:bg-white/25"
+              >
+                查看原图
+              </a>
+            </div>
           ) : null}
         </div>
       </div>
+
+      {notice ? (
+        <div className="pointer-events-none absolute inset-x-0 top-20 z-10 flex justify-center px-4">
+          <div className="rounded-full bg-white/15 px-4 py-2 text-sm font-medium text-white backdrop-blur">
+            {notice}
+          </div>
+        </div>
+      ) : null}
 
       {src ? (
         <div className="flex min-h-0 flex-1 items-center justify-center p-0">
@@ -61,6 +107,8 @@ function ImagePreviewContent() {
             alt="图片预览"
             className="max-h-[100dvh] max-w-[100vw] object-contain"
             draggable={false}
+            onDoubleClick={handleSetBackground}
+            onTouchEnd={handlePreviewTouchEnd}
           />
         </div>
       ) : (

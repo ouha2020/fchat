@@ -9,6 +9,7 @@ import ChatMessage from "@/components/ChatMessage";
 import EffectOverlay from "@/components/EffectOverlay";
 import EnvWarning from "@/components/EnvWarning";
 import { clearSession, loadSession, saveSession, type LocalSession } from "@/lib/authLocal";
+import { CHAT_BACKGROUND_CHANGED, getChatBackground } from "@/lib/chatBackground";
 import { effectFromColumns, transformForSending, type Effect, detectEffect } from "@/lib/effects";
 import { humanizeError } from "@/lib/errors";
 import { validateMember } from "@/lib/familyService";
@@ -43,6 +44,7 @@ export default function ChatPage() {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [chatBackgroundUrl, setChatBackgroundUrl] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const membersRef = useRef<FamilyMember[]>([]);
   useEffect(() => {
@@ -70,6 +72,25 @@ export default function ChatPage() {
   const sessionRef = useRef<LocalSession | null>(null);
   useEffect(() => {
     sessionRef.current = session;
+  }, [session]);
+
+  useEffect(() => {
+    if (!session) {
+      setChatBackgroundUrl(null);
+      return;
+    }
+
+    const syncBackground = () => {
+      setChatBackgroundUrl(getChatBackground(session.family_id));
+    };
+
+    syncBackground();
+    window.addEventListener("focus", syncBackground);
+    window.addEventListener(CHAT_BACKGROUND_CHANGED, syncBackground);
+    return () => {
+      window.removeEventListener("focus", syncBackground);
+      window.removeEventListener(CHAT_BACKGROUND_CHANGED, syncBackground);
+    };
   }, [session]);
 
   // Unlock AudioContext on the first user interaction so later pings can play.
@@ -586,7 +607,14 @@ export default function ChatPage() {
 
       <div
         ref={scrollRef}
-        className="flex-1 min-h-0 space-y-4 overflow-y-auto overscroll-contain bg-slate-50 px-3 py-4 sm:px-5"
+        className="flex-1 min-h-0 space-y-4 overflow-y-auto overscroll-contain bg-slate-50 bg-cover bg-center bg-no-repeat px-3 py-4 sm:px-5"
+        style={
+          chatBackgroundUrl
+            ? {
+                backgroundImage: `linear-gradient(rgba(248, 250, 252, 0.82), rgba(248, 250, 252, 0.82)), url("${chatBackgroundUrl}")`,
+              }
+            : undefined
+        }
       >
         {messages.length === 0 ? (
           <div className="py-10 text-center text-sm text-slate-400">

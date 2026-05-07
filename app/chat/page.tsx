@@ -534,11 +534,13 @@ export default function ChatPage() {
           <div className="text-sm text-slate-500">家庭</div>
           <div className="text-base font-semibold">{session.family_name}</div>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-3">
           {notifPerm !== "unsupported" ? (
             <button
               type="button"
-              className="btn-ghost h-9 w-9 px-0"
+              className={`inline-flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-[1.35rem] transition hover:bg-slate-100 active:bg-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 ${
+                notifPerm === "granted" ? "bg-slate-100" : ""
+              }`}
               aria-label={
                 notifPerm === "granted" ? "已开启系统通知" : "开启系统通知"
               }
@@ -558,38 +560,38 @@ export default function ChatPage() {
                     : "/ui-icons/notify-off.png"
                 }
                 alt=""
-                width={28}
-                height={28}
-                className="h-7 w-7 object-contain"
+                width={48}
+                height={48}
+                className="h-12 w-12 object-contain"
               />
             </button>
           ) : null}
           <Link
             href="/members"
-            className="btn-ghost h-9 w-9 px-0"
+            className="inline-flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-[1.35rem] transition hover:bg-slate-100 active:bg-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
             aria-label="成员"
             title="成员"
           >
             <Image
               src="/ui-icons/members.png"
               alt=""
-              width={28}
-              height={28}
-              className="h-7 w-7 object-contain"
+              width={48}
+              height={48}
+              className="h-12 w-12 object-contain"
             />
           </Link>
           <Link
             href="/settings"
-            className="btn-ghost h-9 w-9 px-0"
+            className="inline-flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-[1.35rem] transition hover:bg-slate-100 active:bg-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
             aria-label="设置"
             title="设置"
           >
             <Image
               src="/ui-icons/settings.png"
               alt=""
-              width={28}
-              height={28}
-              className="h-7 w-7 object-contain"
+              width={48}
+              height={48}
+              className="h-12 w-12 object-contain"
             />
           </Link>
         </div>

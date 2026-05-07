@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import EnvWarning from "@/components/EnvWarning";
+import { useLanguage } from "@/components/LanguageProvider";
 import RoleSelect from "@/components/RoleSelect";
 import { loadSession, saveSession } from "@/lib/authLocal";
 import { humanizeError } from "@/lib/errors";
@@ -14,6 +15,7 @@ import type { FamilyRole } from "@/types/family";
 
 export default function HomePage() {
   const router = useRouter();
+  const { language, t } = useLanguage();
   const [familyCode, setFamilyCode] = useState("");
   const [nickname, setNickname] = useState("");
   const [role, setRole] = useState<FamilyRole | null>(null);
@@ -52,7 +54,7 @@ export default function HomePage() {
     e.preventDefault();
     setError(null);
     if (!familyCode.trim() || !nickname.trim() || !role) {
-      setError("请填写家庭代码、昵称并选择角色");
+      setError(t("homeMissingFields"));
       return;
     }
     setLoading(true);
@@ -65,7 +67,7 @@ export default function HomePage() {
       saveSession(session);
       router.replace("/chat");
     } catch (err) {
-      setError(humanizeError(err));
+      setError(humanizeError(err, language));
     } finally {
       setLoading(false);
     }
@@ -74,7 +76,7 @@ export default function HomePage() {
   if (restoring) {
     return (
       <div className="flex flex-1 items-center justify-center text-slate-500">
-        正在恢复会话…
+        {t("homeRestoring")}
       </div>
     );
   }
@@ -82,9 +84,9 @@ export default function HomePage() {
   return (
     <div className="flex flex-1 flex-col px-5 py-8 sm:px-8">
       <header className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">家人聊天室</h1>
+        <h1 className="text-2xl font-bold text-slate-900">{t("appTitle")}</h1>
         <p className="mt-1 text-sm text-slate-500">
-          打开网址，输入家庭代码就能用，无需注册。
+          {t("homeSubtitle")}
         </p>
       </header>
 
@@ -93,12 +95,12 @@ export default function HomePage() {
       <form onSubmit={onSubmit} className="card flex flex-col gap-4">
         <div>
           <label className="label" htmlFor="code">
-            家庭代码
+            {t("homeFamilyCode")}
           </label>
           <input
             id="code"
             className="field tracking-widest uppercase"
-            placeholder="例如 A8K3Q2"
+            placeholder={t("homeCodePlaceholder")}
             maxLength={8}
             value={familyCode}
             onChange={(e) => setFamilyCode(e.target.value.toUpperCase())}
@@ -108,12 +110,12 @@ export default function HomePage() {
 
         <div>
           <label className="label" htmlFor="nickname">
-            你的昵称
+            {t("homeNickname")}
           </label>
           <input
             id="nickname"
             className="field"
-            placeholder="比如：小明"
+            placeholder={t("homeNicknamePlaceholder")}
             maxLength={20}
             value={nickname}
             onChange={(e) => setNickname(e.target.value)}
@@ -122,7 +124,7 @@ export default function HomePage() {
         </div>
 
         <div>
-          <span className="label">选择角色</span>
+          <span className="label">{t("homeSelectRole")}</span>
           <RoleSelect value={role} onChange={setRole} />
         </div>
 
@@ -137,14 +139,14 @@ export default function HomePage() {
           className="btn-primary mt-1"
           disabled={loading}
         >
-          {loading ? "加入中…" : "进入家庭聊天室"}
+          {loading ? t("homeJoining") : t("homeJoin")}
         </button>
       </form>
 
       <div className="mt-6 text-center text-sm text-slate-500">
-        还没有家庭？
+        {t("homeNoFamily")}
         <Link className="ml-1 text-brand-600 hover:underline" href="/create-family">
-          创建一个新家庭
+          {t("homeCreateFamily")}
         </Link>
       </div>
     </div>

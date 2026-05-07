@@ -8,6 +8,7 @@ import ChatInput from "@/components/ChatInput";
 import ChatMessage from "@/components/ChatMessage";
 import EffectOverlay from "@/components/EffectOverlay";
 import EnvWarning from "@/components/EnvWarning";
+import { useLanguage } from "@/components/LanguageProvider";
 import { clearSession, loadSession, saveSession, type LocalSession } from "@/lib/authLocal";
 import { CHAT_BACKGROUND_CHANGED, getChatBackground } from "@/lib/chatBackground";
 import { effectFromColumns, transformForSending, type Effect, detectEffect } from "@/lib/effects";
@@ -42,6 +43,7 @@ import type { Message } from "@/types/message";
 
 export default function ChatPage() {
   const router = useRouter();
+  const { language, t } = useLanguage();
   const [session, setSession] = useState<LocalSession | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [members, setMembers] = useState<FamilyMember[]>([]);
@@ -133,9 +135,9 @@ export default function ChatPage() {
   // Title badge for unread count.
   useEffect(() => {
     if (typeof document === "undefined") return;
-    const base = "家人聊天室";
+    const base = t("appTitle");
     document.title = unreadCount > 0 ? `(${unreadCount}) ${base}` : base;
-  }, [unreadCount]);
+  }, [t, unreadCount]);
 
   async function handleToggleNotifications() {
     if (!session) return;
@@ -151,11 +153,11 @@ export default function ChatPage() {
     if (perm === "granted") {
       setNotificationsEnabled(session.family_id, true);
       setNotifyEnabled(true);
-      alert("已开启浏览器通知，新消息会在标签页隐藏时弹出提醒。");
+      alert(t("chatNotifyEnabledAlert"));
     } else if (perm === "denied") {
-      alert("浏览器已拒绝通知权限，请在浏览器设置中手动允许。");
+      alert(t("chatNotifyDeniedAlert"));
     } else if (perm === "unsupported") {
-      alert("当前浏览器不支持网页通知。");
+      alert(t("chatNotifyUnsupportedAlert"));
     }
   }
 
@@ -267,11 +269,11 @@ export default function ChatPage() {
               const sender = membersRef.current.find(
                 (m) => m.id === incoming.sender_member_id,
               );
-              const senderName = sender?.nickname ?? "家人";
+              const senderName = sender?.nickname ?? t("chatFamily");
               const previewMap: Record<string, string> = {
-                image: "[图片]",
-                audio: "[语音]",
-                location: "[位置]",
+                image: t("notifyImagePreview"),
+                audio: t("notifyAudioPreview"),
+                location: t("notifyLocationPreview"),
               };
               const preview =
                 previewMap[incoming.message_type] ??
@@ -326,7 +328,7 @@ export default function ChatPage() {
             newRow.status === "removed"
           ) {
             clearSession();
-            alert("你已被移出该家庭");
+            alert(t("chatRemoved"));
             router.replace("/");
           }
         },
@@ -362,7 +364,7 @@ export default function ChatPage() {
       sb.removeChannel(membersChannel);
       window.clearInterval(interval);
     };
-  }, [session, router]);
+  }, [router, session, t]);
 
   // Auto scroll to bottom on new messages.
   useEffect(() => {
@@ -408,7 +410,7 @@ export default function ChatPage() {
 
   async function handleDeleteMessage(messageId: string) {
     if (!session) return;
-    const ok = window.confirm("删除这条消息？所有家人将看到「消息已撤回」。");
+    const ok = window.confirm(t("chatDeleteConfirm"));
     if (!ok) return;
     try {
       await deleteMessage(session, messageId);
@@ -420,7 +422,7 @@ export default function ChatPage() {
         ),
       );
     } catch (err) {
-      alert(humanizeError(err));
+      alert(humanizeError(err, language));
     }
   }
 
@@ -454,7 +456,7 @@ export default function ChatPage() {
       });
       tryTriggerEffect(id, eff);
     } catch (err) {
-      alert(humanizeError(err));
+      alert(humanizeError(err, language));
     } finally {
       setSending(false);
     }
@@ -463,7 +465,7 @@ export default function ChatPage() {
   async function handlePickImage(file: File) {
     if (!session) return;
     if (file.size > 8 * 1024 * 1024) {
-      alert("图片不能超过 8MB");
+      alert(t("chatImageTooLarge"));
       return;
     }
     setSending(true);
@@ -472,16 +474,16 @@ export default function ChatPage() {
       const id = await sendMessage(session, {
         type: "image",
         image_url: url,
-        content: "图片消息",
+        content: t("chatImageMessage"),
       });
       pushOptimistic({
         id,
         message_type: "image",
         image_url: url,
-        content: "图片消息",
+        content: t("chatImageMessage"),
       });
     } catch (err) {
-      alert(humanizeError(err));
+      alert(humanizeError(err, language));
     } finally {
       setSending(false);
     }
@@ -490,7 +492,7 @@ export default function ChatPage() {
   async function handleSendAudio(result: RecordingResult) {
     if (!session) return;
     if (result.blob.size > 12 * 1024 * 1024) {
-      alert("语音文件太大");
+      alert(t("chatAudioTooLarge"));
       return;
     }
     setSending(true);
@@ -504,17 +506,17 @@ export default function ChatPage() {
         type: "audio",
         audio_url: url,
         audio_duration_ms: result.durationMs,
-        content: "语音消息",
+        content: t("chatAudioMessage"),
       });
       pushOptimistic({
         id,
         message_type: "audio",
         audio_url: url,
         audio_duration_ms: result.durationMs,
-        content: "语音消息",
+        content: t("chatAudioMessage"),
       });
     } catch (err) {
-      alert(humanizeError(err));
+      alert(humanizeError(err, language));
     } finally {
       setSending(false);
     }
@@ -528,7 +530,7 @@ export default function ChatPage() {
       const mapUrl = createGoogleMapUrl(fix.latitude, fix.longitude);
       const id = await sendMessage(session, {
         type: "location",
-        content: "发送了当前位置",
+        content: t("chatLocationMessage"),
         latitude: fix.latitude,
         longitude: fix.longitude,
         map_url: mapUrl,
@@ -536,13 +538,13 @@ export default function ChatPage() {
       pushOptimistic({
         id,
         message_type: "location",
-        content: "发送了当前位置",
+        content: t("chatLocationMessage"),
         latitude: fix.latitude,
         longitude: fix.longitude,
         map_url: mapUrl,
       });
     } catch (err) {
-      alert(humanizeError(err) || "无法获取位置，请确认浏览器定位权限已开启");
+      alert(humanizeError(err, language) || t("chatLocationError"));
     } finally {
       setSending(false);
     }
@@ -559,7 +561,7 @@ export default function ChatPage() {
   if (loading) {
     return (
       <div className="flex flex-1 items-center justify-center text-slate-500">
-        加载中…
+        {t("commonLoading")}
       </div>
     );
   }
@@ -579,7 +581,7 @@ export default function ChatPage() {
       ) : null}
       <header className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3">
         <div>
-          <div className="text-sm text-slate-500">家庭</div>
+          <div className="text-sm text-slate-500">{t("chatFamily")}</div>
           <div className="text-base font-semibold">{session.family_name}</div>
         </div>
         <div className="flex items-center gap-3">
@@ -596,15 +598,15 @@ export default function ChatPage() {
               }}
               aria-label={
                 notifyEnabled && notifPerm === "granted"
-                  ? "关闭系统通知"
-                  : "开启系统通知"
+                  ? t("chatNotifyOff")
+                  : t("chatNotifyOn")
               }
               title={
                 notifyEnabled && notifPerm === "granted"
-                  ? "关闭系统通知"
+                  ? t("chatNotifyOff")
                   : notifPerm === "denied"
-                    ? "通知被拒绝，请在浏览器设置中允许"
-                    : "开启系统通知"
+                    ? t("chatNotifyDenied")
+                    : t("chatNotifyOn")
               }
               onClick={handleToggleNotifications}
             />
@@ -613,8 +615,8 @@ export default function ChatPage() {
             href="/members"
             className="inline-flex h-14 w-14 shrink-0 overflow-hidden rounded-[1.35rem] bg-cover bg-center bg-no-repeat transition hover:brightness-95 active:brightness-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
             style={{ backgroundImage: "url(/ui-icons/members.png)" }}
-            aria-label="成员"
-            title="成员"
+            aria-label={t("chatMembers")}
+            title={t("chatMembers")}
           />
           <Link
             href="/settings"
@@ -623,8 +625,8 @@ export default function ChatPage() {
               backgroundImage: "url(/ui-icons/settings.png)",
               backgroundSize: "122%",
             }}
-            aria-label="设置"
-            title="设置"
+            aria-label={t("chatSettings")}
+            title={t("chatSettings")}
           />
         </div>
       </header>
@@ -648,7 +650,7 @@ export default function ChatPage() {
       >
         {messages.length === 0 ? (
           <div className="py-10 text-center text-sm text-slate-400">
-            还没有消息，发个招呼吧 👋
+            {t("chatEmpty")}
           </div>
         ) : (
           messages.map((m) => {

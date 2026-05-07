@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useRef, useState } from "react";
 
+import { useLanguage } from "@/components/LanguageProvider";
 import { loadSession } from "@/lib/authLocal";
 import { setChatBackground } from "@/lib/chatBackground";
 
@@ -11,7 +12,7 @@ export default function ImagePreviewPage() {
   return (
     <Suspense
       fallback={
-        <main className="fixed inset-0 z-50 bg-black" aria-label="图片预览加载中" />
+        <main className="fixed inset-0 z-50 bg-black" aria-label="Loading image preview" />
       }
     >
       <ImagePreviewContent />
@@ -21,6 +22,7 @@ export default function ImagePreviewPage() {
 
 function ImagePreviewContent() {
   const router = useRouter();
+  const { t } = useLanguage();
   const searchParams = useSearchParams();
   const src = searchParams.get("src")?.trim() ?? "";
   const lastTouchAtRef = useRef(0);
@@ -38,13 +40,13 @@ function ImagePreviewContent() {
     if (!src) return;
     const session = loadSession();
     if (!session) {
-      setNotice("请先进入家庭聊天室");
+      setNotice(t("previewNeedSession"));
       return;
     }
-    const ok = window.confirm("将这张图片设置为聊天背景？");
+    const ok = window.confirm(t("previewSetBackgroundConfirm"));
     if (!ok) return;
     setChatBackground(session.family_id, src);
-    setNotice("已设置为聊天背景");
+    setNotice(t("previewBackgroundSet"));
   }
 
   function handlePreviewTouchEnd(e: React.TouchEvent<HTMLImageElement>) {
@@ -67,7 +69,7 @@ function ImagePreviewContent() {
             onClick={handleBack}
             className="rounded-full bg-white/12 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/20 active:bg-white/25"
           >
-            返回
+            {t("previewBack")}
           </button>
           {src ? (
             <div className="flex items-center gap-2">
@@ -76,7 +78,7 @@ function ImagePreviewContent() {
                 onClick={handleSetBackground}
                 className="rounded-full bg-white/12 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/20 active:bg-white/25"
               >
-                设为背景
+                {t("previewSetBackground")}
               </button>
               <a
                 href={src}
@@ -84,7 +86,7 @@ function ImagePreviewContent() {
                 rel="noreferrer"
                 className="rounded-full bg-white/12 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/20 active:bg-white/25"
               >
-                查看原图
+                {t("previewOpenOriginal")}
               </a>
             </div>
           ) : null}
@@ -104,7 +106,7 @@ function ImagePreviewContent() {
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={src}
-            alt="图片预览"
+            alt={t("previewAlt")}
             className="max-h-[100dvh] max-w-[100vw] object-contain"
             draggable={false}
             onDoubleClick={handleSetBackground}
@@ -114,14 +116,14 @@ function ImagePreviewContent() {
       ) : (
         <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
           <div>
-            <h1 className="text-lg font-semibold">无法预览图片</h1>
-            <p className="mt-2 text-sm text-white/70">图片地址为空或无效。</p>
+            <h1 className="text-lg font-semibold">{t("previewErrorTitle")}</h1>
+            <p className="mt-2 text-sm text-white/70">{t("previewErrorBody")}</p>
           </div>
           <Link
             href="/chat"
             className="rounded-full bg-white px-5 py-2.5 text-sm font-medium text-slate-900 transition hover:bg-white/90"
           >
-            返回聊天
+            {t("previewBackChat")}
           </Link>
         </div>
       )}

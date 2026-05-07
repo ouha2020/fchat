@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -534,11 +533,18 @@ export default function ChatPage() {
           <div className="text-sm text-slate-500">家庭</div>
           <div className="text-base font-semibold">{session.family_name}</div>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-3">
           {notifPerm !== "unsupported" ? (
             <button
               type="button"
-              className="btn-ghost h-12 w-12 px-0"
+              className="inline-flex h-14 w-14 shrink-0 overflow-hidden rounded-[1.35rem] bg-cover bg-center bg-no-repeat transition hover:brightness-95 active:brightness-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+              style={{
+                backgroundImage: `url(${
+                  notifPerm === "granted"
+                    ? "/ui-icons/notify-on.png"
+                    : "/ui-icons/notify-off.png"
+                })`,
+              }}
               aria-label={
                 notifPerm === "granted" ? "已开启系统通知" : "开启系统通知"
               }
@@ -550,48 +556,22 @@ export default function ChatPage() {
                     : "开启系统通知"
               }
               onClick={handleEnableNotifications}
-            >
-              <Image
-                src={
-                  notifPerm === "granted"
-                    ? "/ui-icons/notify-on.png"
-                    : "/ui-icons/notify-off.png"
-                }
-                alt=""
-                width={36}
-                height={36}
-                className="h-9 w-9 object-contain"
-              />
-            </button>
+            />
           ) : null}
           <Link
             href="/members"
-            className="btn-ghost h-12 w-12 px-0"
+            className="inline-flex h-14 w-14 shrink-0 overflow-hidden rounded-[1.35rem] bg-cover bg-center bg-no-repeat transition hover:brightness-95 active:brightness-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+            style={{ backgroundImage: "url(/ui-icons/members.png)" }}
             aria-label="成员"
             title="成员"
-          >
-            <Image
-              src="/ui-icons/members.png"
-              alt=""
-              width={36}
-              height={36}
-              className="h-9 w-9 object-contain"
-            />
-          </Link>
+          />
           <Link
             href="/settings"
-            className="btn-ghost h-12 w-12 px-0"
+            className="inline-flex h-14 w-14 shrink-0 overflow-hidden rounded-[1.35rem] bg-cover bg-center bg-no-repeat transition hover:brightness-95 active:brightness-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+            style={{ backgroundImage: "url(/ui-icons/settings.png)" }}
             aria-label="设置"
             title="设置"
-          >
-            <Image
-              src="/ui-icons/settings.png"
-              alt=""
-              width={36}
-              height={36}
-              className="h-9 w-9 object-contain"
-            />
-          </Link>
+          />
         </div>
       </header>
 

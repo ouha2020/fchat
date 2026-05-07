@@ -1,4 +1,6 @@
-export function formatTime(iso: string): string {
+import { translate, type Language } from "@/lib/i18n";
+
+export function formatTime(iso: string, language: Language = "zh"): string {
   const date = new Date(iso);
   const now = new Date();
   const sameDay =
@@ -13,18 +15,25 @@ export function formatTime(iso: string): string {
   const y = date.getFullYear();
   const m = (date.getMonth() + 1).toString().padStart(2, "0");
   const d = date.getDate().toString().padStart(2, "0");
-  return `${y}年${m}月${d}日 ${hh}:${mm}`;
+  return translate(language, "timeDate", {
+    year: y,
+    month: m,
+    day: d,
+    time: `${hh}:${mm}`,
+  });
 }
 
-export function formatRelative(iso: string): string {
+export function formatRelative(iso: string, language: Language = "zh"): string {
   const date = new Date(iso).getTime();
   const diff = Date.now() - date;
   const minutes = Math.floor(diff / 60000);
-  if (minutes < 1) return "刚刚";
-  if (minutes < 60) return `${minutes} 分钟前`;
+  if (minutes < 1) return translate(language, "timeJustNow");
+  if (minutes < 60) {
+    return translate(language, "timeMinutesAgo", { count: minutes });
+  }
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} 小时前`;
+  if (hours < 24) return translate(language, "timeHoursAgo", { count: hours });
   const days = Math.floor(hours / 24);
-  if (days < 7) return `${days} 天前`;
-  return formatTime(iso);
+  if (days < 7) return translate(language, "timeDaysAgo", { count: days });
+  return formatTime(iso, language);
 }

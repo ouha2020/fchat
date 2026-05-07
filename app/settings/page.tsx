@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { useLanguage } from "@/components/LanguageProvider";
 import { clearSession, loadSession, saveSession, updateSession, type LocalSession } from "@/lib/authLocal";
 import { humanizeError } from "@/lib/errors";
 import {
@@ -13,10 +14,12 @@ import {
   setJoinEnabled,
   updateFamilyName,
 } from "@/lib/familyService";
+import { LANGUAGE_OPTIONS } from "@/lib/i18n";
 import { isSupabaseConfigured } from "@/lib/supabaseClient";
 
 export default function SettingsPage() {
   const router = useRouter();
+  const { language, setLanguage, t } = useLanguage();
   const [session, setSession] = useState<LocalSession | null>(null);
   const [joinOn, setJoinOn] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
@@ -47,16 +50,16 @@ export default function SettingsPage() {
 
   async function withAdmin(action: string, fn: (password: string) => Promise<void>) {
     if (!session?.is_admin) {
-      alert("仅管理员可操作");
+      alert(t("settingsAdminOnly"));
       return;
     }
-    const password = window.prompt(`请输入管理员密码以${action}`);
+    const password = window.prompt(t("settingsAdminPasswordPrompt", { action }));
     if (!password) return;
     setBusy(action);
     try {
       await fn(password);
     } catch (err) {
-      alert(humanizeError(err));
+      alert(humanizeError(err, language));
     } finally {
       setBusy(null);
     }
@@ -64,9 +67,9 @@ export default function SettingsPage() {
 
   async function handleRename() {
     if (!session) return;
-    const newName = window.prompt("输入新的家庭名称", session.family_name);
+    const newName = window.prompt(t("settingsRenamePrompt"), session.family_name);
     if (!newName || !newName.trim()) return;
-    await withAdmin("修改家庭名称", async (password) => {
+    await withAdmin(t("settingsRenameFamily"), async (password) => {
       await updateFamilyName(session, password, newName.trim());
       const next = updateSession({ family_name: newName.trim() });
       if (next) setSession(next);
@@ -75,9 +78,9 @@ export default function SettingsPage() {
 
   async function handleResetCode() {
     if (!session) return;
-    const ok = window.confirm("重置家庭代码后，旧代码立即失效。继续吗？");
+    const ok = window.confirm(t("settingsResetCodeConfirm"));
     if (!ok) return;
-    await withAdmin("重置家庭代码", async (password) => {
+    await withAdmin(t("settingsResetCode"), async (password) => {
       const newCode = await resetFamilyCode(session, password);
       const next = updateSession({ family_code: newCode });
       if (next) setSession(next);
@@ -86,7 +89,7 @@ export default function SettingsPage() {
 
   async function handleToggleJoin(next: boolean) {
     if (!session) return;
-    await withAdmin(next ? "开启新成员加入" : "关闭新成员加入", async (password) => {
+    await withAdmin(next ? t("settingsEnableJoin") : t("settingsDisableJoin"), async (password) => {
       await setJoinEnabled(session, password, next);
       setJoinOn(next);
     });
@@ -94,7 +97,7 @@ export default function SettingsPage() {
 
   async function handleLeave() {
     if (!session) return;
-    const ok = window.confirm("确定要退出这个家庭吗？该设备的会话也会被清除。");
+    const ok = window.confirm(t("settingsLeaveConfirm"));
     if (!ok) return;
     setBusy("leave");
     try {
@@ -102,14 +105,14 @@ export default function SettingsPage() {
       clearSession();
       router.replace("/");
     } catch (err) {
-      alert(humanizeError(err));
+      alert(humanizeError(err, language));
     } finally {
       setBusy(null);
     }
   }
 
   function handleSwitch() {
-    const ok = window.confirm("切换家庭会清除当前设备的会话，确认吗？");
+    const ok = window.confirm(t("settingsSwitchConfirm"));
     if (!ok) return;
     clearSession();
     router.replace("/");
@@ -121,38 +124,58 @@ export default function SettingsPage() {
     <div className="flex flex-1 flex-col px-5 py-6 sm:px-8">
       <header className="mb-4">
         <Link href="/chat" className="text-sm text-brand-600 hover:underline">
-          ← 返回聊天
+          {t("commonBackToChat")}
         </Link>
-        <h1 className="mt-1 text-2xl font-bold">家庭设置</h1>
+        <h1 className="mt-1 text-2xl font-bold">{t("settingsTitle")}</h1>
       </header>
 
       <section className="card flex flex-col gap-3">
-        <Row label="家庭名称" value={session.family_name} />
+        <Row label={t("settingsFamilyName")} value={session.family_name} />
         <Row
-          label="家庭代码"
+          label={t("settingsFamilyCode")}
           value={
             <span className="select-all font-mono text-base tracking-widest">
               {session.family_code}
             </span>
           }
         />
-        <Row label="我的昵称" value={session.nickname} />
-        <Row label="我的角色" value={
-          { father: "爸爸", mother: "妈妈", child: "孩子" }[session.role]
+        <Row label={t("settingsMyNickname")} value={session.nickname} />
+        <Row label={t("settingsMyRole")} value={
+          { father: t("roleFather"), mother: t("roleMother"), child: t("roleChild") }[session.role]
         } />
-        <Row label="管理员" value={session.is_admin ? "是" : "否"} />
+        <Row label={t("settingsIsAdmin")} value={session.is_admin ? t("commonYes") : t("commonNo")} />
+      </section>
+
+      <section className="card mt-4 flex flex-col gap-3">
+        <h2 className="text-base font-semibold">{t("settingsLanguage")}</h2>
+        <div className="grid grid-cols-3 gap-2">
+          {LANGUAGE_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              className={`rounded-xl px-3 py-2 text-sm font-medium transition ${
+                language === opt.value
+                  ? "bg-brand-500 text-white"
+                  : "bg-white text-slate-700 ring-1 ring-inset ring-slate-200 hover:bg-slate-50"
+              }`}
+              onClick={() => setLanguage(opt.value)}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
       </section>
 
       {session.is_admin ? (
         <section className="card mt-4 flex flex-col gap-3">
-          <h2 className="text-base font-semibold">管理员操作</h2>
+          <h2 className="text-base font-semibold">{t("settingsAdminActions")}</h2>
           <button
             type="button"
             className="btn-secondary"
             disabled={!!busy}
             onClick={handleRename}
           >
-            修改家庭名称
+            {t("settingsRenameFamily")}
           </button>
           <button
             type="button"
@@ -160,10 +183,10 @@ export default function SettingsPage() {
             disabled={!!busy}
             onClick={handleResetCode}
           >
-            重置家庭代码
+            {t("settingsResetCode")}
           </button>
           <label className="flex items-center justify-between rounded-xl px-1 py-2">
-            <span className="text-sm text-slate-700">允许新成员加入</span>
+            <span className="text-sm text-slate-700">{t("settingsAllowJoin")}</span>
             <input
               type="checkbox"
               className="h-5 w-5"
@@ -176,14 +199,14 @@ export default function SettingsPage() {
       ) : null}
 
       <section className="card mt-4 flex flex-col gap-3">
-        <h2 className="text-base font-semibold">会话</h2>
+        <h2 className="text-base font-semibold">{t("settingsSession")}</h2>
         <button
           type="button"
           className="btn-secondary"
           onClick={handleSwitch}
           disabled={!!busy}
         >
-          切换到其他家庭
+          {t("settingsSwitchFamily")}
         </button>
         <button
           type="button"
@@ -191,7 +214,7 @@ export default function SettingsPage() {
           onClick={handleLeave}
           disabled={busy === "leave"}
         >
-          {busy === "leave" ? "退出中…" : "退出该家庭"}
+          {busy === "leave" ? t("settingsLeaving") : t("settingsLeaveFamily")}
         </button>
       </section>
     </div>

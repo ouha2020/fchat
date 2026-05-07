@@ -6,6 +6,7 @@ import { useRef } from "react";
 
 import AudioBubble from "./AudioBubble";
 import RoleBadge from "./RoleBadge";
+import { useLanguage } from "@/components/LanguageProvider";
 import { formatTime } from "@/lib/format";
 import type { Message } from "@/types/message";
 import type { FamilyMember } from "@/types/member";
@@ -27,6 +28,7 @@ export default function ChatMessage({
   onRequestDelete,
   onReplayEffect,
 }: Props) {
+  const { language, t } = useLanguage();
   if (message.message_type === "system") {
     return (
       <div className="flex justify-center py-2">
@@ -38,7 +40,7 @@ export default function ChatMessage({
   }
 
   if (message.deleted_at) {
-    const label = isMine ? "你撤回了一条消息" : "对方撤回了一条消息";
+    const label = isMine ? t("messageYouDeleted") : t("messageOtherDeleted");
     return (
       <div className="flex justify-center py-2">
         <span className="rounded-full bg-slate-100 px-3 py-1 text-xs italic text-slate-500">
@@ -66,10 +68,10 @@ export default function ChatMessage({
       >
         <div className="flex items-center gap-2 text-xs text-slate-500">
           <span className="font-medium text-slate-700">
-            {sender?.nickname ?? "未知成员"}
+            {sender?.nickname ?? t("commonUnknownMember")}
           </span>
           {sender ? <RoleBadge role={sender.role} /> : null}
-          <span>{formatTime(message.created_at)}</span>
+          <span>{formatTime(message.created_at, language)}</span>
         </div>
         <Bubble
           message={message}
@@ -150,6 +152,7 @@ function Bubble({
   onRequestDelete: () => void;
   onReplayEffect?: () => void;
 }) {
+  const { t } = useLanguage();
   const longPressHandlers = useLongPress(onRequestDelete, canDelete);
   const longPressClass = canDelete
     ? "cursor-pointer select-none [-webkit-touch-callout:none] [-webkit-user-select:none]"
@@ -182,7 +185,7 @@ function Bubble({
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={message.image_url}
-            alt="图片消息"
+            alt={t("messageImageAlt")}
             className="max-h-72 max-w-full rounded-2xl object-cover"
             draggable={false}
           />
@@ -220,7 +223,7 @@ function Bubble({
             height={20}
             className="h-5 w-5 shrink-0 object-contain"
           />
-          <span>{message.content || "发送了当前位置"}</span>
+          <span>{message.content || t("messageLocationFallback")}</span>
         </span>
         {message.address ? (
           <span className={isMine ? "text-brand-50" : "text-slate-500"}>
@@ -237,7 +240,7 @@ function Bubble({
         <span
           className={`text-xs ${isMine ? "text-brand-100" : "text-brand-500"}`}
         >
-          点击在地图中查看
+          {t("messageOpenMap")}
         </span>
       </a>
     );
@@ -250,7 +253,7 @@ function Bubble({
     <div
       {...longPressHandlers}
       onClick={isEffect ? onReplayEffect : undefined}
-      title={isEffect ? "点击重新播放特效" : undefined}
+      title={isEffect ? t("messageReplayEffect") : undefined}
       className={`${base} flex items-center gap-1.5 whitespace-pre-wrap break-words ${longPressClass} ${effectClass}`}
     >
       <span>{message.content}</span>

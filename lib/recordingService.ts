@@ -29,10 +29,10 @@ function pickMimeType(): string {
 
 export async function startRecording(): Promise<RecordingHandle> {
   if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
-    throw new Error("当前浏览器不支持录音");
+    throw new Error("recording_unsupported");
   }
   if (typeof MediaRecorder === "undefined") {
-    throw new Error("当前浏览器不支持 MediaRecorder");
+    throw new Error("media_recorder_unsupported");
   }
 
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });

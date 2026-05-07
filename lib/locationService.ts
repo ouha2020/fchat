@@ -9,7 +9,7 @@ export interface LocationFix {
 export function getCurrentLocation(): Promise<LocationFix> {
   return new Promise((resolve, reject) => {
     if (typeof navigator === "undefined" || !navigator.geolocation) {
-      reject(new Error("当前浏览器不支持定位"));
+      reject(new Error("geolocation_unsupported"));
       return;
     }
     navigator.geolocation.getCurrentPosition(

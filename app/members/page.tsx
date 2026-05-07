@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { useLanguage } from "@/components/LanguageProvider";
 import RoleBadge from "@/components/RoleBadge";
 import { loadSession, type LocalSession } from "@/lib/authLocal";
 import { humanizeError } from "@/lib/errors";
@@ -15,6 +16,7 @@ import type { FamilyMember } from "@/types/member";
 
 export default function MembersPage() {
   const router = useRouter();
+  const { language, t } = useLanguage();
   const [session, setSession] = useState<LocalSession | null>(null);
   const [members, setMembers] = useState<FamilyMember[]>([]);
   const [loading, setLoading] = useState(true);
@@ -33,9 +35,9 @@ export default function MembersPage() {
     setSession(local);
     listMembers(local.family_id)
       .then(setMembers)
-      .catch((err) => alert(humanizeError(err)))
+      .catch((err) => alert(humanizeError(err, language)))
       .finally(() => setLoading(false));
-  }, [router]);
+  }, [language, router]);
 
   // Live-sync the member list so other admins see removals immediately.
   useEffect(() => {
@@ -66,11 +68,11 @@ export default function MembersPage() {
   async function handleRemove(target: FamilyMember) {
     if (!session) return;
     if (target.id === session.member_id) {
-      alert("不能移除自己");
+      alert(t("membersCannotRemoveSelf"));
       return;
     }
     const ok = window.confirm(
-      `确定将「${target.nickname}」移出家庭？\n该成员将无法再访问家庭聊天，可重新邀请加入。`,
+      t("membersRemoveConfirm", { nickname: target.nickname }),
     );
     if (!ok) return;
     setBusyId(target.id);
@@ -78,7 +80,7 @@ export default function MembersPage() {
       await removeMember(session, target.id);
       setMembers((prev) => prev.filter((m) => m.id !== target.id));
     } catch (err) {
-      alert(humanizeError(err));
+      alert(humanizeError(err, language));
     } finally {
       setBusyId(null);
     }
@@ -89,14 +91,14 @@ export default function MembersPage() {
       <header className="mb-4 flex items-center justify-between">
         <div>
           <Link href="/chat" className="text-sm text-brand-600 hover:underline">
-            ← 返回聊天
+            {t("commonBackToChat")}
           </Link>
-          <h1 className="mt-1 text-2xl font-bold">家庭成员</h1>
+          <h1 className="mt-1 text-2xl font-bold">{t("membersTitle")}</h1>
         </div>
       </header>
 
       {loading ? (
-        <div className="text-sm text-slate-500">加载中…</div>
+        <div className="text-sm text-slate-500">{t("commonLoading")}</div>
       ) : (
         <ul className="card divide-y divide-slate-100 p-0">
           {members.map((m) => (
@@ -113,17 +115,19 @@ export default function MembersPage() {
                   <RoleBadge role={m.role} />
                   {m.is_admin ? (
                     <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">
-                      管理员
+                      {t("membersAdmin")}
                     </span>
                   ) : null}
                   {session?.member_id === m.id ? (
                     <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
-                      我
+                      {t("membersMe")}
                     </span>
                   ) : null}
                 </div>
                 <span className="text-xs text-slate-500">
-                  最近活跃 {formatRelative(m.last_active_at)}
+                  {t("membersLastActive", {
+                    time: formatRelative(m.last_active_at, language),
+                  })}
                 </span>
               </div>
               {session?.is_admin && session.member_id !== m.id ? (
@@ -133,7 +137,7 @@ export default function MembersPage() {
                   disabled={busyId === m.id}
                   onClick={() => handleRemove(m)}
                 >
-                  {busyId === m.id ? "移除中…" : "移除"}
+                  {busyId === m.id ? t("membersRemoving") : t("membersRemove")}
                 </button>
               ) : null}
             </li>

@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { useLanguage } from "@/components/LanguageProvider";
+import { humanizeError } from "@/lib/errors";
 import { formatDuration, startRecording, type RecordingHandle, type RecordingResult } from "@/lib/recordingService";
 
 interface Props {
@@ -23,6 +25,7 @@ export default function ChatInput({
   onSendLocation,
   onSendAudio,
 }: Props) {
+  const { language, t } = useLanguage();
   const [text, setText] = useState("");
   const [recording, setRecording] = useState<RecordingHandle | null>(null);
   const [elapsed, setElapsed] = useState(0);
@@ -59,11 +62,12 @@ export default function ChatInput({
       setElapsed(0);
       setRecording(handle);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes("Permission") || msg.toLowerCase().includes("denied")) {
-        alert("请在浏览器允许麦克风权限后重试");
+      const rawMsg = err instanceof Error ? err.message : String(err);
+      const msg = humanizeError(err, language);
+      if (rawMsg.includes("Permission") || rawMsg.toLowerCase().includes("denied")) {
+        alert(t("inputMicPermission"));
       } else {
-        alert(`无法开始录音：${msg}`);
+        alert(t("inputRecordStartError", { message: msg }));
       }
     }
   }
@@ -75,14 +79,14 @@ export default function ChatInput({
     try {
       const result = await handle.stop();
       if (result.durationMs < 600) {
-        alert("录音太短了");
+        alert(t("inputRecordingTooShort"));
         return;
       }
       await onSendAudio(result);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (!msg.includes("recording_cancelled")) {
-        alert(`发送语音失败：${msg}`);
+        alert(t("inputAudioSendError", { message: msg }));
       }
     }
   }
@@ -100,23 +104,23 @@ export default function ChatInput({
           <button
             type="button"
             className="btn-ghost h-12 w-12 px-0 text-2xl leading-none"
-            aria-label="取消录音"
+            aria-label={t("inputCancelRecording")}
             onClick={handleCancelRecording}
           >
             ✕
           </button>
           <div className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-rose-50 px-3 py-3 text-sm text-rose-700">
             <span className="inline-block h-2.5 w-2.5 animate-pulse rounded-full bg-rose-500" />
-            <span className="font-medium">正在录音</span>
+            <span className="font-medium">{t("inputRecording")}</span>
             <span className="font-mono">{formatDuration(elapsed)}</span>
-            <span className="text-xs text-rose-500">/ 最长 1:00</span>
+            <span className="text-xs text-rose-500">{t("inputMaxDuration")}</span>
           </div>
           <button
             type="button"
             className="btn-primary h-11 px-4"
             onClick={() => void handleStopRecording()}
           >
-            发送
+            {t("commonSend")}
           </button>
         </div>
       </div>
@@ -141,7 +145,7 @@ export default function ChatInput({
           type="button"
           className="inline-flex h-14 w-14 shrink-0 overflow-hidden rounded-[1.35rem] bg-cover bg-center bg-no-repeat transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-50"
           style={{ backgroundImage: "url(/ui-icons/image.png)" }}
-          aria-label="发送图片"
+          aria-label={t("inputSendImage")}
           disabled={disabled || sending}
           onClick={() => fileRef.current?.click()}
         />
@@ -149,7 +153,7 @@ export default function ChatInput({
           type="button"
           className="inline-flex h-14 w-14 shrink-0 overflow-hidden rounded-[1.35rem] bg-cover bg-center bg-no-repeat transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-50"
           style={{ backgroundImage: "url(/ui-icons/location.png)" }}
-          aria-label="发送位置"
+          aria-label={t("inputSendLocation")}
           disabled={disabled || sending}
           onClick={() => onSendLocation()}
         />
@@ -157,14 +161,14 @@ export default function ChatInput({
           type="button"
           className="inline-flex h-14 w-14 shrink-0 overflow-hidden rounded-[1.35rem] bg-cover bg-center bg-no-repeat transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-50"
           style={{ backgroundImage: "url(/ui-icons/voice.png)" }}
-          aria-label="录制语音"
+          aria-label={t("inputRecordVoice")}
           disabled={disabled || sending}
           onClick={() => void handleStartRecording()}
         />
         <textarea
           rows={1}
           className="field max-h-32 min-h-[44px] flex-1 resize-none py-3"
-          placeholder="说点什么吧…"
+          placeholder={t("inputPlaceholder")}
           value={text}
           disabled={disabled}
           onChange={(e) => setText(e.target.value)}
@@ -181,7 +185,7 @@ export default function ChatInput({
           disabled={disabled || sending || !text.trim()}
           onClick={() => void submit()}
         >
-          发送
+          {t("commonSend")}
         </button>
       </div>
     </div>

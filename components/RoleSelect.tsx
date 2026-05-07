@@ -3,6 +3,7 @@
 import Image from "next/image";
 
 import { ROLE_OPTIONS, type FamilyRole } from "@/types/family";
+import { useLanguage } from "@/components/LanguageProvider";
 
 interface Props {
   value: FamilyRole | null;
@@ -15,7 +16,14 @@ const ROLE_ICONS: Record<FamilyRole, string> = {
   child: "/ui-icons/role-child.png",
 };
 
+const ROLE_KEYS: Record<FamilyRole, "roleFather" | "roleMother" | "roleChild"> = {
+  father: "roleFather",
+  mother: "roleMother",
+  child: "roleChild",
+};
+
 export default function RoleSelect({ value, onChange }: Props) {
+  const { t } = useLanguage();
   return (
     <div className="grid grid-cols-3 gap-3">
       {ROLE_OPTIONS.map((opt) => {
@@ -38,7 +46,7 @@ export default function RoleSelect({ value, onChange }: Props) {
               height={56}
               className="h-14 w-14 object-contain"
             />
-            <span className="text-sm font-medium">{opt.label}</span>
+            <span className="text-sm font-medium">{t(ROLE_KEYS[opt.value])}</span>
           </button>
         );
       })}

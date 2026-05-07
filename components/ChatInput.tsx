@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 
 import { formatDuration, startRecording, type RecordingHandle, type RecordingResult } from "@/lib/recordingService";
@@ -140,49 +139,28 @@ export default function ChatInput({
         />
         <button
           type="button"
-          className="btn-ghost h-12 w-12 px-0"
+          className="inline-flex h-14 w-14 shrink-0 overflow-hidden rounded-[1.35rem] bg-cover bg-center bg-no-repeat transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-50"
+          style={{ backgroundImage: "url(/ui-icons/image.png)" }}
           aria-label="发送图片"
           disabled={disabled || sending}
           onClick={() => fileRef.current?.click()}
-        >
-          <Image
-            src="/ui-icons/image.png"
-            alt=""
-            width={36}
-            height={36}
-            className="h-9 w-9 object-contain"
-          />
-        </button>
+        />
         <button
           type="button"
-          className="btn-ghost h-12 w-12 px-0"
+          className="inline-flex h-14 w-14 shrink-0 overflow-hidden rounded-[1.35rem] bg-cover bg-center bg-no-repeat transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-50"
+          style={{ backgroundImage: "url(/ui-icons/location.png)" }}
           aria-label="发送位置"
           disabled={disabled || sending}
           onClick={() => onSendLocation()}
-        >
-          <Image
-            src="/ui-icons/location.png"
-            alt=""
-            width={36}
-            height={36}
-            className="h-9 w-9 object-contain"
-          />
-        </button>
+        />
         <button
           type="button"
-          className="btn-ghost h-12 w-12 px-0"
+          className="inline-flex h-14 w-14 shrink-0 overflow-hidden rounded-[1.35rem] bg-cover bg-center bg-no-repeat transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-50"
+          style={{ backgroundImage: "url(/ui-icons/voice.png)" }}
           aria-label="录制语音"
           disabled={disabled || sending}
           onClick={() => void handleStartRecording()}
-        >
-          <Image
-            src="/ui-icons/voice.png"
-            alt=""
-            width={36}
-            height={36}
-            className="h-9 w-9 object-contain"
-          />
-        </button>
+        />
         <textarea
           rows={1}
           className="field max-h-32 min-h-[44px] flex-1 resize-none py-3"

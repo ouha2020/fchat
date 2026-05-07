@@ -560,9 +560,9 @@ export default function ChatPage() {
                     : "/ui-icons/notify-off.png"
                 }
                 alt=""
-                width={48}
-                height={48}
-                className="h-12 w-12 object-contain"
+                width={80}
+                height={80}
+                className="h-20 w-20 max-w-none object-cover"
               />
             </button>
           ) : null}
@@ -575,9 +575,9 @@ export default function ChatPage() {
             <Image
               src="/ui-icons/members.png"
               alt=""
-              width={48}
-              height={48}
-              className="h-12 w-12 object-contain"
+              width={80}
+              height={80}
+              className="h-20 w-20 max-w-none object-cover"
             />
           </Link>
           <Link
@@ -589,9 +589,9 @@ export default function ChatPage() {
             <Image
               src="/ui-icons/settings.png"
               alt=""
-              width={48}
-              height={48}
-              className="h-12 w-12 object-contain"
+              width={80}
+              height={80}
+              className="h-20 w-20 max-w-none object-cover"
             />
           </Link>
         </div>

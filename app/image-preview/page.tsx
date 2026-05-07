@@ -23,7 +23,7 @@ function ImagePreviewContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const src = searchParams.get("src")?.trim() ?? "";
-  const longPressRef = useRef<number | null>(null);
+  const lastTouchAtRef = useRef(0);
   const [notice, setNotice] = useState<string | null>(null);
 
   function handleBack() {
@@ -34,28 +34,28 @@ function ImagePreviewContent() {
     router.push("/chat");
   }
 
-  function clearLongPress() {
-    if (longPressRef.current) {
-      window.clearTimeout(longPressRef.current);
-      longPressRef.current = null;
+  function handleSetBackground() {
+    if (!src) return;
+    const session = loadSession();
+    if (!session) {
+      setNotice("请先进入家庭聊天室");
+      return;
     }
+    const ok = window.confirm("将这张图片设置为聊天背景？");
+    if (!ok) return;
+    setChatBackground(session.family_id, src);
+    setNotice("已设置为聊天背景");
   }
 
-  function startLongPress() {
-    if (!src) return;
-    clearLongPress();
-    longPressRef.current = window.setTimeout(() => {
-      longPressRef.current = null;
-      const session = loadSession();
-      if (!session) {
-        setNotice("请先进入家庭聊天室");
-        return;
-      }
-      const ok = window.confirm("将这张图片设置为聊天背景？");
-      if (!ok) return;
-      setChatBackground(session.family_id, src);
-      setNotice("已设置为聊天背景");
-    }, 650);
+  function handlePreviewTouchEnd(e: React.TouchEvent<HTMLImageElement>) {
+    const now = Date.now();
+    if (now - lastTouchAtRef.current <= 320) {
+      e.preventDefault();
+      lastTouchAtRef.current = 0;
+      handleSetBackground();
+      return;
+    }
+    lastTouchAtRef.current = now;
   }
 
   return (
@@ -70,14 +70,23 @@ function ImagePreviewContent() {
             返回
           </button>
           {src ? (
-            <a
-              href={src}
-              target="_blank"
-              rel="noreferrer"
-              className="rounded-full bg-white/12 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/20 active:bg-white/25"
-            >
-              查看原图
-            </a>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleSetBackground}
+                className="rounded-full bg-white/12 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/20 active:bg-white/25"
+              >
+                设为背景
+              </button>
+              <a
+                href={src}
+                target="_blank"
+                rel="noreferrer"
+                className="rounded-full bg-white/12 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/20 active:bg-white/25"
+              >
+                查看原图
+              </a>
+            </div>
           ) : null}
         </div>
       </div>
@@ -98,17 +107,8 @@ function ImagePreviewContent() {
             alt="图片预览"
             className="max-h-[100dvh] max-w-[100vw] object-contain"
             draggable={false}
-            onMouseDown={startLongPress}
-            onMouseUp={clearLongPress}
-            onMouseLeave={clearLongPress}
-            onTouchStart={startLongPress}
-            onTouchEnd={clearLongPress}
-            onTouchMove={clearLongPress}
-            onTouchCancel={clearLongPress}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              startLongPress();
-            }}
+            onDoubleClick={handleSetBackground}
+            onTouchEnd={handlePreviewTouchEnd}
           />
         </div>
       ) : (

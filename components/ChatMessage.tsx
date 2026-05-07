@@ -8,6 +8,7 @@ import AudioBubble from "./AudioBubble";
 import RoleBadge from "./RoleBadge";
 import { useLanguage } from "@/components/LanguageProvider";
 import { formatTime } from "@/lib/format";
+import { localizeSystemMessage } from "@/lib/systemMessage";
 import type { Message } from "@/types/message";
 import type { FamilyMember } from "@/types/member";
 
@@ -33,7 +34,7 @@ export default function ChatMessage({
     return (
       <div className="flex justify-center py-2">
         <span className="rounded-full bg-slate-200/70 px-3 py-1 text-xs text-slate-600">
-          {message.content}
+          {localizeSystemMessage(message.content, t)}
         </span>
       </div>
     );

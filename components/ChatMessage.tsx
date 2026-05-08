@@ -16,8 +16,10 @@ interface Props {
   message: Message;
   sender: FamilyMember | null;
   isMine: boolean;
-  canDelete?: boolean;
-  onRequestDelete?: (messageId: string) => void;
+  onRequestActions?: (
+    message: Message,
+    point: { x: number; y: number },
+  ) => void;
   onReplayEffect?: (message: Message) => void;
 }
 
@@ -25,15 +27,22 @@ export default function ChatMessage({
   message,
   sender,
   isMine,
-  canDelete,
-  onRequestDelete,
+  onRequestActions,
   onReplayEffect,
 }: Props) {
   const { language, t } = useLanguage();
+  const actionHandlers = useLongPress(
+    (point) => onRequestActions?.(message, point),
+    !!onRequestActions,
+  );
+  const actionClass = onRequestActions
+    ? "cursor-pointer select-none [-webkit-touch-callout:none] [-webkit-user-select:none]"
+    : "";
+
   if (message.message_type === "system") {
     return (
-      <div className="flex justify-center py-2">
-        <span className="rounded-full bg-slate-200/70 px-3 py-1 text-xs text-slate-600">
+      <div className="flex justify-center py-2" {...actionHandlers}>
+        <span className={`rounded-full bg-slate-200/70 px-3 py-1 text-xs text-slate-600 ${actionClass}`}>
           {localizeSystemMessage(message.content, t)}
         </span>
       </div>
@@ -43,7 +52,7 @@ export default function ChatMessage({
   if (message.deleted_at) {
     const label = isMine ? t("messageYouDeleted") : t("messageOtherDeleted");
     return (
-      <div className="flex justify-center py-2">
+      <div className="flex justify-center py-2" {...actionHandlers}>
         <span className="rounded-full bg-slate-100 px-3 py-1 text-xs italic text-slate-500">
           {label}
         </span>
@@ -77,8 +86,8 @@ export default function ChatMessage({
         <Bubble
           message={message}
           isMine={isMine}
-          canDelete={!!canDelete && !!onRequestDelete}
-          onRequestDelete={() => onRequestDelete?.(message.id)}
+          actionHandlers={actionHandlers}
+          actionClass={actionClass}
           onReplayEffect={
             message.effect_id && onReplayEffect
               ? () => onReplayEffect(message)
@@ -90,7 +99,10 @@ export default function ChatMessage({
   );
 }
 
-function useLongPress(onLongPress: () => void, enabled: boolean) {
+function useLongPress(
+  onLongPress: (point: { x: number; y: number }) => void,
+  enabled: boolean,
+) {
   const timeoutRef = useRef<number | null>(null);
   const firedRef = useRef(false);
 
@@ -101,13 +113,13 @@ function useLongPress(onLongPress: () => void, enabled: boolean) {
     }
   }
 
-  function start() {
+  function start(point: { x: number; y: number }) {
     if (!enabled) return;
     firedRef.current = false;
     clear();
     timeoutRef.current = window.setTimeout(() => {
       firedRef.current = true;
-      onLongPress();
+      onLongPress(point);
     }, 500);
   }
 
@@ -116,18 +128,25 @@ function useLongPress(onLongPress: () => void, enabled: boolean) {
   }
 
   return {
-    onTouchStart: start,
+    onTouchStart: (e: React.TouchEvent) => {
+      const touch = e.touches[0];
+      if (!touch) return;
+      start({ x: touch.clientX, y: touch.clientY });
+    },
     onTouchEnd: cancel,
     onTouchMove: cancel,
     onTouchCancel: cancel,
-    onMouseDown: start,
+    onMouseDown: (e: React.MouseEvent) => {
+      if (e.button !== 0) return;
+      start({ x: e.clientX, y: e.clientY });
+    },
     onMouseUp: cancel,
     onMouseLeave: cancel,
     onContextMenu: (e: React.MouseEvent) => {
       if (!enabled) return;
       e.preventDefault();
       cancel();
-      onLongPress();
+      onLongPress({ x: e.clientX, y: e.clientY });
     },
     // Suppress click events that follow a long-press
     onClickCapture: (e: React.MouseEvent) => {
@@ -143,22 +162,17 @@ function useLongPress(onLongPress: () => void, enabled: boolean) {
 function Bubble({
   message,
   isMine,
-  canDelete,
-  onRequestDelete,
+  actionHandlers,
+  actionClass,
   onReplayEffect,
 }: {
   message: Message;
   isMine: boolean;
-  canDelete: boolean;
-  onRequestDelete: () => void;
+  actionHandlers: ReturnType<typeof useLongPress>;
+  actionClass: string;
   onReplayEffect?: () => void;
 }) {
   const { t } = useLanguage();
-  const longPressHandlers = useLongPress(onRequestDelete, canDelete);
-  const longPressClass = canDelete
-    ? "cursor-pointer select-none [-webkit-touch-callout:none] [-webkit-user-select:none]"
-    : "";
-
   const base = `rounded-2xl px-3.5 py-2.5 text-sm shadow-sm ${
     isMine
       ? "bg-brand-500 text-white"
@@ -172,15 +186,15 @@ function Bubble({
 
     return (
       <div
-        {...longPressHandlers}
-        className={`overflow-hidden rounded-2xl ${longPressClass}`}
+        {...actionHandlers}
+        className={`overflow-hidden rounded-2xl ${actionClass}`}
       >
         <Link
           href={previewHref}
           className="block"
           onClickCapture={(e) => {
             // Don't navigate when the user is in the middle of a long-press.
-            longPressHandlers.onClickCapture(e);
+            actionHandlers.onClickCapture(e);
           }}
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -197,7 +211,7 @@ function Bubble({
 
   if (message.message_type === "audio" && message.audio_url) {
     return (
-      <div {...longPressHandlers} className={longPressClass}>
+      <div {...actionHandlers} className={actionClass}>
         <AudioBubble
           url={message.audio_url}
           durationMs={message.audio_duration_ms}
@@ -213,8 +227,8 @@ function Bubble({
         href={message.map_url ?? "#"}
         target="_blank"
         rel="noreferrer"
-        {...longPressHandlers}
-        className={`${base} flex flex-col gap-1 no-underline ${longPressClass}`}
+        {...actionHandlers}
+        className={`${base} flex flex-col gap-1 no-underline ${actionClass}`}
       >
         <span className="flex items-center gap-1.5 font-medium">
           <Image
@@ -252,10 +266,10 @@ function Bubble({
 
   return (
     <div
-      {...longPressHandlers}
+      {...actionHandlers}
       onClick={isEffect ? onReplayEffect : undefined}
       title={isEffect ? t("messageReplayEffect") : undefined}
-      className={`${base} flex items-center gap-1.5 whitespace-pre-wrap break-words ${longPressClass} ${effectClass}`}
+      className={`${base} flex items-center gap-1.5 whitespace-pre-wrap break-words ${actionClass} ${effectClass}`}
     >
       <span>{message.content}</span>
       {isEffect ? (

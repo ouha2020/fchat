@@ -11,7 +11,11 @@ import EnvWarning from "@/components/EnvWarning";
 import ImportantNoticeBar from "@/components/ImportantNoticeBar";
 import { useLanguage } from "@/components/LanguageProvider";
 import { clearSession, loadSession, saveSession, type LocalSession } from "@/lib/authLocal";
-import { CHAT_BACKGROUND_CHANGED, getChatBackground } from "@/lib/chatBackground";
+import {
+  CHAT_BACKGROUND_CHANGED,
+  getChatBackground,
+  setChatBackground,
+} from "@/lib/chatBackground";
 import { effectFromColumns, transformForSending, type Effect, detectEffect } from "@/lib/effects";
 import { humanizeError } from "@/lib/errors";
 import { validateMember } from "@/lib/familyService";
@@ -518,7 +522,7 @@ export default function ChatPage() {
   ) {
     if (!session) return;
     const menuWidth = 180;
-    const menuHeight = 112;
+    const menuHeight = 152;
     const x =
       typeof window === "undefined"
         ? point.x
@@ -528,6 +532,15 @@ export default function ChatPage() {
         ? point.y
         : Math.min(Math.max(8, point.y), window.innerHeight - menuHeight - 8);
     setMessageActionMenu({ messageId: message.id, x, y });
+  }
+
+  function handleSetMessageImageBackground(message: Message) {
+    if (!session || !message.image_url) return;
+    setMessageActionMenu(null);
+    const ok = window.confirm(t("previewSetBackgroundConfirm"));
+    if (!ok) return;
+    setChatBackground(session.family_id, message.image_url);
+    alert(t("previewBackgroundSet"));
   }
 
   async function handleAddImportant(messageId: string) {
@@ -789,6 +802,17 @@ export default function ChatPage() {
                 onClick={() => handleAddImportant(selectedActionMessage.id)}
               >
                 {t("importantSet")}
+              </button>
+            ) : null}
+            {selectedActionMessage.message_type === "image" &&
+            selectedActionMessage.image_url &&
+            !selectedActionMessage.deleted_at ? (
+              <button
+                type="button"
+                className="block w-full px-4 py-2 text-left text-slate-700 hover:bg-slate-50"
+                onClick={() => handleSetMessageImageBackground(selectedActionMessage)}
+              >
+                {t("previewSetBackground")}
               </button>
             ) : null}
             {selectedActionMessage.message_type !== "system" &&

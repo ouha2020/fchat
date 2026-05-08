@@ -450,11 +450,19 @@ export default function ChatPage() {
     [dismissedImportantIds, importantNotifications],
   );
 
+  const visibleImportantByMessageId = useMemo(() => {
+    const m = new Map<string, ImportantNotification>();
+    visibleImportantNotifications.forEach((notification) => {
+      m.set(notification.message_id, notification);
+    });
+    return m;
+  }, [visibleImportantNotifications]);
+
   const selectedActionMessage = messageActionMenu
     ? messages.find((m) => m.id === messageActionMenu.messageId) ?? null
     : null;
   const selectedActionNotification = selectedActionMessage
-    ? importantByMessageId.get(selectedActionMessage.id) ?? null
+    ? visibleImportantByMessageId.get(selectedActionMessage.id) ?? null
     : null;
 
   function pushOptimistic(
@@ -526,7 +534,14 @@ export default function ChatPage() {
     if (!session) return;
     setMessageActionMenu(null);
     try {
-      await addImportantNotification(session, messageId);
+      const notificationId = await addImportantNotification(session, messageId);
+      setDismissedImportantIds((prev) => {
+        if (!prev.has(notificationId)) return prev;
+        const next = new Set(prev);
+        next.delete(notificationId);
+        saveDismissedImportantIds(session.family_id, session.member_id, next);
+        return next;
+      });
       await refreshImportantNotifications(session.family_id);
     } catch (err) {
       alert(

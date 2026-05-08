@@ -22,6 +22,7 @@ const ERROR_MAP: Record<string, TranslationKey> = {
   invalid_message_type: "error_invalid_message_type",
   invalid_effect_id: "error_invalid_effect_id",
   message_not_found: "error_message_not_found",
+  important_notification_not_found: "error_important_notification_not_found",
   cannot_delete_system: "error_cannot_delete_system",
   not_allowed: "error_not_allowed",
   geolocation_unsupported: "error_geolocation_unsupported",

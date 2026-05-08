@@ -8,12 +8,23 @@ import ChatInput from "@/components/ChatInput";
 import ChatMessage from "@/components/ChatMessage";
 import EffectOverlay from "@/components/EffectOverlay";
 import EnvWarning from "@/components/EnvWarning";
+import ImportantNoticeBar from "@/components/ImportantNoticeBar";
 import { useLanguage } from "@/components/LanguageProvider";
 import { clearSession, loadSession, saveSession, type LocalSession } from "@/lib/authLocal";
 import { CHAT_BACKGROUND_CHANGED, getChatBackground } from "@/lib/chatBackground";
 import { effectFromColumns, transformForSending, type Effect, detectEffect } from "@/lib/effects";
 import { humanizeError } from "@/lib/errors";
 import { validateMember } from "@/lib/familyService";
+import {
+  dismissImportantNotification,
+  getDismissedImportantIds,
+  saveDismissedImportantIds,
+} from "@/lib/importantNotificationPreference";
+import {
+  addImportantNotification,
+  listImportantNotifications,
+  removeImportantNotification,
+} from "@/lib/importantNotificationService";
 import { listMembers } from "@/lib/memberService";
 import {
   deleteMessage,
@@ -38,6 +49,7 @@ import {
 } from "@/lib/notificationPreference";
 import type { RecordingResult } from "@/lib/recordingService";
 import { getSupabase, isSupabaseConfigured } from "@/lib/supabaseClient";
+import type { ImportantNotification } from "@/types/importantNotification";
 import type { FamilyMember } from "@/types/member";
 import type { Message } from "@/types/message";
 
@@ -47,11 +59,26 @@ export default function ChatPage() {
   const [session, setSession] = useState<LocalSession | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [members, setMembers] = useState<FamilyMember[]>([]);
+  const [importantNotifications, setImportantNotifications] = useState<
+    ImportantNotification[]
+  >([]);
+  const [dismissedImportantIds, setDismissedImportantIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(
+    null,
+  );
+  const [messageActionMenu, setMessageActionMenu] = useState<{
+    messageId: string;
+    x: number;
+    y: number;
+  } | null>(null);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [chatBackgroundUrl, setChatBackgroundUrl] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const membersRef = useRef<FamilyMember[]>([]);
   useEffect(() => {
     membersRef.current = members;
@@ -132,6 +159,11 @@ export default function ChatPage() {
     setNotifyEnabled(getNotificationsEnabled(session.family_id));
   }, [session]);
 
+  const refreshImportantNotifications = useCallback(async (familyId: string) => {
+    const rows = await listImportantNotifications(familyId);
+    setImportantNotifications(rows);
+  }, []);
+
   // Title badge for unread count.
   useEffect(() => {
     if (typeof document === "undefined") return;
@@ -185,13 +217,18 @@ export default function ChatPage() {
         saveSession(fresh);
         setSession(fresh);
 
-        const [msgs, mems] = await Promise.all([
+        const [msgs, mems, important] = await Promise.all([
           listMessages(fresh.family_id),
           listMembers(fresh.family_id),
+          listImportantNotifications(fresh.family_id),
         ]);
         if (cancelled) return;
         setMessages(msgs);
         setMembers(mems);
+        setImportantNotifications(important);
+        setDismissedImportantIds(
+          getDismissedImportantIds(fresh.family_id, fresh.member_id),
+        );
       } catch (err) {
         if (!cancelled) setError(humanizeError(err));
       } finally {
@@ -305,6 +342,22 @@ export default function ChatPage() {
         }
       });
 
+    const importantChannel = sb
+      .channel(`important_notifications:${session.family_id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "important_notifications",
+          filter: `family_id=eq.${session.family_id}`,
+        },
+        () => {
+          refreshImportantNotifications(session.family_id).catch(() => undefined);
+        },
+      )
+      .subscribe();
+
     const membersChannel = sb
       .channel(`members:${session.family_id}`)
       .on(
@@ -361,10 +414,11 @@ export default function ChatPage() {
 
     return () => {
       sb.removeChannel(messagesChannel);
+      sb.removeChannel(importantChannel);
       sb.removeChannel(membersChannel);
       window.clearInterval(interval);
     };
-  }, [router, session, t]);
+  }, [refreshImportantNotifications, router, session, t]);
 
   // Auto scroll to bottom on new messages.
   useEffect(() => {
@@ -378,6 +432,30 @@ export default function ChatPage() {
     members.forEach((mem) => m.set(mem.id, mem));
     return m;
   }, [members]);
+
+  const importantByMessageId = useMemo(() => {
+    const m = new Map<string, ImportantNotification>();
+    importantNotifications.forEach((notification) => {
+      if (!notification.removed_at) m.set(notification.message_id, notification);
+    });
+    return m;
+  }, [importantNotifications]);
+
+  const visibleImportantNotifications = useMemo(
+    () =>
+      importantNotifications.filter(
+        (notification) =>
+          !notification.removed_at && !dismissedImportantIds.has(notification.id),
+      ),
+    [dismissedImportantIds, importantNotifications],
+  );
+
+  const selectedActionMessage = messageActionMenu
+    ? messages.find((m) => m.id === messageActionMenu.messageId) ?? null
+    : null;
+  const selectedActionNotification = selectedActionMessage
+    ? importantByMessageId.get(selectedActionMessage.id) ?? null
+    : null;
 
   function pushOptimistic(
     partial: Pick<Message, "id" | "message_type"> & Partial<Message>,
@@ -424,6 +502,96 @@ export default function ChatPage() {
     } catch (err) {
       alert(humanizeError(err, language));
     }
+  }
+
+  function openMessageActions(
+    message: Message,
+    point: { x: number; y: number },
+  ) {
+    if (!session) return;
+    const menuWidth = 180;
+    const menuHeight = 112;
+    const x =
+      typeof window === "undefined"
+        ? point.x
+        : Math.min(Math.max(8, point.x), window.innerWidth - menuWidth - 8);
+    const y =
+      typeof window === "undefined"
+        ? point.y
+        : Math.min(Math.max(8, point.y), window.innerHeight - menuHeight - 8);
+    setMessageActionMenu({ messageId: message.id, x, y });
+  }
+
+  async function handleAddImportant(messageId: string) {
+    if (!session) return;
+    setMessageActionMenu(null);
+    try {
+      await addImportantNotification(session, messageId);
+      await refreshImportantNotifications(session.family_id);
+    } catch (err) {
+      alert(
+        t("importantSetFailed", {
+          message: humanizeError(err, language),
+        }),
+      );
+    }
+  }
+
+  async function handleRemoveImportant(notificationId: string) {
+    if (!session) return;
+    setMessageActionMenu(null);
+    try {
+      await removeImportantNotification(session, notificationId);
+      await refreshImportantNotifications(session.family_id);
+      setDismissedImportantIds((prev) => {
+        const next = new Set(prev);
+        next.delete(notificationId);
+        saveDismissedImportantIds(session.family_id, session.member_id, next);
+        return next;
+      });
+    } catch (err) {
+      alert(
+        t("importantRemoveFailed", {
+          message: humanizeError(err, language),
+        }),
+      );
+    }
+  }
+
+  function scrollToMessage(messageId: string) {
+    const el = messageRefs.current.get(messageId);
+    if (!el) return;
+    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    setHighlightedMessageId(messageId);
+    window.setTimeout(() => {
+      setHighlightedMessageId((current) =>
+        current === messageId ? null : current,
+      );
+    }, 1500);
+  }
+
+  function handleSelectImportant(notification: ImportantNotification) {
+    if (!session) return;
+    const next = dismissImportantNotification(
+      session.family_id,
+      session.member_id,
+      notification.id,
+    );
+    setDismissedImportantIds(next);
+
+    if (notification.message && !messages.some((m) => m.id === notification.message_id)) {
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === notification.message_id)) return prev;
+        return [...prev, notification.message as Message].sort(
+          (a, b) =>
+            new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+        );
+      });
+      window.setTimeout(() => scrollToMessage(notification.message_id), 60);
+      return;
+    }
+
+    scrollToMessage(notification.message_id);
   }
 
   function tryTriggerEffect(messageId: string, eff: Effect | null) {
@@ -579,6 +747,53 @@ export default function ChatPage() {
           onDone={handleEffectDone}
         />
       ) : null}
+      {messageActionMenu && selectedActionMessage ? (
+        <>
+          <button
+            type="button"
+            aria-label={t("commonCancel")}
+            className="fixed inset-0 z-40 cursor-default bg-transparent"
+            onClick={() => setMessageActionMenu(null)}
+          />
+          <div
+            className="fixed z-50 min-w-44 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 text-sm shadow-xl"
+            style={{ left: messageActionMenu.x, top: messageActionMenu.y }}
+          >
+            {selectedActionNotification ? (
+              <button
+                type="button"
+                className="block w-full px-4 py-2 text-left text-slate-700 hover:bg-slate-50"
+                onClick={() => handleRemoveImportant(selectedActionNotification.id)}
+              >
+                {t("importantUnset")}
+              </button>
+            ) : !selectedActionMessage.deleted_at ? (
+              <button
+                type="button"
+                className="block w-full px-4 py-2 text-left text-slate-700 hover:bg-slate-50"
+                onClick={() => handleAddImportant(selectedActionMessage.id)}
+              >
+                {t("importantSet")}
+              </button>
+            ) : null}
+            {selectedActionMessage.message_type !== "system" &&
+            !selectedActionMessage.deleted_at &&
+            (selectedActionMessage.sender_member_id === session.member_id ||
+              session.is_admin) ? (
+              <button
+                type="button"
+                className="block w-full px-4 py-2 text-left text-rose-600 hover:bg-rose-50"
+                onClick={() => {
+                  setMessageActionMenu(null);
+                  void handleDeleteMessage(selectedActionMessage.id);
+                }}
+              >
+                {t("importantRecallMessage")}
+              </button>
+            ) : null}
+          </div>
+        </>
+      ) : null}
       <header className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3">
         <div>
           <div className="text-sm text-slate-500">{t("chatFamily")}</div>
@@ -637,6 +852,13 @@ export default function ChatPage() {
         </div>
       ) : null}
 
+      <ImportantNoticeBar
+        notifications={visibleImportantNotifications}
+        members={memberMap}
+        onSelect={handleSelectImportant}
+        onRemove={(notification) => handleRemoveImportant(notification.id)}
+      />
+
       <div
         ref={scrollRef}
         className="flex-1 min-h-0 space-y-4 overflow-y-auto overscroll-contain bg-slate-50 bg-cover bg-center bg-no-repeat px-3 py-4 sm:px-5"
@@ -655,24 +877,35 @@ export default function ChatPage() {
         ) : (
           messages.map((m) => {
             const isMine = m.sender_member_id === session.member_id;
-            const canDelete =
-              m.message_type !== "system" &&
-              !m.deleted_at &&
-              (isMine || session.is_admin);
+            const canOpenActions = !m.deleted_at || importantByMessageId.has(m.id);
             return (
-              <ChatMessage
+              <div
                 key={m.id}
-                message={m}
-                sender={
-                  m.sender_member_id
-                    ? memberMap.get(m.sender_member_id) ?? null
-                    : null
-                }
-                isMine={isMine}
-                canDelete={canDelete}
-                onRequestDelete={canDelete ? handleDeleteMessage : undefined}
-                onReplayEffect={handleReplayEffect}
-              />
+                ref={(el) => {
+                  if (el) {
+                    messageRefs.current.set(m.id, el);
+                  } else {
+                    messageRefs.current.delete(m.id);
+                  }
+                }}
+                className={`rounded-3xl transition ${
+                  highlightedMessageId === m.id
+                    ? "bg-amber-100/80 ring-2 ring-amber-300"
+                    : ""
+                }`}
+              >
+                <ChatMessage
+                  message={m}
+                  sender={
+                    m.sender_member_id
+                      ? memberMap.get(m.sender_member_id) ?? null
+                      : null
+                  }
+                  isMine={isMine}
+                  onRequestActions={canOpenActions ? openMessageActions : undefined}
+                  onReplayEffect={handleReplayEffect}
+                />
+              </div>
             );
           })
         )}

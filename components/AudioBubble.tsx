@@ -9,12 +9,19 @@ interface Props {
   url: string;
   durationMs: number | null;
   isMine: boolean;
+  highlighted?: boolean;
 }
 
 const BAR_COUNT = 14;
 const PLAYED_AUDIO_PREFIX = "family-chat:played-audio:";
 
-export default function AudioBubble({ messageId, url, durationMs, isMine }: Props) {
+export default function AudioBubble({
+  messageId,
+  url,
+  durationMs,
+  isMine,
+  highlighted,
+}: Props) {
   const [playing, setPlaying] = useState(false);
   const [played, setPlayed] = useState(isMine);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -85,7 +92,7 @@ export default function AudioBubble({ messageId, url, durationMs, isMine }: Prop
       style={{ width: `${width}px`, maxWidth: "100%" }}
       className={`relative flex items-center gap-2 rounded-full px-3 py-2 text-sm shadow-sm transition active:scale-[0.98] ${baseColors} ${
         isMine ? "flex-row-reverse" : "flex-row"
-      }`}
+      } ${highlighted ? "ring-2 ring-amber-300" : ""}`}
     >
       {!isMine && !played ? (
         <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-rose-500 ring-2 ring-white" />

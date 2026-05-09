@@ -99,8 +99,11 @@ export default function ChatInput({
 
   if (recording) {
     return (
-      <div className="border-t border-slate-200 bg-white px-3 py-2 sm:px-4">
-        <div className="flex items-center gap-2">
+      <div
+        className="fixed inset-x-0 bottom-0 z-50 mx-auto w-full max-w-3xl border-t border-slate-200 bg-white"
+        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+      >
+        <div className="flex items-center gap-2 px-3 py-2 sm:px-4">
           <button
             type="button"
             className="btn-ghost h-12 w-12 px-0 text-2xl leading-none"
@@ -128,8 +131,11 @@ export default function ChatInput({
   }
 
   return (
-    <div className="border-t border-slate-200 bg-white px-3 py-2 sm:px-4">
-      <div className="flex items-center gap-2">
+    <div
+      className="fixed inset-x-0 bottom-0 z-50 mx-auto w-full max-w-3xl border-t border-slate-200 bg-white"
+      style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+    >
+      <div className="flex items-center gap-2 px-3 py-2 sm:px-4">
         <input
           ref={fileRef}
           type="file"

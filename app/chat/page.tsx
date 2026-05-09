@@ -82,6 +82,7 @@ export default function ChatPage() {
   const [error, setError] = useState<string | null>(null);
   const [chatBackgroundUrl, setChatBackgroundUrl] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
   const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const membersRef = useRef<FamilyMember[]>([]);
   useEffect(() => {
@@ -426,9 +427,10 @@ export default function ChatPage() {
 
   // Auto scroll to bottom on new messages.
   useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
+    messagesEndRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "end",
+    });
   }, [messages.length]);
 
   const memberMap = useMemo(() => {
@@ -589,7 +591,7 @@ export default function ChatPage() {
   function scrollToMessage(messageId: string) {
     const el = messageRefs.current.get(messageId);
     if (!el) return;
-    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    el.scrollIntoView({ block: "end", behavior: "smooth" });
     setHighlightedMessageId(messageId);
     window.setTimeout(() => {
       setHighlightedMessageId((current) =>
@@ -902,14 +904,15 @@ export default function ChatPage() {
 
       <div
         ref={scrollRef}
-        className="flex-1 min-h-0 space-y-4 overflow-y-auto overscroll-contain bg-slate-50 bg-cover bg-center bg-no-repeat px-3 py-4 sm:px-5"
-        style={
-          chatBackgroundUrl
+        className="flex-1 min-h-0 space-y-4 overflow-y-auto overscroll-contain bg-slate-50 bg-cover bg-center bg-no-repeat px-3 pt-4 sm:px-5"
+        style={{
+          paddingBottom: "calc(88px + env(safe-area-inset-bottom))",
+          ...(chatBackgroundUrl
             ? {
                 backgroundImage: `linear-gradient(rgba(248, 250, 252, 0.82), rgba(248, 250, 252, 0.82)), url("${chatBackgroundUrl}")`,
               }
-            : undefined
-        }
+            : {}),
+        }}
       >
         {messages.length === 0 ? (
           <div className="py-10 text-center text-sm text-slate-400">
@@ -929,11 +932,11 @@ export default function ChatPage() {
                     messageRefs.current.delete(m.id);
                   }
                 }}
-                className={`rounded-3xl transition ${
-                  highlightedMessageId === m.id
-                    ? "bg-amber-100/80 ring-2 ring-amber-300"
-                    : ""
-                }`}
+                className="scroll-mb-28 rounded-3xl"
+                style={{
+                  scrollMarginBottom:
+                    "calc(96px + env(safe-area-inset-bottom))",
+                }}
               >
                 <ChatMessage
                   message={m}
@@ -943,6 +946,7 @@ export default function ChatPage() {
                       : null
                   }
                   isMine={isMine}
+                  highlighted={highlightedMessageId === m.id}
                   onRequestActions={canOpenActions ? openMessageActions : undefined}
                   onReplayEffect={handleReplayEffect}
                 />
@@ -950,6 +954,7 @@ export default function ChatPage() {
             );
           })
         )}
+        <div ref={messagesEndRef} className="h-4" aria-hidden />
       </div>
 
       <ChatInput

@@ -25,6 +25,7 @@ interface Props {
   message: Message;
   sender: FamilyMember | null;
   isMine: boolean;
+  highlighted?: boolean;
   onRequestActions?: (
     message: Message,
     point: { x: number; y: number },
@@ -36,6 +37,7 @@ export default function ChatMessage({
   message,
   sender,
   isMine,
+  highlighted,
   onRequestActions,
   onReplayEffect,
 }: Props) {
@@ -50,6 +52,7 @@ export default function ChatMessage({
   const roleLabel = sender ? t(ROLE_KEYS[sender.role]) : "";
   const showRole =
     !!sender && sender.nickname.trim().toLowerCase() !== roleLabel.trim().toLowerCase();
+  const highlightClass = highlighted ? "ring-2 ring-amber-300" : "";
 
   if (message.message_type === "system") {
     const tone = getSystemMessageTone(message.content);
@@ -61,7 +64,7 @@ export default function ChatMessage({
           : "bg-slate-200/70 text-slate-600";
     return (
       <div className="flex justify-center py-2" {...actionHandlers}>
-        <span className={`rounded-full px-3 py-1 text-xs ${toneClass} ${actionClass}`}>
+        <span className={`rounded-full px-3 py-1 text-xs ${toneClass} ${actionClass} ${highlightClass}`}>
           {localizeSystemMessage(message.content, t)}
         </span>
       </div>
@@ -72,7 +75,7 @@ export default function ChatMessage({
     const label = isMine ? t("messageYouDeleted") : t("messageOtherDeleted");
     return (
       <div className="flex justify-center py-2" {...actionHandlers}>
-        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs italic text-slate-500">
+        <span className={`rounded-full bg-slate-100 px-3 py-1 text-xs italic text-slate-500 ${highlightClass}`}>
           {label}
         </span>
       </div>
@@ -113,6 +116,7 @@ export default function ChatMessage({
         <Bubble
           message={message}
           isMine={isMine}
+          highlighted={highlighted}
           actionHandlers={actionHandlers}
           actionClass={actionClass}
           onReplayEffect={
@@ -189,12 +193,14 @@ function useLongPress(
 function Bubble({
   message,
   isMine,
+  highlighted,
   actionHandlers,
   actionClass,
   onReplayEffect,
 }: {
   message: Message;
   isMine: boolean;
+  highlighted?: boolean;
   actionHandlers: ReturnType<typeof useLongPress>;
   actionClass: string;
   onReplayEffect?: () => void;
@@ -205,6 +211,7 @@ function Bubble({
       ? "bg-brand-500 text-white"
       : "bg-white text-slate-800 ring-1 ring-slate-100"
   }`;
+  const highlightClass = highlighted ? "ring-2 ring-amber-300" : "";
 
   if (message.message_type === "image" && message.image_url) {
     const previewHref = `/image-preview?src=${encodeURIComponent(
@@ -214,7 +221,7 @@ function Bubble({
     return (
       <div
         {...actionHandlers}
-        className={`overflow-hidden rounded-2xl ${actionClass}`}
+        className={`overflow-hidden rounded-2xl ${actionClass} ${highlightClass}`}
       >
         <Link
           href={previewHref}
@@ -244,6 +251,7 @@ function Bubble({
           url={message.audio_url}
           durationMs={message.audio_duration_ms}
           isMine={isMine}
+          highlighted={highlighted}
         />
       </div>
     );
@@ -262,7 +270,7 @@ function Bubble({
         target="_blank"
         rel="noreferrer"
         {...actionHandlers}
-        className={`${base} flex min-w-40 max-w-56 flex-col gap-1 no-underline ${actionClass}`}
+        className={`${base} flex min-w-40 max-w-56 flex-col gap-1 no-underline ${actionClass} ${highlightClass}`}
       >
         <span className="flex items-center gap-1.5 text-sm font-semibold">
           <span aria-hidden className="text-xs">
@@ -292,7 +300,7 @@ function Bubble({
       {...actionHandlers}
       onClick={isEffect ? onReplayEffect : undefined}
       title={isEffect ? t("messageReplayEffect") : undefined}
-      className={`${base} flex items-center gap-1.5 whitespace-pre-wrap break-words ${actionClass} ${effectClass}`}
+      className={`${base} flex items-center gap-1.5 whitespace-pre-wrap break-words ${actionClass} ${effectClass} ${highlightClass}`}
     >
       <span>{message.content}</span>
       {isEffect ? (

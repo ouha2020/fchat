@@ -53,7 +53,7 @@ export default function ChatMessage({
   const showRole =
     !!sender && sender.nickname.trim().toLowerCase() !== roleLabel.trim().toLowerCase();
   const highlightClass = highlighted
-    ? "ring-[3px] ring-amber-400 shadow-[0_0_0_2px_rgba(255,255,255,0.85),0_0_14px_rgba(245,158,11,0.45)]"
+    ? "important-message-highlight"
     : "";
 
   if (message.message_type === "system") {
@@ -214,7 +214,7 @@ function Bubble({
       : "bg-white text-slate-800 ring-1 ring-slate-100"
   }`;
   const highlightClass = highlighted
-    ? "ring-[3px] ring-amber-400 shadow-[0_0_0_2px_rgba(255,255,255,0.85),0_0_14px_rgba(245,158,11,0.45)]"
+    ? "important-message-highlight"
     : "";
 
   if (message.message_type === "image" && message.image_url) {

@@ -33,6 +33,8 @@ export default function ChatInput({
   const [elapsed, setElapsed] = useState(0);
   const [actionsOpen, setActionsOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
+  const moreButtonRef = useRef<HTMLButtonElement>(null);
 
   // Tick recording timer
   useEffect(() => {
@@ -50,6 +52,29 @@ export default function ChatInput({
     void handleStopRecording();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [elapsed, recording]);
+
+  useEffect(() => {
+    if (!actionsOpen) return;
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (moreMenuRef.current?.contains(target)) return;
+      if (moreButtonRef.current?.contains(target)) return;
+      setActionsOpen(false);
+    }
+
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setActionsOpen(false);
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [actionsOpen]);
 
   async function submit() {
     const trimmed = text.trim();
@@ -154,6 +179,7 @@ export default function ChatInput({
     >
       {actionsOpen ? (
         <div
+          ref={moreMenuRef}
           className="absolute bottom-full left-3 mb-2 flex items-center gap-2 rounded-2xl border border-slate-200/80 bg-white/95 p-2 shadow-lg shadow-slate-200/70 backdrop-blur sm:left-4"
           role="menu"
         >
@@ -170,12 +196,12 @@ export default function ChatInput({
           <button
             type="button"
             className={iconButtonClass}
-            style={{ backgroundImage: "url(/ui-icons/voice.png)" }}
-            aria-label={t("inputRecordVoice")}
-            title={t("inputRecordVoice")}
+            style={{ backgroundImage: "url(/ui-icons/location.png)" }}
+            aria-label={t("inputSendLocation")}
+            title={t("inputSendLocation")}
             role="menuitem"
             disabled={disabled || sending}
-            onClick={() => void handleStartRecording()}
+            onClick={handleSendLocation}
           />
         </div>
       ) : null}
@@ -192,6 +218,7 @@ export default function ChatInput({
           }}
         />
         <button
+          ref={moreButtonRef}
           type="button"
           className={iconButtonClass}
           style={{ backgroundImage: "url(/ui-icons/plus.png)" }}
@@ -205,11 +232,11 @@ export default function ChatInput({
         <button
           type="button"
           className={iconButtonClass}
-          style={{ backgroundImage: "url(/ui-icons/location.png)" }}
-          aria-label={t("inputSendLocation")}
-          title={t("inputSendLocation")}
+          style={{ backgroundImage: "url(/ui-icons/voice.png)" }}
+          aria-label={t("inputRecordVoice")}
+          title={t("inputRecordVoice")}
           disabled={disabled || sending}
-          onClick={handleSendLocation}
+          onClick={() => void handleStartRecording()}
         />
         <textarea
           rows={1}

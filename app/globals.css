@@ -94,3 +94,27 @@ body {
     transform: scaleY(1.15);
   }
 }
+
+.important-message-highlight {
+  position: relative;
+  z-index: 1;
+  outline: 4px solid rgba(245, 158, 11, 0.98);
+  outline-offset: 3px;
+  box-shadow:
+    0 0 0 7px rgba(255, 255, 255, 0.92),
+    0 0 0 12px rgba(251, 191, 36, 0.48),
+    0 14px 30px rgba(245, 158, 11, 0.38) !important;
+  animation: important-message-focus 0.95s ease-in-out 3;
+}
+
+@keyframes important-message-focus {
+  0%,
+  100% {
+    outline-offset: 3px;
+    filter: brightness(1);
+  }
+  45% {
+    outline-offset: 7px;
+    filter: brightness(1.08);
+  }
+}

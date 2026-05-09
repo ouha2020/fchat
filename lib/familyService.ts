@@ -17,6 +17,12 @@ interface JoinFamilyInput {
   role: FamilyRole;
 }
 
+interface RejoinFamilyMemberInput {
+  familyCode: string;
+  nickname: string;
+  adminPassword: string;
+}
+
 export async function createFamily(
   input: CreateFamilyInput,
 ): Promise<LocalSession> {
@@ -64,6 +70,31 @@ export async function joinFamily(
     member_token: row.member_token,
     nickname: input.nickname.trim(),
     role: input.role,
+    is_admin: row.is_admin,
+  };
+}
+
+export async function rejoinFamilyMember(
+  input: RejoinFamilyMemberInput,
+): Promise<LocalSession> {
+  const sb = getSupabase();
+  const { data, error } = await sb.rpc("rejoin_family_member", {
+    p_family_code: input.familyCode,
+    p_nickname: input.nickname,
+    p_admin_password: input.adminPassword,
+  });
+  if (error) throw error;
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) throw new Error("rejoin_family_member_failed");
+
+  return {
+    family_id: row.family_id,
+    family_name: row.family_name,
+    family_code: row.family_code,
+    member_id: row.member_id,
+    member_token: row.member_token,
+    nickname: row.nickname,
+    role: row.role as FamilyRole,
     is_admin: row.is_admin,
   };
 }

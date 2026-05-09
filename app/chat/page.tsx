@@ -95,6 +95,32 @@ export default function ChatPage() {
   const triggeredEffectIdsRef = useRef<Set<string>>(new Set());
   const handleEffectDone = useCallback(() => setEffectShow(null), []);
 
+  useEffect(() => {
+    const html = document.documentElement;
+    const body = document.body;
+    const previous = {
+      htmlOverflow: html.style.overflow,
+      htmlOverscrollBehavior: html.style.overscrollBehavior,
+      bodyOverflow: body.style.overflow,
+      bodyHeight: body.style.height,
+      bodyOverscrollBehavior: body.style.overscrollBehavior,
+    };
+
+    html.style.overflow = "hidden";
+    html.style.overscrollBehavior = "none";
+    body.style.overflow = "hidden";
+    body.style.height = "100dvh";
+    body.style.overscrollBehavior = "none";
+
+    return () => {
+      html.style.overflow = previous.htmlOverflow;
+      html.style.overscrollBehavior = previous.htmlOverscrollBehavior;
+      body.style.overflow = previous.bodyOverflow;
+      body.style.height = previous.bodyHeight;
+      body.style.overscrollBehavior = previous.bodyOverscrollBehavior;
+    };
+  }, []);
+
   const handleReplayEffect = useCallback((m: Message) => {
     const eff = effectFromColumns(m.effect_id, m.effect_caption);
     if (!eff) return;
@@ -769,7 +795,7 @@ export default function ChatPage() {
   }
 
   return (
-    <div className="flex h-[100dvh] flex-col">
+    <div className="flex h-[100dvh] overflow-hidden flex-col">
       {effectShow ? (
         <EffectOverlay
           key={effectShow.key}

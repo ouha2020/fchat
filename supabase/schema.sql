@@ -265,7 +265,7 @@ begin
       from family_members fm
      where fm.family_id = v_family.id
        and fm.nickname = v_clean_nickname
-       and fm.status = 'active'
+       and fm.status in ('active', 'removed')
   ) then
     raise exception 'nickname_taken';
   end if;
@@ -354,7 +354,8 @@ begin
     from family_members fm
    where fm.family_id = v_family.id
      and fm.nickname = v_clean_nickname
-     and fm.status = 'active'
+     and fm.status in ('active', 'removed')
+   order by fm.is_admin desc, fm.created_at
    limit 1;
 
   if not found then
@@ -363,8 +364,57 @@ begin
 
   v_token := encode(gen_random_bytes(24), 'hex');
 
+  update messages
+     set sender_member_id = v_member.id
+   where sender_member_id in (
+     select id
+       from family_members fm
+      where fm.family_id = v_family.id
+        and fm.nickname = v_clean_nickname
+        and fm.id <> v_member.id
+   );
+
+  update messages
+     set deleted_by_member_id = v_member.id
+   where deleted_by_member_id in (
+     select id
+       from family_members fm
+      where fm.family_id = v_family.id
+        and fm.nickname = v_clean_nickname
+        and fm.id <> v_member.id
+   );
+
+  update important_notifications
+     set created_by_member_id = v_member.id
+   where created_by_member_id in (
+     select id
+       from family_members fm
+      where fm.family_id = v_family.id
+        and fm.nickname = v_clean_nickname
+        and fm.id <> v_member.id
+   );
+
+  update important_notifications
+     set removed_by_member_id = v_member.id
+   where removed_by_member_id in (
+     select id
+       from family_members fm
+      where fm.family_id = v_family.id
+        and fm.nickname = v_clean_nickname
+        and fm.id <> v_member.id
+   );
+
   update family_members
-     set member_token_hash = hash_secret(v_token),
+     set status = 'removed',
+         updated_at = now()
+   where family_id = v_family.id
+     and nickname = v_clean_nickname
+     and id <> v_member.id
+     and status = 'active';
+
+  update family_members
+     set status = 'active',
+         member_token_hash = hash_secret(v_token),
          last_active_at = now(),
          updated_at = now()
    where id = v_member.id;
@@ -688,6 +738,7 @@ language plpgsql
 as $$
 declare
   v_member family_members%rowtype;
+  v_active_admin_count int;
 begin
   select * into v_member
     from family_members
@@ -697,6 +748,18 @@ begin
 
   if not found then
     raise exception 'unauthorized';
+  end if;
+
+  if v_member.is_admin then
+    select count(*) into v_active_admin_count
+      from family_members
+     where family_id = v_member.family_id
+       and is_admin = true
+       and status = 'active';
+
+    if v_active_admin_count <= 1 then
+      raise exception 'last_admin_cannot_leave';
+    end if;
   end if;
 
   update family_members

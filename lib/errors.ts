@@ -18,6 +18,7 @@ const ERROR_MAP: Record<string, TranslationKey> = {
   not_admin: "error_not_admin",
   invalid_admin_password: "error_invalid_admin_password",
   member_not_found: "error_member_not_found",
+  last_admin_cannot_leave: "error_last_admin_cannot_leave",
   cannot_remove_self: "error_cannot_remove_self",
   invalid_message_type: "error_invalid_message_type",
   invalid_effect_id: "error_invalid_effect_id",

@@ -930,7 +930,7 @@ export default function ChatPage() {
 
       <div
         ref={scrollRef}
-        className="flex-1 min-h-0 space-y-4 overflow-y-auto overscroll-contain bg-slate-50 bg-cover bg-center bg-no-repeat px-3 pt-4 sm:px-5"
+        className="no-scrollbar flex-1 min-h-0 space-y-4 overflow-y-auto overscroll-contain bg-slate-50 bg-cover bg-center bg-no-repeat px-3 pt-4 sm:px-5"
         style={{
           paddingBottom: "calc(88px + env(safe-area-inset-bottom))",
           ...(chatBackgroundUrl

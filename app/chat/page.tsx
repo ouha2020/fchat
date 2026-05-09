@@ -223,7 +223,7 @@ export default function ChatPage() {
 
         const [msgs, mems, important] = await Promise.all([
           listMessages(fresh.family_id),
-          listMembers(fresh.family_id),
+          listMembers(fresh.family_id, { includeRemoved: true }),
           listImportantNotifications(fresh.family_id),
         ]);
         if (cancelled) return;
@@ -286,7 +286,7 @@ export default function ChatPage() {
             incoming.sender_member_id &&
             !membersRef.current.some((m) => m.id === incoming.sender_member_id)
           ) {
-            listMembers(session.family_id)
+            listMembers(session.family_id, { includeRemoved: true })
               .then(setMembers)
               .catch(() => undefined);
           }
@@ -373,7 +373,7 @@ export default function ChatPage() {
           filter: `family_id=eq.${session.family_id}`,
         },
         (payload) => {
-          listMembers(session.family_id)
+          listMembers(session.family_id, { includeRemoved: true })
             .then(setMembers)
             .catch(() => undefined);
           // If my own row got flipped to status='removed', kick myself out.

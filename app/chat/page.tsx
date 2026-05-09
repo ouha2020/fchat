@@ -490,13 +490,26 @@ export default function ChatPage() {
     };
   }, [refreshImportantNotifications, router, session, t]);
 
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    const scroll = () => {
+      messagesEndRef.current?.scrollIntoView({
+        behavior,
+        block: "end",
+      });
+    };
+
+    requestAnimationFrame(() => {
+      scroll();
+      requestAnimationFrame(scroll);
+    });
+    window.setTimeout(scroll, 180);
+    window.setTimeout(scroll, 600);
+  }, []);
+
   // Auto scroll to bottom on new messages.
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({
-      behavior: "smooth",
-      block: "end",
-    });
-  }, [messages.length]);
+    scrollToBottom("smooth");
+  }, [messages.length, scrollToBottom]);
 
   const memberMap = useMemo(() => {
     const m = new Map<string, FamilyMember>();
@@ -563,6 +576,7 @@ export default function ChatPage() {
       };
       return [...prev, optimistic];
     });
+    scrollToBottom("smooth");
   }
 
   async function handleDeleteMessage(messageId: string) {

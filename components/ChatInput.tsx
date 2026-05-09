@@ -153,13 +153,17 @@ export default function ChatInput({
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
       {actionsOpen ? (
-        <div className="absolute bottom-full left-3 mb-2 flex items-center gap-2 rounded-2xl border border-slate-200/80 bg-white/95 p-2 shadow-lg shadow-slate-200/70 backdrop-blur sm:left-4">
+        <div
+          className="absolute bottom-full left-3 mb-2 flex items-center gap-2 rounded-2xl border border-slate-200/80 bg-white/95 p-2 shadow-lg shadow-slate-200/70 backdrop-blur sm:left-4"
+          role="menu"
+        >
           <button
             type="button"
             className={iconButtonClass}
             style={{ backgroundImage: "url(/ui-icons/image.png)" }}
             aria-label={t("inputSendImage")}
             title={t("inputSendImage")}
+            role="menuitem"
             disabled={disabled || sending}
             onClick={handlePickImage}
           />
@@ -169,6 +173,7 @@ export default function ChatInput({
             style={{ backgroundImage: "url(/ui-icons/voice.png)" }}
             aria-label={t("inputRecordVoice")}
             title={t("inputRecordVoice")}
+            role="menuitem"
             disabled={disabled || sending}
             onClick={() => void handleStartRecording()}
           />
@@ -193,6 +198,7 @@ export default function ChatInput({
           aria-label={t("inputMoreActions")}
           title={t("inputMoreActions")}
           disabled={disabled || sending}
+          aria-haspopup="menu"
           aria-expanded={actionsOpen}
           onClick={() => setActionsOpen((open) => !open)}
         />

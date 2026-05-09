@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import { useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
 import { formatTime } from "@/lib/format";
@@ -25,62 +26,86 @@ export default function ImportantNoticeBar({
   onRemove,
 }: Props) {
   const { language, t } = useLanguage();
+  const [expanded, setExpanded] = useState(false);
 
   if (notifications.length === 0) return null;
 
+  const latest = notifications[0] ?? null;
+  const latestPreview = latest ? buildPreview(latest.message, t).text : "";
+
   return (
     <section className="border-b border-amber-100 bg-white/85 px-3 py-2 backdrop-blur sm:px-5">
-      <div className="mb-1 flex items-center justify-between text-xs font-medium text-amber-700">
-        <span>{t("importantTitle")}</span>
-        <span className="tabular-nums">{notifications.length}</span>
-      </div>
-      <div className="max-h-[120px] space-y-1 overflow-y-auto pr-1">
-        {notifications.map((notification) => {
-          const message = notification.message;
-          const sender =
-            message?.sender_member_id != null
-              ? members.get(message.sender_member_id)
-              : null;
-          const preview = buildPreview(message, t);
-
-          return (
-            <div
-              key={notification.id}
-              className="group flex items-center gap-2 rounded-lg border border-amber-100 bg-amber-50/80 px-2 py-1.5 text-left shadow-sm transition hover:bg-amber-100/80"
-            >
-              <button
-                type="button"
-                className="flex min-w-0 flex-1 items-center gap-2 text-left"
-                onClick={() => onSelect(notification)}
-              >
-                <PreviewIcon message={message} text={preview.iconText} />
-                <span className="min-w-0 flex-1">
-                  <span className="flex min-w-0 items-center gap-1.5">
-                    <span className="truncate text-xs font-semibold text-slate-700">
-                      {sender?.nickname ?? t("importantSystemSender")}
-                    </span>
-                    <span className="shrink-0 text-[11px] text-slate-400">
-                      {formatTime(notification.created_at, language)}
-                    </span>
-                  </span>
-                  <span className="block truncate text-xs text-slate-600">
-                    {preview.text}
-                  </span>
-                </span>
-              </button>
-              <button
-                type="button"
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-sm text-slate-400 transition hover:bg-white hover:text-rose-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200"
-                aria-label={t("importantRemove")}
-                title={t("importantRemove")}
-                onClick={() => onRemove(notification)}
-              >
-                ×
-              </button>
+      <div className="flex items-start justify-between gap-3 text-xs text-amber-700">
+        <div className="min-w-0">
+          <div className="font-semibold">
+            {t("importantTitle")}{" "}
+            <span className="tabular-nums">
+              {t("importantCount", { count: notifications.length })}
+            </span>
+          </div>
+          {!expanded && latest ? (
+            <div className="mt-0.5 truncate text-slate-600">
+              {t("importantLatest", { preview: latestPreview })}
             </div>
-          );
-        })}
+          ) : null}
+        </div>
+        <button
+          type="button"
+          className="shrink-0 rounded-full px-3 py-1 text-xs font-medium text-amber-700 transition hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200"
+          onClick={() => setExpanded((value) => !value)}
+        >
+          {expanded ? t("importantCollapse") : t("importantExpand")}
+        </button>
       </div>
+      {expanded ? (
+        <div className="mt-2 max-h-[120px] space-y-1 overflow-y-auto pr-1">
+          {notifications.map((notification) => {
+            const message = notification.message;
+            const sender =
+              message?.sender_member_id != null
+                ? members.get(message.sender_member_id)
+                : null;
+            const preview = buildPreview(message, t);
+
+            return (
+              <div
+                key={notification.id}
+                className="group flex items-center gap-2 rounded-lg border border-amber-100 bg-amber-50/80 px-2 py-1.5 text-left shadow-sm transition hover:bg-amber-100/80"
+              >
+                <button
+                  type="button"
+                  className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                  onClick={() => onSelect(notification)}
+                >
+                  <PreviewIcon message={message} text={preview.iconText} />
+                  <span className="min-w-0 flex-1">
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <span className="truncate text-xs font-semibold text-slate-700">
+                        {sender?.nickname ?? t("importantSystemSender")}
+                      </span>
+                      <span className="shrink-0 text-[11px] text-slate-400">
+                        {formatTime(notification.created_at, language)}
+                      </span>
+                    </span>
+                    <span className="block truncate text-xs text-slate-600">
+                      {preview.text}
+                    </span>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xl leading-none text-slate-400 transition hover:bg-white hover:text-rose-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200"
+                  aria-label={t("importantRemove")}
+                  title={t("importantRemove")}
+                  onClick={() => onRemove(notification)}
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -123,7 +148,7 @@ function buildPreview(
         : "";
     return {
       text: truncate(
-        message.address || message.content || coords || t("importantLocationPreview"),
+        message.address || coords || message.content || t("importantLocationPreview"),
         40,
       ),
       iconText: "",

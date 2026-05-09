@@ -6,6 +6,7 @@ const PATTERNS: Array<{
   pattern: RegExp;
   key: TranslationKey;
   varName?: string;
+  tone?: "joined" | "left";
 }> = [
   {
     pattern: /^家庭已创建，欢迎来到「(.+)」$/,
@@ -16,6 +17,7 @@ const PATTERNS: Array<{
     pattern: /^(.+) 加入了家庭$/,
     key: "systemMemberJoined",
     varName: "nickname",
+    tone: "joined",
   },
   {
     pattern: /^家庭名称已更新为「(.+)」$/,
@@ -38,11 +40,13 @@ const PATTERNS: Array<{
     pattern: /^(.+) 已被移出家庭$/,
     key: "systemMemberRemoved",
     varName: "nickname",
+    tone: "left",
   },
   {
     pattern: /^(.+) 离开了家庭$/,
     key: "systemMemberLeft",
     varName: "nickname",
+    tone: "left",
   },
 ];
 
@@ -54,4 +58,12 @@ export function localizeSystemMessage(content: string | null, t: T): string {
     return item.varName ? t(item.key, { [item.varName]: match[1] }) : t(item.key);
   }
   return content;
+}
+
+export function getSystemMessageTone(
+  content: string | null,
+): "joined" | "left" | "neutral" {
+  if (!content) return "neutral";
+  const match = PATTERNS.find((item) => item.tone && item.pattern.test(content));
+  return match?.tone ?? "neutral";
 }

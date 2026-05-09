@@ -1,16 +1,25 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { useRef } from "react";
 
 import AudioBubble from "./AudioBubble";
-import RoleBadge from "./RoleBadge";
 import { useLanguage } from "@/components/LanguageProvider";
 import { formatTime } from "@/lib/format";
-import { localizeSystemMessage } from "@/lib/systemMessage";
+import {
+  getSystemMessageTone,
+  localizeSystemMessage,
+} from "@/lib/systemMessage";
+import type { TranslationKey } from "@/lib/i18n";
 import type { Message } from "@/types/message";
 import type { FamilyMember } from "@/types/member";
+import type { FamilyRole } from "@/types/family";
+
+const ROLE_KEYS: Record<FamilyRole, TranslationKey> = {
+  father: "roleFather",
+  mother: "roleMother",
+  child: "roleChild",
+};
 
 interface Props {
   message: Message;
@@ -40,9 +49,16 @@ export default function ChatMessage({
     : "";
 
   if (message.message_type === "system") {
+    const tone = getSystemMessageTone(message.content);
+    const toneClass =
+      tone === "joined"
+        ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100"
+        : tone === "left"
+          ? "bg-slate-100 text-slate-600 ring-1 ring-slate-200"
+          : "bg-slate-200/70 text-slate-600";
     return (
       <div className="flex justify-center py-2" {...actionHandlers}>
-        <span className={`rounded-full bg-slate-200/70 px-3 py-1 text-xs text-slate-600 ${actionClass}`}>
+        <span className={`rounded-full px-3 py-1 text-xs ${toneClass} ${actionClass}`}>
           {localizeSystemMessage(message.content, t)}
         </span>
       </div>
@@ -76,11 +92,19 @@ export default function ChatMessage({
           isMine ? "items-end" : "items-start"
         }`}
       >
-        <div className="flex items-center gap-2 text-xs text-slate-500">
+        <div className="flex items-center gap-1.5 text-xs text-slate-500">
           <span className="font-medium text-slate-700">
             {sender?.nickname ?? t("commonUnknownMember")}
           </span>
-          {sender ? <RoleBadge role={sender.role} /> : null}
+          {sender ? (
+            <>
+              <span className="text-slate-300">·</span>
+              <span className="font-medium text-slate-500">
+                {t(ROLE_KEYS[sender.role])}
+              </span>
+            </>
+          ) : null}
+          <span className="text-slate-300">·</span>
           <span>{formatTime(message.created_at, language)}</span>
         </div>
         <Bubble
@@ -222,38 +246,29 @@ function Bubble({
   }
 
   if (message.message_type === "location") {
+    const coords =
+      message.latitude != null && message.longitude != null
+        ? `${message.latitude.toFixed(5)}, ${message.longitude.toFixed(5)}`
+        : "";
+    const detail = message.address || coords || t("messageLocationFallback");
+
     return (
       <a
         href={message.map_url ?? "#"}
         target="_blank"
         rel="noreferrer"
         {...actionHandlers}
-        className={`${base} flex flex-col gap-1 no-underline ${actionClass}`}
+        className={`${base} flex min-w-52 max-w-full flex-col gap-1 no-underline ${actionClass}`}
       >
-        <span className="flex items-center gap-1.5 font-medium">
-          <Image
-            src="/ui-icons/location.png"
-            alt=""
-            width={20}
-            height={20}
-            className="h-5 w-5 shrink-0 object-contain"
-          />
-          <span>{message.content || t("messageLocationFallback")}</span>
+        <span className="flex items-center gap-2 font-semibold">
+          <span aria-hidden>📍</span>
+          <span>{t("messageLocationTitle")}</span>
         </span>
-        {message.address ? (
-          <span className={isMine ? "text-brand-50" : "text-slate-500"}>
-            {message.address}
-          </span>
-        ) : null}
-        {message.latitude != null && message.longitude != null ? (
-          <span
-            className={`text-xs ${isMine ? "text-brand-100" : "text-slate-500"}`}
-          >
-            {message.latitude.toFixed(5)}, {message.longitude.toFixed(5)}
-          </span>
-        ) : null}
+        <span className={isMine ? "text-brand-50" : "text-slate-600"}>
+          {detail}
+        </span>
         <span
-          className={`text-xs ${isMine ? "text-brand-100" : "text-brand-500"}`}
+          className={`text-xs font-medium ${isMine ? "text-brand-100" : "text-brand-500"}`}
         >
           {t("messageOpenMap")}
         </span>

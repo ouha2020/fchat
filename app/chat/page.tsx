@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import ChatInput from "@/components/ChatInput";
 import ChatMessage from "@/components/ChatMessage";
@@ -82,9 +82,11 @@ export default function ChatPage() {
   const [error, setError] = useState<string | null>(null);
   const [chatBackgroundUrl, setChatBackgroundUrl] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const messagesContentRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const lastHeaderTapRef = useRef(0);
+  const didInitialScrollRef = useRef(false);
   const membersRef = useRef<FamilyMember[]>([]);
   useEffect(() => {
     membersRef.current = members;
@@ -492,9 +494,11 @@ export default function ChatPage() {
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
     const scroll = () => {
-      messagesEndRef.current?.scrollIntoView({
+      const scroller = scrollRef.current;
+      if (!scroller) return;
+      scroller.scrollTo({
+        top: scroller.scrollHeight,
         behavior,
-        block: "end",
       });
     };
 
@@ -504,12 +508,33 @@ export default function ChatPage() {
     });
     window.setTimeout(scroll, 180);
     window.setTimeout(scroll, 600);
+    window.setTimeout(scroll, 1000);
   }, []);
 
   // Auto scroll to bottom on new messages.
+  useLayoutEffect(() => {
+    if (loading || messages.length === 0) return;
+    scrollToBottom(didInitialScrollRef.current ? "smooth" : "auto");
+    didInitialScrollRef.current = true;
+  }, [loading, messages.length, scrollToBottom]);
+
   useEffect(() => {
-    scrollToBottom("smooth");
-  }, [messages.length, scrollToBottom]);
+    if (loading || messages.length === 0) return;
+    const content = messagesContentRef.current;
+    if (!content || typeof ResizeObserver === "undefined") return;
+
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => scrollToBottom("auto"));
+    });
+
+    observer.observe(content);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, [loading, messages.length, scrollToBottom]);
 
   const memberMap = useMemo(() => {
     const m = new Map<string, FamilyMember>();
@@ -670,13 +695,13 @@ export default function ChatPage() {
   function scrollToMessage(messageId: string) {
     const el = messageRefs.current.get(messageId);
     if (!el) return;
-    el.scrollIntoView({ block: "end", behavior: "smooth" });
+    el.scrollIntoView({ block: "center", behavior: "smooth" });
     setHighlightedMessageId(messageId);
     window.setTimeout(() => {
       setHighlightedMessageId((current) =>
         current === messageId ? null : current,
       );
-    }, 1500);
+    }, 3000);
   }
 
   function handleSelectImportant(notification: ImportantNotification) {
@@ -987,9 +1012,8 @@ export default function ChatPage() {
 
       <div
         ref={scrollRef}
-        className="no-scrollbar flex-1 min-h-0 space-y-4 overflow-y-auto overscroll-contain bg-slate-50 bg-cover bg-center bg-no-repeat px-3 pt-4 sm:px-5"
+        className="no-scrollbar flex-1 min-h-0 overflow-y-auto overscroll-contain bg-slate-50 bg-cover bg-center bg-no-repeat px-3 pt-4 sm:px-5"
         style={{
-          paddingBottom: "calc(88px + env(safe-area-inset-bottom))",
           ...(chatBackgroundUrl
             ? {
                 backgroundImage: `linear-gradient(rgba(248, 250, 252, 0.82), rgba(248, 250, 252, 0.82)), url("${chatBackgroundUrl}")`,
@@ -997,47 +1021,53 @@ export default function ChatPage() {
             : {}),
         }}
       >
-        {messages.length === 0 ? (
-          <div className="py-10 text-center text-sm text-slate-400">
-            {t("chatEmpty")}
-          </div>
-        ) : (
-          messages.map((m) => {
-            const isMine = m.sender_member_id === session.member_id;
-            const canOpenActions = !m.deleted_at || importantByMessageId.has(m.id);
-            return (
-              <div
-                key={m.id}
-                ref={(el) => {
-                  if (el) {
-                    messageRefs.current.set(m.id, el);
-                  } else {
-                    messageRefs.current.delete(m.id);
-                  }
-                }}
-                className="scroll-mb-28 rounded-3xl"
-                style={{
-                  scrollMarginBottom:
-                    "calc(96px + env(safe-area-inset-bottom))",
-                }}
-              >
-                <ChatMessage
-                  message={m}
-                  sender={
-                    m.sender_member_id
-                      ? memberMap.get(m.sender_member_id) ?? null
-                      : null
-                  }
-                  isMine={isMine}
-                  highlighted={highlightedMessageId === m.id}
-                  onRequestActions={canOpenActions ? openMessageActions : undefined}
-                  onReplayEffect={handleReplayEffect}
-                />
-              </div>
-            );
-          })
-        )}
-        <div ref={messagesEndRef} className="h-4" aria-hidden />
+        <div ref={messagesContentRef} className="space-y-4">
+          {messages.length === 0 ? (
+            <div className="py-10 text-center text-sm text-slate-400">
+              {t("chatEmpty")}
+            </div>
+          ) : (
+            messages.map((m) => {
+              const isMine = m.sender_member_id === session.member_id;
+              const canOpenActions = !m.deleted_at || importantByMessageId.has(m.id);
+              return (
+                <div
+                  key={m.id}
+                  ref={(el) => {
+                    if (el) {
+                      messageRefs.current.set(m.id, el);
+                    } else {
+                      messageRefs.current.delete(m.id);
+                    }
+                  }}
+                  className="scroll-mb-28 rounded-3xl"
+                  style={{
+                    scrollMarginBottom:
+                      "calc(104px + env(safe-area-inset-bottom))",
+                  }}
+                >
+                  <ChatMessage
+                    message={m}
+                    sender={
+                      m.sender_member_id
+                        ? memberMap.get(m.sender_member_id) ?? null
+                        : null
+                    }
+                    isMine={isMine}
+                    highlighted={highlightedMessageId === m.id}
+                    onRequestActions={canOpenActions ? openMessageActions : undefined}
+                    onReplayEffect={handleReplayEffect}
+                  />
+                </div>
+              );
+            })
+          )}
+          <div
+            ref={messagesEndRef}
+            aria-hidden
+            style={{ height: "calc(96px + env(safe-area-inset-bottom))" }}
+          />
+        </div>
       </div>
 
       <ChatInput

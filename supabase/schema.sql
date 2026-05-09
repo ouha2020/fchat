@@ -297,6 +297,8 @@ $$;
 -- Lets a family re-enter from a new browser/device when the nickname already exists.
 -- =====================================================================
 
+drop function if exists rejoin_family_member(text, text, text);
+
 create or replace function rejoin_family_member(
   p_family_code text,
   p_nickname text,

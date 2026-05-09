@@ -84,6 +84,7 @@ export default function ChatPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const lastHeaderTapRef = useRef(0);
   const membersRef = useRef<FamilyMember[]>([]);
   useEffect(() => {
     membersRef.current = members;
@@ -194,6 +195,44 @@ export default function ChatPage() {
     const rows = await listImportantNotifications(familyId);
     setImportantNotifications(rows);
   }, []);
+
+  const refreshChatData = useCallback(async () => {
+    if (!session) return;
+    try {
+      const [msgs, mems, important] = await Promise.all([
+        listMessages(session.family_id),
+        listMembers(session.family_id, { includeRemoved: true }),
+        listImportantNotifications(session.family_id),
+      ]);
+      setMessages(msgs);
+      setMembers(mems);
+      setImportantNotifications(important);
+      setError(null);
+    } catch (err) {
+      setError(humanizeError(err, language));
+    }
+  }, [language, session]);
+
+  function isHeaderActionTarget(target: EventTarget | null): boolean {
+    return target instanceof Element && !!target.closest("a,button");
+  }
+
+  function handleHeaderDoubleClick(e: React.MouseEvent<HTMLElement>) {
+    if (isHeaderActionTarget(e.target)) return;
+    void refreshChatData();
+  }
+
+  function handleHeaderTouchEnd(e: React.TouchEvent<HTMLElement>) {
+    if (isHeaderActionTarget(e.target)) return;
+    const now = Date.now();
+    if (now - lastHeaderTapRef.current < 320) {
+      e.preventDefault();
+      lastHeaderTapRef.current = 0;
+      void refreshChatData();
+      return;
+    }
+    lastHeaderTapRef.current = now;
+  }
 
   // Title badge for unread count.
   useEffect(() => {
@@ -451,13 +490,26 @@ export default function ChatPage() {
     };
   }, [refreshImportantNotifications, router, session, t]);
 
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    const scroll = () => {
+      messagesEndRef.current?.scrollIntoView({
+        behavior,
+        block: "end",
+      });
+    };
+
+    requestAnimationFrame(() => {
+      scroll();
+      requestAnimationFrame(scroll);
+    });
+    window.setTimeout(scroll, 180);
+    window.setTimeout(scroll, 600);
+  }, []);
+
   // Auto scroll to bottom on new messages.
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({
-      behavior: "smooth",
-      block: "end",
-    });
-  }, [messages.length]);
+    scrollToBottom("smooth");
+  }, [messages.length, scrollToBottom]);
 
   const memberMap = useMemo(() => {
     const m = new Map<string, FamilyMember>();
@@ -524,6 +576,7 @@ export default function ChatPage() {
       };
       return [...prev, optimistic];
     });
+    scrollToBottom("smooth");
   }
 
   async function handleDeleteMessage(messageId: string) {
@@ -861,7 +914,11 @@ export default function ChatPage() {
           </div>
         </>
       ) : null}
-      <header className="flex min-h-16 items-center justify-between gap-3 border-b border-slate-200 bg-white px-5 py-2 sm:px-6">
+      <header
+        className="flex min-h-16 items-center justify-between gap-3 border-b border-slate-200 bg-white px-5 py-2 sm:px-6"
+        onDoubleClick={handleHeaderDoubleClick}
+        onTouchEnd={handleHeaderTouchEnd}
+      >
         <div className="min-w-0">
           <div className="text-[12px] leading-4 text-slate-500">{t("chatFamily")}</div>
           <div className="truncate text-lg font-bold leading-6 text-slate-900">

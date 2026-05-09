@@ -16,6 +16,8 @@ interface Props {
 }
 
 const MAX_RECORD_MS = 60_000;
+const iconButtonClass =
+  "inline-flex h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-cover bg-center bg-no-repeat shadow-sm ring-1 ring-slate-200/70 transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-50";
 
 export default function ChatInput({
   disabled,
@@ -29,6 +31,7 @@ export default function ChatInput({
   const [text, setText] = useState("");
   const [recording, setRecording] = useState<RecordingHandle | null>(null);
   const [elapsed, setElapsed] = useState(0);
+  const [actionsOpen, setActionsOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   // Tick recording timer
@@ -51,12 +54,14 @@ export default function ChatInput({
   async function submit() {
     const trimmed = text.trim();
     if (!trimmed || disabled || sending) return;
+    setActionsOpen(false);
     await onSendText(trimmed);
     setText("");
   }
 
   async function handleStartRecording() {
     if (disabled || sending || recording) return;
+    setActionsOpen(false);
     try {
       const handle = await startRecording();
       setElapsed(0);
@@ -97,6 +102,18 @@ export default function ChatInput({
     setRecording(null);
   }
 
+  function handlePickImage() {
+    if (disabled || sending) return;
+    setActionsOpen(false);
+    fileRef.current?.click();
+  }
+
+  function handleSendLocation() {
+    if (disabled || sending) return;
+    setActionsOpen(false);
+    void onSendLocation();
+  }
+
   if (recording) {
     return (
       <div
@@ -106,7 +123,7 @@ export default function ChatInput({
         <div className="flex items-center gap-2 px-3 py-2 sm:px-4">
           <button
             type="button"
-            className="btn-ghost h-12 w-12 px-0 text-2xl leading-none"
+            className="btn-ghost h-10 w-10 px-0 text-xl leading-none"
             aria-label={t("inputCancelRecording")}
             onClick={handleCancelRecording}
           >
@@ -120,7 +137,7 @@ export default function ChatInput({
           </div>
           <button
             type="button"
-            className="btn-primary h-11 px-4"
+            className="btn-primary h-10 px-4"
             onClick={() => void handleStopRecording()}
           >
             {t("commonSend")}
@@ -135,6 +152,33 @@ export default function ChatInput({
       className="fixed inset-x-0 bottom-0 z-50 mx-auto w-full max-w-3xl border-t border-slate-200 bg-white"
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
+      {actionsOpen ? (
+        <div
+          className="absolute bottom-full left-3 mb-2 flex items-center gap-2 rounded-2xl border border-slate-200/80 bg-white/95 p-2 shadow-lg shadow-slate-200/70 backdrop-blur sm:left-4"
+          role="menu"
+        >
+          <button
+            type="button"
+            className={iconButtonClass}
+            style={{ backgroundImage: "url(/ui-icons/image.png)" }}
+            aria-label={t("inputSendImage")}
+            title={t("inputSendImage")}
+            role="menuitem"
+            disabled={disabled || sending}
+            onClick={handlePickImage}
+          />
+          <button
+            type="button"
+            className={iconButtonClass}
+            style={{ backgroundImage: "url(/ui-icons/voice.png)" }}
+            aria-label={t("inputRecordVoice")}
+            title={t("inputRecordVoice")}
+            role="menuitem"
+            disabled={disabled || sending}
+            onClick={() => void handleStartRecording()}
+          />
+        </div>
+      ) : null}
       <div className="flex items-center gap-2 px-3 py-2 sm:px-4">
         <input
           ref={fileRef}
@@ -149,27 +193,23 @@ export default function ChatInput({
         />
         <button
           type="button"
-          className="inline-flex h-14 w-14 shrink-0 overflow-hidden rounded-[1.35rem] bg-cover bg-center bg-no-repeat transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-50"
-          style={{ backgroundImage: "url(/ui-icons/image.png)" }}
-          aria-label={t("inputSendImage")}
+          className={iconButtonClass}
+          style={{ backgroundImage: "url(/ui-icons/plus.png)" }}
+          aria-label={t("inputMoreActions")}
+          title={t("inputMoreActions")}
           disabled={disabled || sending}
-          onClick={() => fileRef.current?.click()}
+          aria-haspopup="menu"
+          aria-expanded={actionsOpen}
+          onClick={() => setActionsOpen((open) => !open)}
         />
         <button
           type="button"
-          className="inline-flex h-14 w-14 shrink-0 overflow-hidden rounded-[1.35rem] bg-cover bg-center bg-no-repeat transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-50"
+          className={iconButtonClass}
           style={{ backgroundImage: "url(/ui-icons/location.png)" }}
           aria-label={t("inputSendLocation")}
+          title={t("inputSendLocation")}
           disabled={disabled || sending}
-          onClick={() => onSendLocation()}
-        />
-        <button
-          type="button"
-          className="inline-flex h-14 w-14 shrink-0 overflow-hidden rounded-[1.35rem] bg-cover bg-center bg-no-repeat transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-50"
-          style={{ backgroundImage: "url(/ui-icons/voice.png)" }}
-          aria-label={t("inputRecordVoice")}
-          disabled={disabled || sending}
-          onClick={() => void handleStartRecording()}
+          onClick={handleSendLocation}
         />
         <textarea
           rows={1}
@@ -187,7 +227,7 @@ export default function ChatInput({
         />
         <button
           type="button"
-          className="btn-primary h-11 px-4"
+          className="btn-primary h-10 px-4"
           disabled={disabled || sending || !text.trim()}
           onClick={() => void submit()}
         >

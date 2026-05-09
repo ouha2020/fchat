@@ -92,7 +92,11 @@ export default function AudioBubble({
       style={{ width: `${width}px`, maxWidth: "100%" }}
       className={`relative flex items-center gap-2 rounded-full px-3 py-2 text-sm shadow-sm transition active:scale-[0.98] ${baseColors} ${
         isMine ? "flex-row-reverse" : "flex-row"
-      } ${highlighted ? "ring-2 ring-amber-300" : ""}`}
+      } ${
+        highlighted
+          ? "ring-[3px] ring-amber-400 shadow-[0_0_0_2px_rgba(255,255,255,0.85),0_0_14px_rgba(245,158,11,0.45)]"
+          : ""
+      }`}
     >
       {!isMine && !played ? (
         <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-rose-500 ring-2 ring-white" />

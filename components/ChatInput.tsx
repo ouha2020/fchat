@@ -16,6 +16,8 @@ interface Props {
 }
 
 const MAX_RECORD_MS = 60_000;
+const iconButtonClass =
+  "inline-flex h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-cover bg-center bg-no-repeat shadow-sm ring-1 ring-slate-200/70 transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-50";
 
 export default function ChatInput({
   disabled,
@@ -106,7 +108,7 @@ export default function ChatInput({
         <div className="flex items-center gap-2 px-3 py-2 sm:px-4">
           <button
             type="button"
-            className="btn-ghost h-12 w-12 px-0 text-2xl leading-none"
+            className="btn-ghost h-10 w-10 px-0 text-xl leading-none"
             aria-label={t("inputCancelRecording")}
             onClick={handleCancelRecording}
           >
@@ -120,7 +122,7 @@ export default function ChatInput({
           </div>
           <button
             type="button"
-            className="btn-primary h-11 px-4"
+            className="btn-primary h-10 px-4"
             onClick={() => void handleStopRecording()}
           >
             {t("commonSend")}
@@ -149,7 +151,7 @@ export default function ChatInput({
         />
         <button
           type="button"
-          className="inline-flex h-14 w-14 shrink-0 overflow-hidden rounded-[1.35rem] bg-cover bg-center bg-no-repeat transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-50"
+          className={iconButtonClass}
           style={{ backgroundImage: "url(/ui-icons/image.png)" }}
           aria-label={t("inputSendImage")}
           disabled={disabled || sending}
@@ -157,7 +159,7 @@ export default function ChatInput({
         />
         <button
           type="button"
-          className="inline-flex h-14 w-14 shrink-0 overflow-hidden rounded-[1.35rem] bg-cover bg-center bg-no-repeat transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-50"
+          className={iconButtonClass}
           style={{ backgroundImage: "url(/ui-icons/location.png)" }}
           aria-label={t("inputSendLocation")}
           disabled={disabled || sending}
@@ -165,7 +167,7 @@ export default function ChatInput({
         />
         <button
           type="button"
-          className="inline-flex h-14 w-14 shrink-0 overflow-hidden rounded-[1.35rem] bg-cover bg-center bg-no-repeat transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-50"
+          className={iconButtonClass}
           style={{ backgroundImage: "url(/ui-icons/voice.png)" }}
           aria-label={t("inputRecordVoice")}
           disabled={disabled || sending}
@@ -187,7 +189,7 @@ export default function ChatInput({
         />
         <button
           type="button"
-          className="btn-primary h-11 px-4"
+          className="btn-primary h-10 px-4"
           disabled={disabled || sending || !text.trim()}
           onClick={() => void submit()}
         >

@@ -833,16 +833,18 @@ export default function ChatPage() {
           </div>
         </>
       ) : null}
-      <header className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3">
-        <div>
-          <div className="text-sm text-slate-500">{t("chatFamily")}</div>
-          <div className="text-base font-semibold">{session.family_name}</div>
+      <header className="flex min-h-16 items-center justify-between gap-3 border-b border-slate-200 bg-white px-5 py-2 sm:px-6">
+        <div className="min-w-0">
+          <div className="text-[12px] leading-4 text-slate-500">{t("chatFamily")}</div>
+          <div className="truncate text-lg font-bold leading-6 text-slate-900">
+            {session.family_name}
+          </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex shrink-0 items-center gap-2.5">
           {notifPerm !== "unsupported" ? (
             <button
               type="button"
-              className="inline-flex h-14 w-14 shrink-0 overflow-hidden rounded-[1.35rem] bg-cover bg-center bg-no-repeat transition hover:brightness-95 active:brightness-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+              className="inline-flex h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-cover bg-center bg-no-repeat shadow-sm ring-1 ring-slate-200/70 transition hover:brightness-95 active:brightness-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
               style={{
                 backgroundImage: `url(${
                   notifyEnabled && notifPerm === "granted"
@@ -867,17 +869,17 @@ export default function ChatPage() {
           ) : null}
           <Link
             href="/members"
-            className="inline-flex h-14 w-14 shrink-0 overflow-hidden rounded-[1.35rem] bg-cover bg-center bg-no-repeat transition hover:brightness-95 active:brightness-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+            className="inline-flex h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-cover bg-center bg-no-repeat shadow-sm ring-1 ring-slate-200/70 transition hover:brightness-95 active:brightness-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
             style={{ backgroundImage: "url(/ui-icons/members.png)" }}
             aria-label={t("chatMembers")}
             title={t("chatMembers")}
           />
           <Link
             href="/settings"
-            className="inline-flex h-14 w-14 shrink-0 overflow-hidden rounded-[1.35rem] bg-cover bg-center bg-no-repeat transition hover:brightness-95 active:brightness-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+            className="inline-flex h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-cover bg-center bg-no-repeat shadow-sm ring-1 ring-slate-200/70 transition hover:brightness-95 active:brightness-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
             style={{
               backgroundImage: "url(/ui-icons/settings.png)",
-              backgroundSize: "122%",
+              backgroundSize: "118%",
             }}
             aria-label={t("chatSettings")}
             title={t("chatSettings")}

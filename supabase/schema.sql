@@ -256,10 +256,6 @@ begin
     raise exception 'family_not_found';
   end if;
 
-  if not v_family.join_enabled then
-    raise exception 'join_disabled';
-  end if;
-
   if exists (
     select 1
       from family_members fm
@@ -268,6 +264,10 @@ begin
        and fm.status in ('active', 'removed')
   ) then
     raise exception 'nickname_taken';
+  end if;
+
+  if not v_family.join_enabled then
+    raise exception 'join_disabled';
   end if;
 
   v_token := encode(gen_random_bytes(24), 'hex');

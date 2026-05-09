@@ -34,24 +34,24 @@ export default function ImportantNoticeBar({
   const latestPreview = latest ? buildPreview(latest.message, t).text : "";
 
   return (
-    <section className="border-b border-amber-100 bg-white/85 px-3 py-2 backdrop-blur sm:px-5">
-      <div className="flex items-start justify-between gap-3 text-xs text-amber-700">
+    <section className="border-b border-amber-100/70 bg-white/80 px-5 py-1.5 backdrop-blur sm:px-6">
+      <div className="flex items-start justify-between gap-3 text-[13px] leading-4 text-amber-700">
         <div className="min-w-0">
-          <div className="font-semibold">
+          <div className="truncate font-semibold">
             {t("importantTitle")}{" "}
             <span className="tabular-nums">
               {t("importantCount", { count: notifications.length })}
             </span>
           </div>
           {!expanded && latest ? (
-            <div className="mt-0.5 truncate text-slate-600">
+            <div className="mt-0.5 truncate text-[12px] leading-4 text-slate-600">
               {t("importantLatest", { preview: latestPreview })}
             </div>
           ) : null}
         </div>
         <button
           type="button"
-          className="shrink-0 rounded-full px-3 py-1 text-xs font-medium text-amber-700 transition hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200"
+          className="shrink-0 rounded-full px-2 py-0.5 text-[12px] font-medium leading-4 text-amber-700 transition hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200"
           onClick={() => setExpanded((value) => !value)}
         >
           {expanded ? t("importantCollapse") : t("importantExpand")}

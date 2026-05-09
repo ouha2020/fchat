@@ -47,6 +47,9 @@ export default function ChatMessage({
   const actionClass = onRequestActions
     ? "cursor-pointer select-none [-webkit-touch-callout:none] [-webkit-user-select:none]"
     : "";
+  const roleLabel = sender ? t(ROLE_KEYS[sender.role]) : "";
+  const showRole =
+    !!sender && sender.nickname.trim().toLowerCase() !== roleLabel.trim().toLowerCase();
 
   if (message.message_type === "system") {
     const tone = getSystemMessageTone(message.content);
@@ -96,11 +99,11 @@ export default function ChatMessage({
           <span className="font-medium text-slate-700">
             {sender?.nickname ?? t("commonUnknownMember")}
           </span>
-          {sender ? (
+          {showRole ? (
             <>
               <span className="text-slate-300">·</span>
               <span className="font-medium text-slate-500">
-                {t(ROLE_KEYS[sender.role])}
+                {roleLabel}
               </span>
             </>
           ) : null}
@@ -237,6 +240,7 @@ function Bubble({
     return (
       <div {...actionHandlers} className={actionClass}>
         <AudioBubble
+          messageId={message.id}
           url={message.audio_url}
           durationMs={message.audio_duration_ms}
           isMine={isMine}
@@ -258,17 +262,21 @@ function Bubble({
         target="_blank"
         rel="noreferrer"
         {...actionHandlers}
-        className={`${base} flex min-w-52 max-w-full flex-col gap-1 no-underline ${actionClass}`}
+        className={`${base} flex min-w-40 max-w-56 flex-col gap-1 no-underline ${actionClass}`}
       >
-        <span className="flex items-center gap-2 font-semibold">
-          <span aria-hidden>📍</span>
+        <span className="flex items-center gap-1.5 text-sm font-semibold">
+          <span aria-hidden className="text-xs">
+            📍
+          </span>
           <span>{t("messageLocationTitle")}</span>
         </span>
-        <span className={isMine ? "text-brand-50" : "text-slate-600"}>
+        <span
+          className={`text-xs leading-5 ${isMine ? "text-brand-50" : "text-slate-700"}`}
+        >
           {detail}
         </span>
         <span
-          className={`text-xs font-medium ${isMine ? "text-brand-100" : "text-brand-500"}`}
+          className={`text-xs font-medium leading-5 ${isMine ? "text-brand-100" : "text-brand-500"}`}
         >
           {t("messageOpenMap")}
         </span>

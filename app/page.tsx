@@ -26,7 +26,6 @@ export default function HomePage() {
   const [adminPassword, setAdminPassword] = useState("");
   const [needsAdminPassword, setNeedsAdminPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [restoring, setRestoring] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -36,7 +35,6 @@ export default function HomePage() {
       if (!local || !isSupabaseConfigured()) {
         return;
       }
-      setRestoring(true);
       try {
         const session = await validateMember(local.member_id, local.member_token);
         if (cancelled) return;
@@ -48,7 +46,6 @@ export default function HomePage() {
       } catch {
         clearSession();
       }
-      if (!cancelled) setRestoring(false);
     }
     void run();
     return () => {
@@ -102,14 +99,6 @@ export default function HomePage() {
     } finally {
       setLoading(false);
     }
-  }
-
-  if (restoring) {
-    return (
-      <div className="flex flex-1 items-center justify-center text-slate-500">
-        {t("homeRestoring")}
-      </div>
-    );
   }
 
   return (

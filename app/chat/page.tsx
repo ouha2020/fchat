@@ -79,6 +79,8 @@ export default function ChatPage() {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [retryNonce, setRetryNonce] = useState(0);
   const [chatBackgroundUrl, setChatBackgroundUrl] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const messagesContentRef = useRef<HTMLDivElement>(null);
@@ -264,6 +266,9 @@ export default function ChatPage() {
   useEffect(() => {
     let cancelled = false;
     async function run() {
+      setLoading(true);
+      setError(null);
+      setLoadError(null);
       if (!isSupabaseConfigured()) {
         setLoading(false);
         return;
@@ -279,15 +284,17 @@ export default function ChatPage() {
         if (cancelled) return;
         if (!fresh) {
           clearSession();
-          router.replace("/");
+          setSession(null);
+          setLoadError(t("chatSessionExpired"));
+          setLoading(false);
           return;
         }
         saveSession(fresh);
         setSession(fresh);
-      } catch {
+      } catch (err) {
         if (!cancelled) {
-          clearSession();
-          router.replace("/");
+          setLoadError(humanizeError(err, language) || t("chatLoadFailed"));
+          setLoading(false);
         }
         return;
       }
@@ -305,8 +312,11 @@ export default function ChatPage() {
         setDismissedImportantIds(
           getDismissedImportantIds(fresh.family_id, fresh.member_id),
         );
+        setLoadError(null);
       } catch (err) {
-        if (!cancelled) setError(humanizeError(err));
+        if (!cancelled) {
+          setLoadError(humanizeError(err, language) || t("chatLoadFailed"));
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -315,7 +325,7 @@ export default function ChatPage() {
     return () => {
       cancelled = true;
     };
-  }, [router]);
+  }, [language, retryNonce, router, t]);
 
   // Realtime subscription for new messages.
   useEffect(() => {
@@ -849,6 +859,40 @@ export default function ChatPage() {
     return (
       <div className="flex flex-1 items-center justify-center text-slate-500">
         {t("commonLoading")}
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="flex flex-1 items-center justify-center px-5 py-8">
+        <div className="card w-full max-w-md text-center">
+          <h1 className="text-lg font-bold text-slate-900">
+            {t("chatLoadFailedTitle")}
+          </h1>
+          <p className="mt-2 text-sm leading-relaxed text-slate-500">
+            {loadError}
+          </p>
+          <div className="mt-5 grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => setRetryNonce((value) => value + 1)}
+            >
+              {t("chatRetry")}
+            </button>
+            <button
+              type="button"
+              className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-600 shadow-sm transition hover:bg-slate-50"
+              onClick={() => {
+                clearSession();
+                router.replace("/");
+              }}
+            >
+              {t("chatBackHome")}
+            </button>
+          </div>
+        </div>
       </div>
     );
   }

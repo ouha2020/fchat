@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-const PROTECTED_PREFIXES = ["/chat", "/members", "/settings"];
+const PROTECTED_PREFIXES = ["/members", "/settings"];
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i;
 const TOKEN_RE =
@@ -25,5 +25,5 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/chat/:path*", "/members/:path*", "/settings/:path*"],
+  matcher: ["/members/:path*", "/settings/:path*"],
 };

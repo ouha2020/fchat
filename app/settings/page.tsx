@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
-import { clearSession, loadSession, saveSession, updateSession, type LocalSession } from "@/lib/authLocal";
+import { clearSession, loadSession, updateSession, type LocalSession } from "@/lib/authLocal";
 import { humanizeError } from "@/lib/errors";
 import {
   fetchFamilyPublic,
@@ -15,6 +15,16 @@ import {
   updateFamilyName,
 } from "@/lib/familyService";
 import { LANGUAGE_OPTIONS } from "@/lib/i18n";
+import {
+  getCurrentPushSubscription,
+  getPushPreferences,
+  getPushSupportState,
+  savePushPreferences,
+  subscribeToPush,
+  unsubscribePush,
+  type PushPreferences,
+  type PushSupportState,
+} from "@/lib/pushNotificationService";
 import { isSupabaseConfigured } from "@/lib/supabaseClient";
 
 export default function SettingsPage() {
@@ -23,6 +33,13 @@ export default function SettingsPage() {
   const [session, setSession] = useState<LocalSession | null>(null);
   const [joinOn, setJoinOn] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
+  const [pushSupport, setPushSupport] = useState<PushSupportState | null>(null);
+  const [pushEnabled, setPushEnabled] = useState(false);
+  const [pushPrefs, setPushPrefs] = useState<PushPreferences>({
+    messagesEnabled: true,
+    locationEnabled: true,
+    importantEnabled: true,
+  });
 
   useEffect(() => {
     if (!isSupabaseConfigured()) return;
@@ -32,6 +49,11 @@ export default function SettingsPage() {
       return;
     }
     setSession(local);
+    setPushSupport(getPushSupportState());
+    setPushPrefs(getPushPreferences(local));
+    getCurrentPushSubscription()
+      .then((subscription) => setPushEnabled(Boolean(subscription)))
+      .catch(() => undefined);
     fetchFamilyPublic(local.family_id)
       .then((row) => {
         if (row) {
@@ -118,6 +140,48 @@ export default function SettingsPage() {
     router.replace("/");
   }
 
+  async function handleEnablePush() {
+    if (!session) return;
+    setBusy("push");
+    try {
+      await subscribeToPush(session, pushPrefs);
+      setPushEnabled(true);
+      alert(t("settingsPushEnabledAlert"));
+    } catch (err) {
+      alert(pushErrorMessage(err, t));
+    } finally {
+      setBusy(null);
+      setPushSupport(getPushSupportState());
+    }
+  }
+
+  async function handleDisablePush() {
+    if (!session) return;
+    setBusy("push");
+    try {
+      await unsubscribePush(session);
+      setPushEnabled(false);
+      alert(t("settingsPushDisabledAlert"));
+    } catch {
+      alert(t("settingsPushDisableFailed"));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function handlePushPreference<K extends keyof PushPreferences>(
+    key: K,
+    value: PushPreferences[K],
+  ) {
+    if (!session) return;
+    const next = { ...pushPrefs, [key]: value };
+    setPushPrefs(next);
+    savePushPreferences(session, next);
+    if (pushEnabled) {
+      subscribeToPush(session, next).catch(() => undefined);
+    }
+  }
+
   if (!session) return null;
 
   return (
@@ -164,6 +228,82 @@ export default function SettingsPage() {
             </button>
           ))}
         </div>
+      </section>
+
+      <section className="card mt-4 flex flex-col gap-3">
+        <h2 className="text-base font-semibold">{t("settingsPushTitle")}</h2>
+        <p className="text-sm leading-6 text-slate-500">
+          {t("settingsPushDescription")}
+        </p>
+
+        {pushSupport?.reason === "ios_not_standalone" ? (
+          <div className="rounded-xl bg-brand-50 p-3 text-sm leading-6 text-slate-700">
+            <p className="font-medium text-slate-900">
+              {t("settingsPushIosGuideTitle")}
+            </p>
+            <ol className="mt-2 list-decimal space-y-1 pl-5">
+              <li>{t("settingsPushIosGuide1")}</li>
+              <li>{t("settingsPushIosGuide2")}</li>
+              <li>{t("settingsPushIosGuide3")}</li>
+              <li>{t("settingsPushIosGuide4")}</li>
+              <li>{t("settingsPushIosGuide5")}</li>
+            </ol>
+          </div>
+        ) : pushSupport?.supported ? (
+          <>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                className="btn-primary flex-1"
+                disabled={!!busy || pushEnabled}
+                onClick={handleEnablePush}
+              >
+                {t("settingsPushEnable")}
+              </button>
+              <button
+                type="button"
+                className="btn-secondary flex-1"
+                disabled={!!busy || !pushEnabled}
+                onClick={handleDisablePush}
+              >
+                {t("settingsPushDisable")}
+              </button>
+            </div>
+            {pushSupport.permission === "denied" ? (
+              <p className="text-sm text-rose-600">{t("settingsPushDenied")}</p>
+            ) : null}
+            <ToggleRow
+              label={t("settingsPushNewMessages")}
+              checked={pushPrefs.messagesEnabled}
+              disabled={!!busy}
+              onChange={(checked) =>
+                handlePushPreference("messagesEnabled", checked)
+              }
+            />
+            <ToggleRow
+              label={t("settingsPushLocation")}
+              checked={pushPrefs.locationEnabled}
+              disabled={!!busy}
+              onChange={(checked) =>
+                handlePushPreference("locationEnabled", checked)
+              }
+            />
+            <ToggleRow
+              label={t("settingsPushImportant")}
+              checked={pushPrefs.importantEnabled}
+              disabled={!!busy}
+              onChange={(checked) =>
+                handlePushPreference("importantEnabled", checked)
+              }
+            />
+          </>
+        ) : (
+          <p className="rounded-xl bg-slate-50 p-3 text-sm text-slate-500">
+            {pushSupport?.reason === "missing_vapid_key"
+              ? t("settingsPushMissingConfig")
+              : t("settingsPushUnsupported")}
+          </p>
+        )}
       </section>
 
       {session.is_admin ? (
@@ -228,4 +368,41 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
       <span className="text-sm font-medium text-slate-800">{value}</span>
     </div>
   );
+}
+
+function ToggleRow({
+  label,
+  checked,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  disabled?: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="flex items-center justify-between rounded-xl px-1 py-2">
+      <span className="text-sm text-slate-700">{label}</span>
+      <input
+        type="checkbox"
+        className="h-5 w-5"
+        checked={checked}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+    </label>
+  );
+}
+
+function pushErrorMessage(
+  err: unknown,
+  t: ReturnType<typeof useLanguage>["t"],
+): string {
+  const message = err instanceof Error ? err.message : String(err);
+  if (message === "ios_not_standalone") return t("settingsPushIosGuideTitle");
+  if (message === "permission_denied") return t("settingsPushDenied");
+  if (message === "missing_vapid_key") return t("settingsPushMissingConfig");
+  if (message === "unsupported") return t("settingsPushUnsupported");
+  return t("settingsPushEnableFailed");
 }

@@ -51,6 +51,10 @@ import {
   getNotificationsEnabled,
   setNotificationsEnabled,
 } from "@/lib/notificationPreference";
+import {
+  requestMessagePush,
+  updatePushPresence,
+} from "@/lib/pushNotificationService";
 import type { RecordingResult } from "@/lib/recordingService";
 import { getSupabase, isSupabaseConfigured } from "@/lib/supabaseClient";
 import type { ImportantNotification } from "@/types/importantNotification";
@@ -145,6 +149,31 @@ export default function ChatPage() {
   useEffect(() => {
     notifyEnabledRef.current = notifyEnabled;
   }, [notifyEnabled]);
+
+  useEffect(() => {
+    if (!session) return;
+
+    updatePushPresence(session, document.visibilityState === "visible");
+    const heartbeat = window.setInterval(() => {
+      updatePushPresence(session, document.visibilityState === "visible");
+    }, 30_000);
+
+    const handleVisibility = () => {
+      updatePushPresence(session, document.visibilityState === "visible", true);
+    };
+    const markInactive = () => updatePushPresence(session, false, true);
+
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("pagehide", markInactive);
+    window.addEventListener("beforeunload", markInactive);
+    return () => {
+      window.clearInterval(heartbeat);
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("pagehide", markInactive);
+      window.removeEventListener("beforeunload", markInactive);
+      markInactive();
+    };
+  }, [session]);
 
   useEffect(() => {
     if (!session) {
@@ -756,6 +785,7 @@ export default function ChatPage() {
         effect_id: eff?.id ?? null,
         effect_caption: eff?.caption ?? null,
       });
+      requestMessagePush(session, id);
       tryTriggerEffect(id, eff);
     } catch (err) {
       alert(humanizeError(err, language));
@@ -784,6 +814,7 @@ export default function ChatPage() {
         image_url: url,
         content: t("chatImageMessage"),
       });
+      requestMessagePush(session, id);
     } catch (err) {
       alert(humanizeError(err, language));
     } finally {
@@ -817,6 +848,7 @@ export default function ChatPage() {
         audio_duration_ms: result.durationMs,
         content: t("chatAudioMessage"),
       });
+      requestMessagePush(session, id);
     } catch (err) {
       alert(humanizeError(err, language));
     } finally {
@@ -845,6 +877,7 @@ export default function ChatPage() {
         longitude: fix.longitude,
         map_url: mapUrl,
       });
+      requestMessagePush(session, id);
     } catch (err) {
       alert(humanizeError(err, language) || t("chatLocationError"));
     } finally {

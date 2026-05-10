@@ -7,7 +7,7 @@ import { useEffect, useState } from "react";
 import EnvWarning from "@/components/EnvWarning";
 import { useLanguage } from "@/components/LanguageProvider";
 import RoleSelect from "@/components/RoleSelect";
-import { loadSession, saveSession } from "@/lib/authLocal";
+import { clearSession, loadSession, saveSession } from "@/lib/authLocal";
 import { humanizeError } from "@/lib/errors";
 import {
   joinFamily,
@@ -46,7 +46,7 @@ export default function HomePage() {
           return;
         }
       } catch {
-        // ignore — fall through to manual entry
+        clearSession();
       }
       if (!cancelled) setRestoring(false);
     }

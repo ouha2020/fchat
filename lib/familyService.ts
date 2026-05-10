@@ -10,6 +10,7 @@ import {
   nicknameSchema,
   roleSchema,
 } from "@/lib/validation";
+import { withTimeout } from "@/lib/timeout";
 
 interface CreateFamilyInput {
   familyName: string;
@@ -136,11 +137,16 @@ export async function validateMember(
   memberToken: string,
 ): Promise<LocalSession | null> {
   const sb = getSupabase();
-  const { data, error } = await sb.rpc("validate_member", {
-    p_member_id: memberId,
-    p_member_token: memberToken,
-    p_device_id: getOrCreateDeviceId(),
-  });
+  const response = await withTimeout(
+    Promise.resolve(sb.rpc("validate_member", {
+      p_member_id: memberId,
+      p_member_token: memberToken,
+      p_device_id: getOrCreateDeviceId(),
+    })),
+    7000,
+    "session_restore_timeout",
+  );
+  const { data, error } = response as { data: unknown; error: Error | null };
   if (error) throw error;
   const row = Array.isArray(data) ? data[0] : data;
   if (!row) return null;

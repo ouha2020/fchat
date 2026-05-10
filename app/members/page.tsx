@@ -23,17 +23,29 @@ export default function MembersPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     if (!isSupabaseConfigured()) {
       setLoading(false);
-      return;
+      return () => {
+        cancelled = true;
+      };
     }
     const local = loadSession();
     if (!local) {
       router.replace("/");
-      return;
+      return () => {
+        cancelled = true;
+      };
     }
-    validateMember(local.member_id, local.member_token)
-      .then(async (fresh) => {
+    const localSession = local;
+
+    async function run() {
+      try {
+        const fresh = await validateMember(
+          localSession.member_id,
+          localSession.member_token,
+        );
+        if (cancelled) return;
         if (!fresh) {
           clearSession();
           router.replace("/");
@@ -42,10 +54,22 @@ export default function MembersPage() {
         saveSession(fresh);
         setSession(fresh);
         const rows = await listMembers(fresh);
+        if (cancelled) return;
         setMembers(rows);
-      })
-      .catch((err) => alert(humanizeError(err, language)))
-      .finally(() => setLoading(false));
+      } catch {
+        if (!cancelled) {
+          clearSession();
+          router.replace("/");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
   }, [language, router]);
 
   // Live-sync the member list so other admins see removals immediately.

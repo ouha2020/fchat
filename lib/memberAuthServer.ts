@@ -24,6 +24,7 @@ export async function validateMemberCredentials(
   const { data, error } = await sb.rpc("validate_member", {
     p_member_id: memberId,
     p_member_token: memberToken,
+    p_device_id: null,
   });
   if (error) throw error;
 

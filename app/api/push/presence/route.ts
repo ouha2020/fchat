@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 
 import {
   ApiRequestError,
-  badRequest,
   readJsonBody,
   rejectMismatchedOrigin,
 } from "@/lib/apiSecurity";
@@ -11,6 +10,7 @@ import { normalizePresencePage } from "@/lib/security";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 interface PresenceBody {
   memberId?: unknown;
@@ -20,17 +20,17 @@ interface PresenceBody {
 }
 
 export async function POST(request: Request) {
-  try {
-    const originError = rejectMismatchedOrigin(request);
-    if (originError) return originError;
+  const originError = rejectMismatchedOrigin(request);
+  if (originError) return originError;
 
+  try {
     const body = await readJsonBody<PresenceBody>(request);
     const member = await validateMemberCredentials(
       body.memberId,
       body.memberToken,
     );
     if (!member) {
-      return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+      return NextResponse.json({ ok: false });
     }
 
     const now = new Date().toISOString();
@@ -49,9 +49,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true });
   } catch (error) {
     if (error instanceof ApiRequestError) {
-      return badRequest(error);
+      return NextResponse.json({ ok: false });
     }
-    console.warn("[push presence]", error);
-    return NextResponse.json({ error: "presence_failed" }, { status: 500 });
+    console.warn("[push presence]", error instanceof Error ? error.message : "presence_failed");
+    return NextResponse.json({ ok: false });
   }
 }

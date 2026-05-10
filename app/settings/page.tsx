@@ -28,12 +28,18 @@ export default function SettingsPage() {
   const { language, setLanguage, t } = useLanguage();
   const [session, setSession] = useState<LocalSession | null>(null);
   const [joinOn, setJoinOn] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [retryNonce, setRetryNonce] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
   const push = usePushNotificationControls(session);
 
   useEffect(() => {
     let cancelled = false;
+    setLoading(true);
+    setLoadError(null);
     if (!isSupabaseConfigured()) {
+      setLoading(false);
       return () => {
         cancelled = true;
       };
@@ -56,7 +62,9 @@ export default function SettingsPage() {
         if (cancelled) return;
         if (!fresh) {
           clearSession();
-          router.replace("/");
+          setSession(null);
+          setLoadError(t("chatSessionExpired"));
+          setLoading(false);
           return;
         }
         saveSession(fresh);
@@ -74,11 +82,12 @@ export default function SettingsPage() {
             if (next) setSession(next);
           }
         }
-      } catch {
+      } catch (err) {
         if (!cancelled) {
-          clearSession();
-          router.replace("/");
+          setLoadError(humanizeError(err, language) || t("chatLoadFailed"));
         }
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     }
 
@@ -86,7 +95,7 @@ export default function SettingsPage() {
     return () => {
       cancelled = true;
     };
-  }, [router]);
+  }, [language, retryNonce, router, t]);
 
   async function withAdmin(action: string, fn: (password: string) => Promise<void>) {
     if (!session?.is_admin) {
@@ -190,6 +199,48 @@ export default function SettingsPage() {
   ) {
     if (!session) return;
     void push.updatePreference(key, value).catch(() => undefined);
+  }
+
+  if (loading) {
+    return (
+      <div className="flex flex-1 flex-col px-5 py-6 sm:px-8">
+        <div className="text-sm text-slate-500">{t("commonLoading")}</div>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="flex flex-1 flex-col px-5 py-6 sm:px-8">
+        <div className="card text-center">
+          <h1 className="text-lg font-bold text-slate-900">
+            {t("chatLoadFailedTitle")}
+          </h1>
+          <p className="mt-2 text-sm leading-relaxed text-slate-500">
+            {loadError}
+          </p>
+          <div className="mt-5 grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => setRetryNonce((value) => value + 1)}
+            >
+              {t("chatRetry")}
+            </button>
+            <button
+              type="button"
+              className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-600 shadow-sm transition hover:bg-slate-50"
+              onClick={() => {
+                clearSession();
+                router.replace("/");
+              }}
+            >
+              {t("chatBackHome")}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   if (!session) return null;

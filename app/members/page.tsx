@@ -20,10 +20,14 @@ export default function MembersPage() {
   const [session, setSession] = useState<LocalSession | null>(null);
   const [members, setMembers] = useState<FamilyMember[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [retryNonce, setRetryNonce] = useState(0);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    setLoading(true);
+    setLoadError(null);
     if (!isSupabaseConfigured()) {
       setLoading(false);
       return () => {
@@ -48,7 +52,9 @@ export default function MembersPage() {
         if (cancelled) return;
         if (!fresh) {
           clearSession();
-          router.replace("/");
+          setSession(null);
+          setLoadError(t("chatSessionExpired"));
+          setLoading(false);
           return;
         }
         saveSession(fresh);
@@ -56,10 +62,9 @@ export default function MembersPage() {
         const rows = await listMembers(fresh);
         if (cancelled) return;
         setMembers(rows);
-      } catch {
+      } catch (err) {
         if (!cancelled) {
-          clearSession();
-          router.replace("/");
+          setLoadError(humanizeError(err, language) || t("chatLoadFailed"));
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -70,7 +75,7 @@ export default function MembersPage() {
     return () => {
       cancelled = true;
     };
-  }, [language, router]);
+  }, [language, retryNonce, router, t]);
 
   // Live-sync the member list so other admins see removals immediately.
   useEffect(() => {
@@ -139,6 +144,34 @@ export default function MembersPage() {
 
       {loading ? (
         <div className="text-sm text-slate-500">{t("commonLoading")}</div>
+      ) : loadError ? (
+        <div className="card text-center">
+          <h2 className="text-lg font-bold text-slate-900">
+            {t("chatLoadFailedTitle")}
+          </h2>
+          <p className="mt-2 text-sm leading-relaxed text-slate-500">
+            {loadError}
+          </p>
+          <div className="mt-5 grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => setRetryNonce((value) => value + 1)}
+            >
+              {t("chatRetry")}
+            </button>
+            <button
+              type="button"
+              className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-600 shadow-sm transition hover:bg-slate-50"
+              onClick={() => {
+                clearSession();
+                router.replace("/");
+              }}
+            >
+              {t("chatBackHome")}
+            </button>
+          </div>
+        </div>
       ) : (
         <ul className="card divide-y divide-slate-100 p-0">
           {members.map((m) => (

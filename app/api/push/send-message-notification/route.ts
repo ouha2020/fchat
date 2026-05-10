@@ -40,6 +40,13 @@ interface PushSubscriptionRow extends StoredPushSubscription {
   last_notified_at: string | null;
 }
 
+interface PresenceRow {
+  member_id: string;
+  current_page: string | null;
+  is_active: boolean;
+  last_seen_at: string;
+}
+
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as SendPushBody;
@@ -104,20 +111,23 @@ export async function POST(request: Request) {
     const activeCutoff = new Date(Date.now() - ACTIVE_WINDOW_MS).toISOString();
     const { data: presenceRows, error: presenceError } = await sb
       .from("user_presence")
-      .select("member_id")
+      .select("member_id, current_page, is_active, last_seen_at")
       .eq("family_id", message.family_id)
-      .eq("current_page", "chat")
       .eq("is_active", true)
-      .gt("last_seen_at", activeCutoff)
       .in("member_id", recipientIds);
     if (presenceError) throw presenceError;
 
     const activeMemberIds = new Set(
-      (presenceRows ?? []).map((row) => row.member_id as string),
+      ((presenceRows ?? []) as PresenceRow[])
+        .filter((row) => {
+          if (row.current_page === "chat") return true;
+          return row.last_seen_at > activeCutoff;
+        })
+        .map((row) => row.member_id),
     );
     const targetMemberIds = recipientIds.filter((id) => !activeMemberIds.has(id));
     if (targetMemberIds.length === 0) {
-      return NextResponse.json({ ok: true, sent: 0, skipped: "active_chat" });
+      return NextResponse.json({ ok: true, sent: 0, skipped: "active_app" });
     }
 
     const { data: subscriptions, error: subError } = await sb

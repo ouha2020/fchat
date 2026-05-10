@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import AppPresenceTracker from "@/components/AppPresenceTracker";
 import LanguageProvider from "@/components/LanguageProvider";
 import ServiceWorkerRegister from "@/components/ServiceWorkerRegister";
 
@@ -36,6 +37,7 @@ export default function RootLayout({
         <div className="mx-auto flex min-h-screen w-full max-w-3xl flex-col bg-slate-50">
           <LanguageProvider>{children}</LanguageProvider>
         </div>
+        <AppPresenceTracker />
         <ServiceWorkerRegister />
       </body>
     </html>

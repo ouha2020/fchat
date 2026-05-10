@@ -273,8 +273,9 @@ export default function ChatPage() {
         router.replace("/");
         return;
       }
+      let fresh: LocalSession | null = null;
       try {
-        const fresh = await validateMember(local.member_id, local.member_token);
+        fresh = await validateMember(local.member_id, local.member_token);
         if (cancelled) return;
         if (!fresh) {
           clearSession();
@@ -283,7 +284,15 @@ export default function ChatPage() {
         }
         saveSession(fresh);
         setSession(fresh);
+      } catch {
+        if (!cancelled) {
+          clearSession();
+          router.replace("/");
+        }
+        return;
+      }
 
+      try {
         const [msgs, mems, important] = await Promise.all([
           listMessages(fresh),
           listMembers(fresh, { includeRemoved: true }),

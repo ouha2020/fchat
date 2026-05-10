@@ -32,24 +32,37 @@ export default function SettingsPage() {
   const push = usePushNotificationControls(session);
 
   useEffect(() => {
-    if (!isSupabaseConfigured()) return;
+    let cancelled = false;
+    if (!isSupabaseConfigured()) {
+      return () => {
+        cancelled = true;
+      };
+    }
     const local = loadSession();
     if (!local) {
       router.replace("/");
-      return;
+      return () => {
+        cancelled = true;
+      };
     }
-    validateMember(local.member_id, local.member_token)
-      .then((fresh) => {
+    const localSession = local;
+
+    async function run() {
+      try {
+        const fresh = await validateMember(
+          localSession.member_id,
+          localSession.member_token,
+        );
+        if (cancelled) return;
         if (!fresh) {
           clearSession();
           router.replace("/");
-          return null;
+          return;
         }
         saveSession(fresh);
         setSession(fresh);
-        return fetchFamilySettings(fresh);
-      })
-      .then((row) => {
+        const row = await fetchFamilySettings(fresh);
+        if (cancelled) return;
         if (row) {
           setJoinOn(row.join_enabled);
           const active = loadSession();
@@ -61,8 +74,18 @@ export default function SettingsPage() {
             if (next) setSession(next);
           }
         }
-      })
-      .catch(() => undefined);
+      } catch {
+        if (!cancelled) {
+          clearSession();
+          router.replace("/");
+        }
+      }
+    }
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
   }, [router]);
 
   async function withAdmin(action: string, fn: (password: string) => Promise<void>) {

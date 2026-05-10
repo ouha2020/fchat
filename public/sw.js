@@ -1,5 +1,5 @@
-const PRECACHE = "family-chat-precache-v1";
-const RUNTIME = "family-chat-runtime-v1";
+const PRECACHE = "family-chat-precache-v2";
+const RUNTIME = "family-chat-runtime-v2";
 
 const PRECACHE_URLS = [
   "/",

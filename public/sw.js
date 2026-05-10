@@ -1,8 +1,7 @@
-const PRECACHE = "family-chat-precache-v3";
-const RUNTIME = "family-chat-runtime-v3";
+const PRECACHE = "family-chat-precache-v4";
+const RUNTIME = "family-chat-runtime-v4";
 
 const PRECACHE_URLS = [
-  "/",
   "/offline",
   "/icon.png",
   "/apple-icon.png",

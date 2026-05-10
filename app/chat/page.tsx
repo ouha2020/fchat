@@ -53,7 +53,6 @@ import {
 } from "@/lib/notificationPreference";
 import {
   requestMessagePush,
-  updatePushPresence,
 } from "@/lib/pushNotificationService";
 import type { RecordingResult } from "@/lib/recordingService";
 import { getSupabase, isSupabaseConfigured } from "@/lib/supabaseClient";
@@ -149,31 +148,6 @@ export default function ChatPage() {
   useEffect(() => {
     notifyEnabledRef.current = notifyEnabled;
   }, [notifyEnabled]);
-
-  useEffect(() => {
-    if (!session) return;
-
-    updatePushPresence(session, document.visibilityState === "visible");
-    const heartbeat = window.setInterval(() => {
-      updatePushPresence(session, document.visibilityState === "visible");
-    }, 30_000);
-
-    const handleVisibility = () => {
-      updatePushPresence(session, document.visibilityState === "visible", true);
-    };
-    const markInactive = () => updatePushPresence(session, false, true);
-
-    document.addEventListener("visibilitychange", handleVisibility);
-    window.addEventListener("pagehide", markInactive);
-    window.addEventListener("beforeunload", markInactive);
-    return () => {
-      window.clearInterval(heartbeat);
-      document.removeEventListener("visibilitychange", handleVisibility);
-      window.removeEventListener("pagehide", markInactive);
-      window.removeEventListener("beforeunload", markInactive);
-      markInactive();
-    };
-  }, [session]);
 
   useEffect(() => {
     if (!session) {

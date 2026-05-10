@@ -83,7 +83,7 @@ self.addEventListener("push", (event) => {
     },
   };
 
-  event.waitUntil(self.registration.showNotification(title, options));
+  event.waitUntil(showNotificationUnlessAppVisible(title, options));
 });
 
 self.addEventListener("notificationclick", (event) => {
@@ -149,4 +149,18 @@ async function cacheFirst(request) {
     cache.put(request, response.clone());
   }
   return response;
+}
+
+async function showNotificationUnlessAppVisible(title, options) {
+  if (await hasVisibleWindowClient()) return;
+  return self.registration.showNotification(title, options);
+}
+
+async function hasVisibleWindowClient() {
+  const clientList = await clients.matchAll({
+    type: "window",
+    includeUncontrolled: true,
+  });
+
+  return clientList.some((client) => client.visibilityState === "visible");
 }

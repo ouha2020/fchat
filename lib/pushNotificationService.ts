@@ -152,6 +152,7 @@ export function updatePushPresence(
   session: LocalSession,
   isActive: boolean,
   keepalive = false,
+  currentPage = "app",
 ): void {
   fetch("/api/push/presence", {
     method: "POST",
@@ -159,7 +160,7 @@ export function updatePushPresence(
     body: JSON.stringify({
       memberId: session.member_id,
       memberToken: session.member_token,
-      currentPage: "chat",
+      currentPage,
       isActive,
     }),
     keepalive,

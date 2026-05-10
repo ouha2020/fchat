@@ -11,6 +11,8 @@ const ERROR_MAP: Record<string, TranslationKey> = {
   nickname_required: "error_nickname_required",
   invalid_role: "error_invalid_role",
   family_code_required: "error_family_code_required",
+  invalid_family_code: "error_invalid_family_code",
+  rate_limited: "error_rate_limited",
   family_not_found: "error_family_not_found",
   join_disabled: "error_join_disabled",
   nickname_taken: "error_nickname_taken",
@@ -29,6 +31,14 @@ const ERROR_MAP: Record<string, TranslationKey> = {
   geolocation_unsupported: "error_geolocation_unsupported",
   recording_unsupported: "error_recording_unsupported",
   media_recorder_unsupported: "error_media_recorder_unsupported",
+  image_too_large: "chatImageTooLarge",
+  audio_too_large: "chatAudioTooLarge",
+  invalid_image_type: "error_invalid_image_type",
+  invalid_audio_type: "error_invalid_audio_type",
+  invalid_location: "error_invalid_location",
+  invalid_image_url: "error_invalid_image_type",
+  invalid_audio_url: "error_invalid_audio_type",
+  message_too_long: "error_message_too_long",
 };
 
 export function humanizeError(message: unknown, language?: Language): string {

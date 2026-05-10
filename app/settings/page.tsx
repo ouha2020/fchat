@@ -5,27 +5,23 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
-import { clearSession, loadSession, updateSession, type LocalSession } from "@/lib/authLocal";
+import { clearSession, loadSession, saveSession, updateSession, type LocalSession } from "@/lib/authLocal";
 import { humanizeError } from "@/lib/errors";
 import {
-  fetchFamilyPublic,
+  fetchFamilySettings,
   leaveFamily,
   resetFamilyCode,
   setJoinEnabled,
   updateFamilyName,
+  validateMember,
 } from "@/lib/familyService";
 import { LANGUAGE_OPTIONS } from "@/lib/i18n";
 import {
-  getCurrentPushSubscription,
-  getPushPreferences,
-  getPushSupportState,
-  savePushPreferences,
-  subscribeToPush,
-  unsubscribePush,
+  pushNotificationErrorMessage,
   type PushPreferences,
-  type PushSupportState,
 } from "@/lib/pushNotificationService";
 import { isSupabaseConfigured } from "@/lib/supabaseClient";
+import { usePushNotificationControls } from "@/lib/usePushNotificationControls";
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -33,13 +29,7 @@ export default function SettingsPage() {
   const [session, setSession] = useState<LocalSession | null>(null);
   const [joinOn, setJoinOn] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
-  const [pushSupport, setPushSupport] = useState<PushSupportState | null>(null);
-  const [pushEnabled, setPushEnabled] = useState(false);
-  const [pushPrefs, setPushPrefs] = useState<PushPreferences>({
-    messagesEnabled: true,
-    locationEnabled: true,
-    importantEnabled: true,
-  });
+  const push = usePushNotificationControls(session);
 
   useEffect(() => {
     if (!isSupabaseConfigured()) return;
@@ -48,17 +38,22 @@ export default function SettingsPage() {
       router.replace("/");
       return;
     }
-    setSession(local);
-    setPushSupport(getPushSupportState());
-    setPushPrefs(getPushPreferences(local));
-    getCurrentPushSubscription()
-      .then((subscription) => setPushEnabled(Boolean(subscription)))
-      .catch(() => undefined);
-    fetchFamilyPublic(local.family_id)
+    validateMember(local.member_id, local.member_token)
+      .then((fresh) => {
+        if (!fresh) {
+          clearSession();
+          router.replace("/");
+          return null;
+        }
+        saveSession(fresh);
+        setSession(fresh);
+        return fetchFamilySettings(fresh);
+      })
       .then((row) => {
         if (row) {
           setJoinOn(row.join_enabled);
-          if (row.name !== local.family_name || row.family_code !== local.family_code) {
+          const active = loadSession();
+          if (active && (row.name !== active.family_name || row.family_code !== active.family_code)) {
             const next = updateSession({
               family_name: row.name,
               family_code: row.family_code,
@@ -144,14 +139,12 @@ export default function SettingsPage() {
     if (!session) return;
     setBusy("push");
     try {
-      await subscribeToPush(session, pushPrefs);
-      setPushEnabled(true);
+      await push.enable();
       alert(t("settingsPushEnabledAlert"));
     } catch (err) {
-      alert(pushErrorMessage(err, t));
+      alert(pushNotificationErrorMessage(err, t));
     } finally {
       setBusy(null);
-      setPushSupport(getPushSupportState());
     }
   }
 
@@ -159,8 +152,7 @@ export default function SettingsPage() {
     if (!session) return;
     setBusy("push");
     try {
-      await unsubscribePush(session);
-      setPushEnabled(false);
+      await push.disable();
       alert(t("settingsPushDisabledAlert"));
     } catch {
       alert(t("settingsPushDisableFailed"));
@@ -174,12 +166,7 @@ export default function SettingsPage() {
     value: PushPreferences[K],
   ) {
     if (!session) return;
-    const next = { ...pushPrefs, [key]: value };
-    setPushPrefs(next);
-    savePushPreferences(session, next);
-    if (pushEnabled) {
-      subscribeToPush(session, next).catch(() => undefined);
-    }
+    void push.updatePreference(key, value).catch(() => undefined);
   }
 
   if (!session) return null;
@@ -236,7 +223,11 @@ export default function SettingsPage() {
           {t("settingsPushDescription")}
         </p>
 
-        {pushSupport?.reason === "ios_not_standalone" ? (
+        {!push.support ? (
+          <p className="rounded-xl bg-slate-50 p-3 text-sm text-slate-500">
+            {t("commonLoading")}
+          </p>
+        ) : push.support.reason === "ios_not_standalone" ? (
           <div className="rounded-xl bg-brand-50 p-3 text-sm leading-6 text-slate-700">
             <p className="font-medium text-slate-900">
               {t("settingsPushIosGuideTitle")}
@@ -249,13 +240,13 @@ export default function SettingsPage() {
               <li>{t("settingsPushIosGuide5")}</li>
             </ol>
           </div>
-        ) : pushSupport?.supported ? (
+        ) : push.support.supported ? (
           <>
             <div className="flex gap-2">
               <button
                 type="button"
                 className="btn-primary flex-1"
-                disabled={!!busy || pushEnabled}
+                disabled={!!busy || push.busy || push.enabled}
                 onClick={handleEnablePush}
               >
                 {t("settingsPushEnable")}
@@ -263,35 +254,35 @@ export default function SettingsPage() {
               <button
                 type="button"
                 className="btn-secondary flex-1"
-                disabled={!!busy || !pushEnabled}
+                disabled={!!busy || push.busy || !push.enabled}
                 onClick={handleDisablePush}
               >
                 {t("settingsPushDisable")}
               </button>
             </div>
-            {pushSupport.permission === "denied" ? (
+            {push.support.permission === "denied" ? (
               <p className="text-sm text-rose-600">{t("settingsPushDenied")}</p>
             ) : null}
             <ToggleRow
               label={t("settingsPushNewMessages")}
-              checked={pushPrefs.messagesEnabled}
-              disabled={!!busy}
+              checked={push.preferences.messagesEnabled}
+              disabled={!!busy || push.busy}
               onChange={(checked) =>
                 handlePushPreference("messagesEnabled", checked)
               }
             />
             <ToggleRow
               label={t("settingsPushLocation")}
-              checked={pushPrefs.locationEnabled}
-              disabled={!!busy}
+              checked={push.preferences.locationEnabled}
+              disabled={!!busy || push.busy}
               onChange={(checked) =>
                 handlePushPreference("locationEnabled", checked)
               }
             />
             <ToggleRow
               label={t("settingsPushImportant")}
-              checked={pushPrefs.importantEnabled}
-              disabled={!!busy}
+              checked={push.preferences.importantEnabled}
+              disabled={!!busy || push.busy}
               onChange={(checked) =>
                 handlePushPreference("importantEnabled", checked)
               }
@@ -299,7 +290,7 @@ export default function SettingsPage() {
           </>
         ) : (
           <p className="rounded-xl bg-slate-50 p-3 text-sm text-slate-500">
-            {pushSupport?.reason === "missing_vapid_key"
+            {push.support.reason === "missing_vapid_key"
               ? t("settingsPushMissingConfig")
               : t("settingsPushUnsupported")}
           </p>
@@ -393,16 +384,4 @@ function ToggleRow({
       />
     </label>
   );
-}
-
-function pushErrorMessage(
-  err: unknown,
-  t: ReturnType<typeof useLanguage>["t"],
-): string {
-  const message = err instanceof Error ? err.message : String(err);
-  if (message === "ios_not_standalone") return t("settingsPushIosGuideTitle");
-  if (message === "permission_denied") return t("settingsPushDenied");
-  if (message === "missing_vapid_key") return t("settingsPushMissingConfig");
-  if (message === "unsupported") return t("settingsPushUnsupported");
-  return t("settingsPushEnableFailed");
 }

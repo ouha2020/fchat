@@ -39,23 +39,19 @@ import {
 } from "@/lib/messageService";
 import { getCurrentLocation, createGoogleMapUrl } from "@/lib/locationService";
 import {
-  getNotificationPermission,
   installAudioUnlock,
   playNotificationSound,
-  requestNotificationPermission,
-  showBrowserNotification,
   vibrate,
-  type NotificationPerm,
 } from "@/lib/notify";
 import {
-  getNotificationsEnabled,
-  setNotificationsEnabled,
-} from "@/lib/notificationPreference";
-import {
+  DEFAULT_PUSH_PREFERENCES,
+  pushNotificationErrorMessage,
   requestMessagePush,
+  type PushPreferences,
 } from "@/lib/pushNotificationService";
 import type { RecordingResult } from "@/lib/recordingService";
 import { getSupabase, isSupabaseConfigured } from "@/lib/supabaseClient";
+import { usePushNotificationControls } from "@/lib/usePushNotificationControls";
 import type { ImportantNotification } from "@/types/importantNotification";
 import type { FamilyMember } from "@/types/member";
 import type { Message } from "@/types/message";
@@ -135,19 +131,23 @@ export default function ChatPage() {
     setEffectShow({ effect: eff, key: `replay-${m.id}-${Date.now()}` });
   }, []);
 
-  // Notifications: in-app sound + title badge + browser notification.
+  const push = usePushNotificationControls(session);
+
+  // Notifications: in-app sound + title badge, controlled by the PWA push switch.
   const [unreadCount, setUnreadCount] = useState(0);
-  const [notifPerm, setNotifPerm] = useState<NotificationPerm>("default");
-  const [notifyEnabled, setNotifyEnabled] = useState(true);
-  const notifyEnabledRef = useRef(true);
+  const pushEnabledRef = useRef(false);
+  const pushPreferencesRef = useRef<PushPreferences>(DEFAULT_PUSH_PREFERENCES);
   const notifiedIdsRef = useRef<Set<string>>(new Set());
   const sessionRef = useRef<LocalSession | null>(null);
   useEffect(() => {
     sessionRef.current = session;
   }, [session]);
   useEffect(() => {
-    notifyEnabledRef.current = notifyEnabled;
-  }, [notifyEnabled]);
+    pushEnabledRef.current = push.enabled;
+  }, [push.enabled]);
+  useEffect(() => {
+    pushPreferencesRef.current = push.preferences;
+  }, [push.preferences]);
 
   useEffect(() => {
     if (!session) {
@@ -171,13 +171,11 @@ export default function ChatPage() {
   // Unlock AudioContext on the first user interaction so later pings can play.
   useEffect(() => installAudioUnlock(), []);
 
-  // Sync notification permission state on mount and when the tab regains focus.
+  // Clear the title badge when the tab regains focus.
   useEffect(() => {
-    setNotifPerm(getNotificationPermission());
     function onVisibility() {
       if (!document.hidden) {
         setUnreadCount(0);
-        setNotifPerm(getNotificationPermission());
       }
     }
     document.addEventListener("visibilitychange", onVisibility);
@@ -188,16 +186,8 @@ export default function ChatPage() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!session) {
-      setNotifyEnabled(true);
-      return;
-    }
-    setNotifyEnabled(getNotificationsEnabled(session.family_id));
-  }, [session]);
-
-  const refreshImportantNotifications = useCallback(async (familyId: string) => {
-    const rows = await listImportantNotifications(familyId);
+  const refreshImportantNotifications = useCallback(async (activeSession: LocalSession) => {
+    const rows = await listImportantNotifications(activeSession);
     setImportantNotifications(rows);
   }, []);
 
@@ -205,9 +195,9 @@ export default function ChatPage() {
     if (!session) return;
     try {
       const [msgs, mems, important] = await Promise.all([
-        listMessages(session.family_id),
-        listMembers(session.family_id, { includeRemoved: true }),
-        listImportantNotifications(session.family_id),
+        listMessages(session),
+        listMembers(session, { includeRemoved: true }),
+        listImportantNotifications(session),
       ]);
       setMessages(msgs);
       setMembers(mems);
@@ -248,23 +238,25 @@ export default function ChatPage() {
 
   async function handleToggleNotifications() {
     if (!session) return;
-    if (notifyEnabled) {
-      setNotificationsEnabled(session.family_id, false);
-      setNotifyEnabled(false);
+    if (push.busy) return;
+
+    if (push.enabled) {
+      await push.disable().catch(() => undefined);
       setUnreadCount(0);
       return;
     }
 
-    const perm = await requestNotificationPermission();
-    setNotifPerm(perm);
-    if (perm === "granted") {
-      setNotificationsEnabled(session.family_id, true);
-      setNotifyEnabled(true);
-      alert(t("chatNotifyEnabledAlert"));
-    } else if (perm === "denied") {
-      alert(t("chatNotifyDeniedAlert"));
-    } else if (perm === "unsupported") {
-      alert(t("chatNotifyUnsupportedAlert"));
+    if (push.support?.reason === "ios_not_standalone") {
+      alert(t("settingsPushIosGuideTitle"));
+      router.push("/settings");
+      return;
+    }
+
+    try {
+      await push.enable();
+      alert(t("settingsPushEnabledAlert"));
+    } catch (err) {
+      alert(pushNotificationErrorMessage(err, t));
     }
   }
 
@@ -293,9 +285,9 @@ export default function ChatPage() {
         setSession(fresh);
 
         const [msgs, mems, important] = await Promise.all([
-          listMessages(fresh.family_id),
-          listMembers(fresh.family_id, { includeRemoved: true }),
-          listImportantNotifications(fresh.family_id),
+          listMessages(fresh),
+          listMembers(fresh, { includeRemoved: true }),
+          listImportantNotifications(fresh),
         ]);
         if (cancelled) return;
         setMessages(msgs);
@@ -357,20 +349,27 @@ export default function ChatPage() {
             incoming.sender_member_id &&
             !membersRef.current.some((m) => m.id === incoming.sender_member_id)
           ) {
-            listMembers(session.family_id, { includeRemoved: true })
+            listMembers(session, { includeRemoved: true })
               .then(setMembers)
               .catch(() => undefined);
           }
           // Notification path — once per message id, only for inbound,
           // non-system, non-deleted messages.
           const me = sessionRef.current;
+          const prefs = pushPreferencesRef.current;
+          const notificationTypeEnabled =
+            incoming.message_type === "location"
+              ? prefs.locationEnabled
+              : prefs.messagesEnabled;
+
           if (
             me &&
             incoming.sender_member_id &&
             incoming.sender_member_id !== me.member_id &&
             incoming.message_type !== "system" &&
             !incoming.deleted_at &&
-            notifyEnabledRef.current &&
+            pushEnabledRef.current &&
+            notificationTypeEnabled &&
             !notifiedIdsRef.current.has(incoming.id)
           ) {
             notifiedIdsRef.current.add(incoming.id);
@@ -378,19 +377,6 @@ export default function ChatPage() {
             if (typeof document !== "undefined" && document.hidden) {
               setUnreadCount((c) => c + 1);
               vibrate(120);
-              const sender = membersRef.current.find(
-                (m) => m.id === incoming.sender_member_id,
-              );
-              const senderName = sender?.nickname ?? t("chatFamily");
-              const previewMap: Record<string, string> = {
-                image: t("notifyImagePreview"),
-                audio: t("notifyAudioPreview"),
-                location: t("notifyLocationPreview"),
-              };
-              const preview =
-                previewMap[incoming.message_type] ??
-                (incoming.content ?? "").slice(0, 80);
-              showBrowserNotification(senderName, preview);
             }
           }
         },
@@ -428,7 +414,7 @@ export default function ChatPage() {
           filter: `family_id=eq.${session.family_id}`,
         },
         () => {
-          refreshImportantNotifications(session.family_id).catch(() => undefined);
+          refreshImportantNotifications(session).catch(() => undefined);
         },
       )
       .subscribe();
@@ -444,7 +430,7 @@ export default function ChatPage() {
           filter: `family_id=eq.${session.family_id}`,
         },
         (payload) => {
-          listMembers(session.family_id, { includeRemoved: true })
+          listMembers(session, { includeRemoved: true })
             .then(setMembers)
             .catch(() => undefined);
           // If my own row got flipped to status='removed', kick myself out.
@@ -463,28 +449,11 @@ export default function ChatPage() {
       )
       .subscribe();
 
-    // Fallback: poll messages every 8s in case Realtime drops events or the
-    // table is not in the supabase_realtime publication. Optimistic dedup
-    // by id keeps this safe.
+    // Fallback: poll through token-checked RPCs every 8s in case Realtime is
+    // blocked by the tighter RLS policies or a broadcast is missed.
     const interval = window.setInterval(() => {
       if (document.visibilityState !== "visible") return;
-      listMessages(session.family_id)
-        .then((rows) => {
-          setMessages((prev) => {
-            const seen = new Set(prev.map((m) => m.id));
-            const merged = [...prev];
-            for (const r of rows) {
-              if (!seen.has(r.id)) merged.push(r);
-            }
-            merged.sort(
-              (a, b) =>
-                new Date(a.created_at).getTime() -
-                new Date(b.created_at).getTime(),
-            );
-            return merged;
-          });
-        })
-        .catch(() => undefined);
+      refreshChatData().catch(() => undefined);
     }, 8000);
 
     return () => {
@@ -493,7 +462,7 @@ export default function ChatPage() {
       sb.removeChannel(membersChannel);
       window.clearInterval(interval);
     };
-  }, [refreshImportantNotifications, router, session, t]);
+  }, [refreshChatData, refreshImportantNotifications, router, session, t]);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
     const scroll = () => {
@@ -664,7 +633,7 @@ export default function ChatPage() {
         saveDismissedImportantIds(session.family_id, session.member_id, next);
         return next;
       });
-      await refreshImportantNotifications(session.family_id);
+      await refreshImportantNotifications(session);
     } catch (err) {
       alert(
         t("importantSetFailed", {
@@ -679,7 +648,7 @@ export default function ChatPage() {
     setMessageActionMenu(null);
     try {
       await removeImportantNotification(session, notificationId);
-      await refreshImportantNotifications(session.family_id);
+      await refreshImportantNotifications(session);
       setDismissedImportantIds((prev) => {
         const next = new Set(prev);
         next.delete(notificationId);
@@ -770,13 +739,13 @@ export default function ChatPage() {
 
   async function handlePickImage(file: File) {
     if (!session) return;
-    if (file.size > 8 * 1024 * 1024) {
+    if (file.size > 2 * 1024 * 1024) {
       alert(t("chatImageTooLarge"));
       return;
     }
     setSending(true);
     try {
-      const url = await uploadChatImage(session.family_id, file);
+      const url = await uploadChatImage(session, file);
       const id = await sendMessage(session, {
         type: "image",
         image_url: url,
@@ -798,14 +767,14 @@ export default function ChatPage() {
 
   async function handleSendAudio(result: RecordingResult) {
     if (!session) return;
-    if (result.blob.size > 12 * 1024 * 1024) {
+    if (result.blob.size > 2 * 1024 * 1024) {
       alert(t("chatAudioTooLarge"));
       return;
     }
     setSending(true);
     try {
       const url = await uploadChatAudio(
-        session.family_id,
+        session,
         result.blob,
         result.mimeType,
       );
@@ -958,32 +927,25 @@ export default function ChatPage() {
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2.5">
-          {notifPerm !== "unsupported" ? (
-            <button
-              type="button"
-              className="inline-flex h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-cover bg-center bg-no-repeat shadow-sm ring-1 ring-slate-200/70 transition hover:brightness-95 active:brightness-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
-              style={{
-                backgroundImage: `url(${
-                  notifyEnabled && notifPerm === "granted"
-                    ? "/ui-icons/notify-on.png"
-                    : "/ui-icons/notify-off.png"
-                })`,
-              }}
-              aria-label={
-                notifyEnabled && notifPerm === "granted"
-                  ? t("chatNotifyOff")
+          <button
+            type="button"
+            className="inline-flex h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-cover bg-center bg-no-repeat shadow-sm ring-1 ring-slate-200/70 transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+            style={{
+              backgroundImage: `url(${
+                push.enabled ? "/ui-icons/notify-on.png" : "/ui-icons/notify-off.png"
+              })`,
+            }}
+            aria-label={push.enabled ? t("chatNotifyOff") : t("chatNotifyOn")}
+            title={
+              push.enabled
+                ? t("chatNotifyOff")
+                : push.support?.permission === "denied"
+                  ? t("chatNotifyDenied")
                   : t("chatNotifyOn")
-              }
-              title={
-                notifyEnabled && notifPerm === "granted"
-                  ? t("chatNotifyOff")
-                  : notifPerm === "denied"
-                    ? t("chatNotifyDenied")
-                    : t("chatNotifyOn")
-              }
-              onClick={handleToggleNotifications}
-            />
-          ) : null}
+            }
+            disabled={push.busy}
+            onClick={handleToggleNotifications}
+          />
           <Link
             href="/members"
             className="inline-flex h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-cover bg-center bg-no-repeat shadow-sm ring-1 ring-slate-200/70 transition hover:brightness-95 active:brightness-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"

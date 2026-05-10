@@ -7,6 +7,7 @@ import { useLanguage } from "@/components/LanguageProvider";
 import { formatTime } from "@/lib/format";
 import type { TranslationKey } from "@/lib/i18n";
 import { formatDuration } from "@/lib/recordingService";
+import { safeHttpUrl } from "@/lib/security";
 import { localizeSystemMessage } from "@/lib/systemMessage";
 import type { ImportantNotification } from "@/types/importantNotification";
 import type { FamilyMember } from "@/types/member";
@@ -169,10 +170,12 @@ function PreviewIcon({
   text: string;
 }) {
   if (message?.message_type === "image" && message.image_url && !message.deleted_at) {
+    const imageUrl = safeHttpUrl(message.image_url);
+    if (!imageUrl) return null;
     return (
       // eslint-disable-next-line @next/next/no-img-element
       <img
-        src={message.image_url}
+        src={imageUrl}
         alt=""
         className="h-9 w-9 shrink-0 rounded-md object-cover"
         draggable={false}

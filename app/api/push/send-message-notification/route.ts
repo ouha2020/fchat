@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 
+import {
+  ApiRequestError,
+  badRequest,
+  readJsonBody,
+  rejectMismatchedOrigin,
+} from "@/lib/apiSecurity";
 import { validateMemberCredentials } from "@/lib/memberAuthServer";
+import { isUuid } from "@/lib/security";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import {
   buildMessagePushBody,
@@ -49,8 +56,11 @@ interface PresenceRow {
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as SendPushBody;
-    if (typeof body.messageId !== "string") {
+    const originError = rejectMismatchedOrigin(request);
+    if (originError) return originError;
+
+    const body = await readJsonBody<SendPushBody>(request);
+    if (!isUuid(body.messageId)) {
       return NextResponse.json({ error: "invalid_message_id" }, { status: 400 });
     }
 
@@ -196,6 +206,9 @@ export async function POST(request: Request) {
       disabled: goneIds.length,
     });
   } catch (error) {
+    if (error instanceof ApiRequestError) {
+      return badRequest(error);
+    }
     console.warn("[push send-message]", error);
     return NextResponse.json({ ok: false, error: "push_send_failed" });
   }

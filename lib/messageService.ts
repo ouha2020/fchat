@@ -2,21 +2,36 @@
 
 import { getSupabase } from "./supabaseClient";
 import type { LocalSession } from "./authLocal";
+import { isSafeHttpUrl, safeGoogleMapsUrl } from "@/lib/security";
+import {
+  audioBlobSchema,
+  imageFileSchema,
+  textMessageSchema,
+} from "@/lib/validation";
 import type { Message, MessageType } from "@/types/message";
 
+const IMAGE_EXT_BY_MIME: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+};
+
+const AUDIO_EXT_BY_MIME: Record<string, string> = {
+  "audio/webm": "webm",
+  "audio/mp4": "m4a",
+  "audio/ogg": "ogg",
+};
+
 export async function listMessages(
-  familyId: string,
+  session: LocalSession,
   limit = 100,
 ): Promise<Message[]> {
   const sb = getSupabase();
-  const { data, error } = await sb
-    .from("messages")
-    .select(
-      "id, family_id, sender_member_id, message_type, content, image_url, audio_url, audio_duration_ms, latitude, longitude, address, map_url, effect_id, effect_caption, deleted_at, deleted_by_member_id, created_at",
-    )
-    .eq("family_id", familyId)
-    .order("created_at", { ascending: false })
-    .limit(limit);
+  const { data, error } = await sb.rpc("list_messages_for_member", {
+    p_member_id: session.member_id,
+    p_member_token: session.member_token,
+    p_limit: limit,
+  });
   if (error) throw error;
   return ((data ?? []) as Message[]).reverse();
 }
@@ -39,6 +54,7 @@ export async function sendMessage(
   session: LocalSession,
   input: SendMessageInput,
 ): Promise<string> {
+  validateOutgoingMessage(input);
   const sb = getSupabase();
   const { data, error } = await sb.rpc("send_message", {
     p_member_id: session.member_id,
@@ -60,25 +76,19 @@ export async function sendMessage(
 }
 
 export async function uploadChatImage(
-  familyId: string,
+  session: LocalSession,
   file: File,
 ): Promise<string> {
-  const sb = getSupabase();
-  const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
-  const path = `${familyId}/${Date.now()}-${Math.random()
-    .toString(36)
-    .slice(2, 8)}.${ext}`;
+  imageFileSchema.parse(file);
+  const contentType = normalizeMime(file.type);
+  const ext = IMAGE_EXT_BY_MIME[contentType];
+  if (!ext) throw new Error("invalid_image_type");
 
-  const { error } = await sb.storage
-    .from("chat-images")
-    .upload(path, file, {
-      contentType: file.type || "image/jpeg",
-      upsert: false,
-    });
-  if (error) throw error;
-
-  const { data } = sb.storage.from("chat-images").getPublicUrl(path);
-  return data.publicUrl;
+  const form = new FormData();
+  form.append("memberId", session.member_id);
+  form.append("memberToken", session.member_token);
+  form.append("file", file, `image.${ext}`);
+  return uploadViaApi("/api/upload/image", form);
 }
 
 export async function deleteMessage(
@@ -95,30 +105,75 @@ export async function deleteMessage(
 }
 
 export async function uploadChatAudio(
-  familyId: string,
+  session: LocalSession,
   blob: Blob,
   mimeType: string,
 ): Promise<string> {
-  const sb = getSupabase();
-  const ext = mimeType.includes("webm")
-    ? "webm"
-    : mimeType.includes("mp4")
-      ? "m4a"
-      : mimeType.includes("ogg")
-        ? "ogg"
-        : "bin";
-  const path = `${familyId}/${Date.now()}-${Math.random()
-    .toString(36)
-    .slice(2, 8)}.${ext}`;
+  audioBlobSchema.parse(blob);
+  const contentType = normalizeMime(mimeType);
+  const ext = AUDIO_EXT_BY_MIME[contentType];
+  if (!ext) throw new Error("invalid_audio_type");
 
-  const { error } = await sb.storage
-    .from("chat-audios")
-    .upload(path, blob, {
-      contentType: mimeType || "audio/webm",
-      upsert: false,
-    });
-  if (error) throw error;
+  const file = new File([blob], `voice.${ext}`, { type: contentType });
+  const form = new FormData();
+  form.append("memberId", session.member_id);
+  form.append("memberToken", session.member_token);
+  form.append("file", file);
+  return uploadViaApi("/api/upload/audio", form);
+}
 
-  const { data } = sb.storage.from("chat-audios").getPublicUrl(path);
-  return data.publicUrl;
+function normalizeMime(mimeType: string): string {
+  return mimeType.split(";")[0]?.trim().toLowerCase() ?? "";
+}
+
+function validateOutgoingMessage(input: SendMessageInput): void {
+  switch (input.type) {
+    case "text":
+      textMessageSchema.parse(input.content ?? "");
+      break;
+    case "image":
+      if (!isSafeHttpUrl(input.image_url)) throw new Error("invalid_image_url");
+      if (input.content) textMessageSchema.parse(input.content);
+      break;
+    case "audio":
+      if (!isSafeHttpUrl(input.audio_url)) throw new Error("invalid_audio_url");
+      if (
+        typeof input.audio_duration_ms !== "number" ||
+        input.audio_duration_ms < 0 ||
+        input.audio_duration_ms > 600000
+      ) {
+        throw new Error("invalid_audio_url");
+      }
+      if (input.content) textMessageSchema.parse(input.content);
+      break;
+    case "location":
+      if (
+        typeof input.latitude !== "number" ||
+        typeof input.longitude !== "number" ||
+        input.latitude < -90 ||
+        input.latitude > 90 ||
+        input.longitude < -180 ||
+        input.longitude > 180
+      ) {
+        throw new Error("invalid_location");
+      }
+      if (input.map_url && !safeGoogleMapsUrl(input.map_url)) {
+        throw new Error("invalid_location");
+      }
+      if (input.content) textMessageSchema.parse(input.content);
+      break;
+    default:
+      throw new Error("invalid_message_type");
+  }
+}
+
+async function uploadViaApi(path: string, form: FormData): Promise<string> {
+  const res = await fetch(path, {
+    method: "POST",
+    body: form,
+  });
+  const payload = (await res.json().catch(() => null)) as { url?: string; error?: string } | null;
+  if (!res.ok) throw new Error(payload?.error ?? "upload_failed");
+  if (!payload?.url || !isSafeHttpUrl(payload.url)) throw new Error("upload_failed");
+  return payload.url;
 }

@@ -6,9 +6,9 @@ import { useEffect, useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
 import RoleBadge from "@/components/RoleBadge";
-import { loadSession, type LocalSession } from "@/lib/authLocal";
+import { clearSession, loadSession, saveSession, type LocalSession } from "@/lib/authLocal";
 import { humanizeError } from "@/lib/errors";
-import { removeMember } from "@/lib/familyService";
+import { removeMember, validateMember } from "@/lib/familyService";
 import { formatRelative } from "@/lib/format";
 import { listMembers } from "@/lib/memberService";
 import { getSupabase, isSupabaseConfigured } from "@/lib/supabaseClient";
@@ -32,9 +32,18 @@ export default function MembersPage() {
       router.replace("/");
       return;
     }
-    setSession(local);
-    listMembers(local.family_id)
-      .then(setMembers)
+    validateMember(local.member_id, local.member_token)
+      .then(async (fresh) => {
+        if (!fresh) {
+          clearSession();
+          router.replace("/");
+          return;
+        }
+        saveSession(fresh);
+        setSession(fresh);
+        const rows = await listMembers(fresh);
+        setMembers(rows);
+      })
       .catch((err) => alert(humanizeError(err, language)))
       .finally(() => setLoading(false));
   }, [language, router]);
@@ -54,14 +63,21 @@ export default function MembersPage() {
           filter: `family_id=eq.${session.family_id}`,
         },
         () => {
-          listMembers(session.family_id)
+          listMembers(session)
             .then(setMembers)
             .catch(() => undefined);
         },
       )
       .subscribe();
+    const interval = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      listMembers(session)
+        .then(setMembers)
+        .catch(() => undefined);
+    }, 10000);
     return () => {
       sb.removeChannel(channel);
+      window.clearInterval(interval);
     };
   }, [session]);
 

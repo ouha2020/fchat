@@ -26,7 +26,7 @@ export default function HomePage() {
   const [adminPassword, setAdminPassword] = useState("");
   const [needsAdminPassword, setNeedsAdminPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [restoring, setRestoring] = useState(true);
+  const [restoring, setRestoring] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -34,9 +34,9 @@ export default function HomePage() {
     async function run() {
       const local = loadSession();
       if (!local || !isSupabaseConfigured()) {
-        setRestoring(false);
         return;
       }
+      setRestoring(true);
       try {
         const session = await validateMember(local.member_id, local.member_token);
         if (cancelled) return;

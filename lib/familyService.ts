@@ -31,6 +31,18 @@ interface RejoinFamilyMemberInput {
   adminPassword: string;
 }
 
+interface ResolveJoinFamilyStateInput {
+  familyCode: string;
+  nickname: string;
+}
+
+export type JoinFamilyState =
+  | "can_join"
+  | "rejoin_required"
+  | "invalid_family_code"
+  | "nickname_required"
+  | "rate_limited";
+
 export async function createFamily(
   input: CreateFamilyInput,
 ): Promise<LocalSession> {
@@ -97,6 +109,23 @@ export async function joinFamily(
     role: parsed.role,
     is_admin: row.is_admin,
   };
+}
+
+export async function resolveJoinFamilyState(
+  input: ResolveJoinFamilyStateInput,
+): Promise<JoinFamilyState> {
+  const parsed = {
+    familyCode: familyCodeSchema.parse(input.familyCode),
+    nickname: nicknameSchema.parse(input.nickname),
+  };
+  const sb = getSupabase();
+  const { data, error } = await sb.rpc("resolve_join_family_state", {
+    p_family_code: parsed.familyCode,
+    p_nickname: parsed.nickname,
+  });
+  if (error) throw error;
+  const row = Array.isArray(data) ? data[0] : data;
+  return (row?.status ?? "invalid_family_code") as JoinFamilyState;
 }
 
 export async function rejoinFamilyMember(

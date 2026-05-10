@@ -12,6 +12,7 @@ import { humanizeError } from "@/lib/errors";
 import {
   joinFamily,
   rejoinFamilyMember,
+  resolveJoinFamilyState,
   validateMember,
 } from "@/lib/familyService";
 import { isSupabaseConfigured } from "@/lib/supabaseClient";
@@ -27,6 +28,7 @@ export default function HomePage() {
   const [needsAdminPassword, setNeedsAdminPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -56,10 +58,10 @@ export default function HomePage() {
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    setNotice(null);
     if (
       !familyCode.trim() ||
-      !nickname.trim() ||
-      (!needsAdminPassword && !role)
+      !nickname.trim()
     ) {
       setError(t("homeMissingFields"));
       return;
@@ -72,17 +74,36 @@ export default function HomePage() {
     try {
       const code = familyCode.trim().toUpperCase();
       const name = nickname.trim();
-      const session = needsAdminPassword
-        ? await rejoinFamilyMember({
-            familyCode: code,
-            nickname: name,
-            adminPassword,
-          })
-        : await joinFamily({
-            familyCode: code,
-            nickname: name,
-            role: role!,
-          });
+      let session;
+      if (needsAdminPassword) {
+        session = await rejoinFamilyMember({
+          familyCode: code,
+          nickname: name,
+          adminPassword,
+        });
+      } else {
+        const state = await resolveJoinFamilyState({
+          familyCode: code,
+          nickname: name,
+        });
+        if (state === "rejoin_required") {
+          setNeedsAdminPassword(true);
+          setNotice(t("homeRejoinPrompt"));
+          return;
+        }
+        if (state !== "can_join") {
+          throw new Error(state);
+        }
+        if (!role) {
+          setError(t("homeMissingFields"));
+          return;
+        }
+        session = await joinFamily({
+          familyCode: code,
+          nickname: name,
+          role,
+        });
+      }
       saveSession(session);
       router.replace("/chat");
     } catch (err) {
@@ -92,7 +113,7 @@ export default function HomePage() {
           : String((err as { message?: string })?.message ?? err);
       if (!needsAdminPassword && message.includes("nickname_taken")) {
         setNeedsAdminPassword(true);
-        setError(t("homeRejoinPrompt"));
+        setNotice(t("homeRejoinPrompt"));
       } else {
         setError(humanizeError(err, language));
       }
@@ -127,6 +148,7 @@ export default function HomePage() {
               setFamilyCode(e.target.value.toUpperCase());
               setNeedsAdminPassword(false);
               setAdminPassword("");
+              setNotice(null);
             }}
             autoComplete="off"
           />
@@ -146,6 +168,7 @@ export default function HomePage() {
               setNickname(e.target.value);
               setNeedsAdminPassword(false);
               setAdminPassword("");
+              setNotice(null);
             }}
             autoComplete="off"
           />
@@ -175,6 +198,12 @@ export default function HomePage() {
             <RoleSelect value={role} onChange={setRole} />
           </div>
         )}
+
+        {notice ? (
+          <div className="rounded-xl bg-sky-50 px-3 py-2 text-sm text-sky-700">
+            {notice}
+          </div>
+        ) : null}
 
         {error ? (
           <div className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">

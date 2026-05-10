@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 
-const SW_REFRESH_KEY = "family-chat:sw-refreshed-v2";
+const SW_REFRESH_KEY = "family-chat:sw-refreshed-v3";
 
 export default function ServiceWorkerRegister() {
   useEffect(() => {

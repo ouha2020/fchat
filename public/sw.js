@@ -63,6 +63,51 @@ self.addEventListener("fetch", (event) => {
   }
 });
 
+self.addEventListener("push", (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = {};
+  }
+
+  const title = data.title || "家族チャット";
+  const options = {
+    body: data.body || "新しい通知があります",
+    icon: "/icon.png",
+    badge: "/icon.png",
+    tag: data.tag || "family-chat",
+    renotify: false,
+    data: {
+      url: data.url || "/chat",
+    },
+  };
+
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const targetUrl = event.notification.data?.url || "/chat";
+  const absoluteUrl = new URL(targetUrl, self.location.origin).href;
+
+  event.waitUntil(
+    clients
+      .matchAll({ type: "window", includeUncontrolled: true })
+      .then((clientList) => {
+        for (const client of clientList) {
+          if (client.url === absoluteUrl && "focus" in client) {
+            return client.focus();
+          }
+        }
+        if (clients.openWindow) {
+          return clients.openWindow(absoluteUrl);
+        }
+        return undefined;
+      }),
+  );
+});
+
 function isStaticAsset(url) {
   return (
     url.pathname.startsWith("/_next/static/") ||

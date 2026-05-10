@@ -60,6 +60,7 @@ create table if not exists messages (
   map_url text,
   effect_id text,
   effect_caption text,
+  push_requested_at timestamptz,
   deleted_at timestamptz,
   deleted_by_member_id uuid references family_members(id) on delete set null,
   created_at timestamptz not null default now()
@@ -90,6 +91,45 @@ create index if not exists important_notifications_family_created_at_idx
   where removed_at is null;
 
 alter table important_notifications replica identity full;
+
+create table if not exists push_subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  family_id uuid not null references families(id) on delete cascade,
+  member_id uuid not null references family_members(id) on delete cascade,
+  endpoint text not null,
+  p256dh text not null,
+  auth text not null,
+  user_agent text,
+  platform text not null default 'unknown'
+    check (platform in ('ios', 'android', 'desktop', 'unknown')),
+  enabled boolean not null default true,
+  messages_enabled boolean not null default true,
+  location_enabled boolean not null default true,
+  important_enabled boolean not null default true,
+  last_notified_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (member_id, endpoint)
+);
+
+create index if not exists push_subscriptions_family_member_idx
+  on push_subscriptions (family_id, member_id)
+  where enabled = true;
+
+create table if not exists user_presence (
+  id uuid primary key default gen_random_uuid(),
+  family_id uuid not null references families(id) on delete cascade,
+  member_id uuid not null references family_members(id) on delete cascade,
+  current_page text,
+  is_active boolean not null default true,
+  last_seen_at timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (family_id, member_id)
+);
+
+create index if not exists user_presence_family_active_idx
+  on user_presence (family_id, current_page, is_active, last_seen_at desc);
 
 -- =====================================================================
 -- Helpers
@@ -972,6 +1012,8 @@ alter table families        enable row level security;
 alter table family_members  enable row level security;
 alter table messages        enable row level security;
 alter table important_notifications enable row level security;
+alter table push_subscriptions enable row level security;
+alter table user_presence enable row level security;
 
 drop policy if exists "messages are readable by anon" on messages;
 create policy "messages are readable by anon"
@@ -992,6 +1034,9 @@ create policy "important notifications are readable by anon"
   using (true);
 
 grant select on important_notifications to anon, authenticated;
+
+revoke all on push_subscriptions from anon, authenticated;
+revoke all on user_presence from anon, authenticated;
 
 -- Families table contains the password hash, so we expose a view instead.
 create or replace view families_public as

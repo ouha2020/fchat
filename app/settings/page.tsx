@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
-import { clearSession, loadSession, saveSession, updateSession, type LocalSession } from "@/lib/authLocal";
+import { clearSession, loadSession, updateSession, type LocalSession } from "@/lib/authLocal";
 import { humanizeError } from "@/lib/errors";
 import {
   fetchFamilyPublic,

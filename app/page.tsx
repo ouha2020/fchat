@@ -132,7 +132,7 @@ export default function HomePage() {
             id="code"
             className="field tracking-widest uppercase"
             placeholder={t("homeCodePlaceholder")}
-            maxLength={8}
+            maxLength={12}
             value={familyCode}
             onChange={(e) => {
               setFamilyCode(e.target.value.toUpperCase());

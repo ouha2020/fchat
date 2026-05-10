@@ -1,6 +1,7 @@
 "use client";
 
 import type { LocalSession } from "@/lib/authLocal";
+import type { TranslationKey } from "@/lib/i18n";
 
 export type PushPlatform = "ios" | "android" | "desktop" | "unknown";
 
@@ -20,20 +21,23 @@ export interface PushSupportState {
 }
 
 const PREF_PREFIX = "family-chat:push-preferences:";
-const DEFAULT_PREFS: PushPreferences = {
+export const DEFAULT_PUSH_PREFERENCES: PushPreferences = {
   messagesEnabled: true,
   locationEnabled: true,
   importantEnabled: true,
 };
 
 export function getPushPreferences(session: LocalSession): PushPreferences {
-  if (typeof window === "undefined") return DEFAULT_PREFS;
+  if (typeof window === "undefined") return DEFAULT_PUSH_PREFERENCES;
   try {
     const raw = window.localStorage.getItem(prefKey(session));
-    if (!raw) return DEFAULT_PREFS;
-    return { ...DEFAULT_PREFS, ...(JSON.parse(raw) as Partial<PushPreferences>) };
+    if (!raw) return DEFAULT_PUSH_PREFERENCES;
+    return {
+      ...DEFAULT_PUSH_PREFERENCES,
+      ...(JSON.parse(raw) as Partial<PushPreferences>),
+    };
   } catch {
-    return DEFAULT_PREFS;
+    return DEFAULT_PUSH_PREFERENCES;
   }
 }
 
@@ -181,6 +185,18 @@ export function requestMessagePush(
     }),
     keepalive: true,
   }).catch(() => undefined);
+}
+
+export function pushNotificationErrorMessage(
+  err: unknown,
+  t: (key: TranslationKey) => string,
+): string {
+  const message = err instanceof Error ? err.message : String(err);
+  if (message === "ios_not_standalone") return t("settingsPushIosGuideTitle");
+  if (message === "permission_denied") return t("settingsPushDenied");
+  if (message === "missing_vapid_key") return t("settingsPushMissingConfig");
+  if (message === "unsupported") return t("settingsPushUnsupported");
+  return t("settingsPushEnableFailed");
 }
 
 export function detectPlatform(): PushPlatform {

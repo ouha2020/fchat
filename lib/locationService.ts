@@ -26,5 +26,12 @@ export function getCurrentLocation(): Promise<LocationFix> {
 }
 
 export function createGoogleMapUrl(latitude: number, longitude: number): string {
-  return `https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`;
+  const lat = Number(latitude);
+  const lng = Number(longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    throw new Error("invalid_location");
+  }
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+    `${lat},${lng}`,
+  )}`;
 }

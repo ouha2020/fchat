@@ -7,6 +7,7 @@ import { Suspense, useRef, useState } from "react";
 import { useLanguage } from "@/components/LanguageProvider";
 import { loadSession } from "@/lib/authLocal";
 import { setChatBackground } from "@/lib/chatBackground";
+import { safeHttpUrl } from "@/lib/security";
 
 export default function ImagePreviewPage() {
   return (
@@ -24,7 +25,7 @@ function ImagePreviewContent() {
   const router = useRouter();
   const { t } = useLanguage();
   const searchParams = useSearchParams();
-  const src = searchParams.get("src")?.trim() ?? "";
+  const src = safeHttpUrl(searchParams.get("src")?.trim() ?? "");
   const lastTouchAtRef = useRef(0);
   const [notice, setNotice] = useState<string | null>(null);
 

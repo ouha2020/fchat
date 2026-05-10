@@ -6,6 +6,8 @@ import { useRef } from "react";
 import AudioBubble from "./AudioBubble";
 import { useLanguage } from "@/components/LanguageProvider";
 import { formatTime } from "@/lib/format";
+import { createGoogleMapUrl } from "@/lib/locationService";
+import { safeGoogleMapsUrl, safeHttpUrl } from "@/lib/security";
 import {
   getSystemMessageTone,
   localizeSystemMessage,
@@ -218,8 +220,10 @@ function Bubble({
     : "";
 
   if (message.message_type === "image" && message.image_url) {
+    const imageUrl = safeHttpUrl(message.image_url);
+    if (!imageUrl) return null;
     const previewHref = `/image-preview?src=${encodeURIComponent(
-      message.image_url,
+      imageUrl,
     )}`;
 
     return (
@@ -237,7 +241,7 @@ function Bubble({
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={message.image_url}
+            src={imageUrl}
             alt={t("messageImageAlt")}
             className="max-h-72 max-w-full rounded-2xl object-cover"
             draggable={false}
@@ -248,11 +252,13 @@ function Bubble({
   }
 
   if (message.message_type === "audio" && message.audio_url) {
+    const audioUrl = safeHttpUrl(message.audio_url);
+    if (!audioUrl) return null;
     return (
       <div {...actionHandlers} className={actionClass}>
         <AudioBubble
           messageId={message.id}
-          url={message.audio_url}
+          url={audioUrl}
           durationMs={message.audio_duration_ms}
           isMine={isMine}
           highlighted={highlighted}
@@ -267,12 +273,20 @@ function Bubble({
         ? `${message.latitude.toFixed(5)}, ${message.longitude.toFixed(5)}`
         : "";
     const detail = message.address || coords || t("messageLocationFallback");
+    const mapUrl =
+      safeGoogleMapsUrl(message.map_url) ??
+      (message.latitude != null && message.longitude != null
+        ? createGoogleMapUrl(message.latitude, message.longitude)
+        : null);
 
     return (
       <a
-        href={message.map_url ?? "#"}
-        target="_blank"
-        rel="noreferrer"
+        href={mapUrl ?? "#"}
+        target={mapUrl ? "_blank" : undefined}
+        rel={mapUrl ? "noreferrer" : undefined}
+        onClick={(e) => {
+          if (!mapUrl) e.preventDefault();
+        }}
         {...actionHandlers}
         className={`${base} flex min-w-40 max-w-56 flex-col gap-1 no-underline ${actionClass} ${highlightClass}`}
       >

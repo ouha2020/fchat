@@ -1,4 +1,5 @@
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import { isMemberToken, isUuid } from "@/lib/security";
 import type { FamilyRole } from "@/types/family";
 
 export interface ValidatedMemberSession {
@@ -15,7 +16,7 @@ export async function validateMemberCredentials(
   memberId: unknown,
   memberToken: unknown,
 ): Promise<ValidatedMemberSession | null> {
-  if (typeof memberId !== "string" || typeof memberToken !== "string") {
+  if (!isUuid(memberId) || !isMemberToken(memberToken)) {
     return null;
   }
 

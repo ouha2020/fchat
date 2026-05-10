@@ -1,6 +1,18 @@
 import { NextResponse } from "next/server";
 
+import {
+  ApiRequestError,
+  badRequest,
+  readJsonBody,
+  rejectMismatchedOrigin,
+} from "@/lib/apiSecurity";
 import { validateMemberCredentials } from "@/lib/memberAuthServer";
+import {
+  isBase64UrlLike,
+  isSafeHttpUrl,
+  isUuid,
+  truncateText,
+} from "@/lib/security";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
@@ -26,7 +38,10 @@ interface SubscribeBody {
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as SubscribeBody;
+    const originError = rejectMismatchedOrigin(request);
+    if (originError) return originError;
+
+    const body = await readJsonBody<SubscribeBody>(request);
     const member = await validateMemberCredentials(
       body.memberId,
       body.memberToken,
@@ -37,14 +52,17 @@ export async function POST(request: Request) {
     if (typeof body.familyId === "string" && body.familyId !== member.family_id) {
       return NextResponse.json({ error: "family_mismatch" }, { status: 403 });
     }
+    if (body.familyId != null && !isUuid(body.familyId)) {
+      return NextResponse.json({ error: "invalid_family_id" }, { status: 400 });
+    }
 
     const endpoint = body.subscription?.endpoint;
     const p256dh = body.subscription?.keys?.p256dh;
     const auth = body.subscription?.keys?.auth;
     if (
-      typeof endpoint !== "string" ||
-      typeof p256dh !== "string" ||
-      typeof auth !== "string"
+      !isSafeHttpUrl(endpoint) ||
+      !isBase64UrlLike(p256dh, 32, 512) ||
+      !isBase64UrlLike(auth, 16, 256)
     ) {
       return NextResponse.json({ error: "invalid_subscription" }, { status: 400 });
     }
@@ -58,7 +76,7 @@ export async function POST(request: Request) {
         endpoint,
         p256dh,
         auth,
-        user_agent: request.headers.get("user-agent"),
+        user_agent: truncateText(request.headers.get("user-agent"), 512),
         platform: normalizePlatform(body.platform),
         enabled: true,
         messages_enabled: boolOrDefault(
@@ -81,6 +99,9 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ ok: true });
   } catch (error) {
+    if (error instanceof ApiRequestError) {
+      return badRequest(error);
+    }
     console.warn("[push subscribe]", error);
     return NextResponse.json({ error: "push_subscribe_failed" }, { status: 500 });
   }

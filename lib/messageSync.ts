@@ -103,28 +103,34 @@ async function runDeltaSync(
   let didHitPageLimit = false;
   let latestMessages = await loadCachedMessagesForSession(session);
 
-  while (pages < MAX_DELTA_PAGES) {
-    const rows = await listMessagesDelta(
-      session,
-      state.cursorUpdatedAt,
-      state.cursorId,
-      DELTA_LIMIT,
-    );
-    if (rows.length === 0) break;
+  try {
+    while (pages < MAX_DELTA_PAGES) {
+      const rows = await listMessagesDelta(
+        session,
+        state.cursorUpdatedAt,
+        state.cursorId,
+        DELTA_LIMIT,
+      );
+      if (rows.length === 0) break;
 
-    const cursor = cursorFromMessages(rows);
-    latestMessages = await upsertMessagesAndSyncState(session, rows, cursor);
-    latestMessages = latestMessages.sort(compareCreatedAtAsc);
-    onMessages?.(latestMessages);
+      const cursor = cursorFromMessages(rows);
+      latestMessages = await upsertMessagesAndSyncState(session, rows, cursor);
+      latestMessages = latestMessages.sort(compareCreatedAtAsc);
+      onMessages?.(latestMessages);
 
-    state = {
-      ...state,
-      cursorUpdatedAt: cursor.cursorUpdatedAt,
-      cursorId: cursor.cursorId,
-    };
-    pages += 1;
-    if (rows.length < DELTA_LIMIT) break;
-    if (pages >= MAX_DELTA_PAGES) didHitPageLimit = true;
+      state = {
+        ...state,
+        cursorUpdatedAt: cursor.cursorUpdatedAt,
+        cursorId: cursor.cursorId,
+      };
+      pages += 1;
+      if (rows.length < DELTA_LIMIT) break;
+      if (pages >= MAX_DELTA_PAGES) didHitPageLimit = true;
+    }
+  } catch {
+    // Delta RPC can be temporarily unavailable during deploy/migration drift.
+    // Fall back to the existing recent-window refresh so users still see chat.
+    return runFullRefresh(session, true, onMessages);
   }
 
   if (didHitPageLimit) {

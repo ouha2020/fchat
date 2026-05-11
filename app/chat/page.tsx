@@ -44,10 +44,9 @@ import {
   vibrate,
 } from "@/lib/notify";
 import {
-  DEFAULT_PUSH_PREFERENCES,
   pushNotificationErrorMessage,
   requestMessagePush,
-  type PushPreferences,
+  updatePushPresence,
 } from "@/lib/pushNotificationService";
 import type { RecordingResult } from "@/lib/recordingService";
 import { getSupabase, isSupabaseConfigured } from "@/lib/supabaseClient";
@@ -168,7 +167,6 @@ export default function ChatPage() {
   // Notifications: in-app sound + title badge, controlled by the PWA push switch.
   const [unreadCount, setUnreadCount] = useState(0);
   const pushEnabledRef = useRef(false);
-  const pushPreferencesRef = useRef<PushPreferences>(DEFAULT_PUSH_PREFERENCES);
   const notifiedIdsRef = useRef<Set<string>>(new Set());
   const sessionRef = useRef<LocalSession | null>(null);
   useEffect(() => {
@@ -177,9 +175,38 @@ export default function ChatPage() {
   useEffect(() => {
     pushEnabledRef.current = push.enabled;
   }, [push.enabled]);
+
   useEffect(() => {
-    pushPreferencesRef.current = push.preferences;
-  }, [push.preferences]);
+    if (!session) return;
+
+    updatePushPresence(session, document.visibilityState === "visible", false, "chat");
+    const interval = window.setInterval(() => {
+      updatePushPresence(session, document.visibilityState === "visible", false, "chat");
+    }, 30_000);
+
+    const markVisibility = () => {
+      updatePushPresence(
+        session,
+        document.visibilityState === "visible",
+        document.visibilityState !== "visible",
+        "chat",
+      );
+    };
+    const markInactive = () => {
+      updatePushPresence(session, false, true, "chat");
+    };
+
+    document.addEventListener("visibilitychange", markVisibility);
+    window.addEventListener("pagehide", markInactive);
+    window.addEventListener("beforeunload", markInactive);
+    return () => {
+      window.clearInterval(interval);
+      markInactive();
+      document.removeEventListener("visibilitychange", markVisibility);
+      window.removeEventListener("pagehide", markInactive);
+      window.removeEventListener("beforeunload", markInactive);
+    };
+  }, [session]);
 
   useEffect(() => {
     if (!session) {
@@ -405,11 +432,6 @@ export default function ChatPage() {
           // Notification path — once per message id, only for inbound,
           // non-system, non-deleted messages.
           const me = sessionRef.current;
-          const prefs = pushPreferencesRef.current;
-          const notificationTypeEnabled =
-            incoming.message_type === "location"
-              ? prefs.locationEnabled
-              : prefs.messagesEnabled;
 
           if (
             me &&
@@ -418,7 +440,6 @@ export default function ChatPage() {
             incoming.message_type !== "system" &&
             !incoming.deleted_at &&
             pushEnabledRef.current &&
-            notificationTypeEnabled &&
             !notifiedIdsRef.current.has(incoming.id)
           ) {
             notifiedIdsRef.current.add(incoming.id);

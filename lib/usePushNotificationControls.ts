@@ -69,6 +69,7 @@ export function usePushNotificationControls(session: LocalSession | null) {
     try {
       setSupport(getPushSupportState());
       await subscribeToPush(session, preferences);
+      setPreferences(getPushPreferences(session));
       setEnabled(true);
       setSupport(getPushSupportState());
     } finally {

@@ -70,17 +70,21 @@ export async function getSyncState(session: LocalSession): Promise<MessageSyncSt
 export async function registerCacheOpen(session: LocalSession): Promise<MessageSyncState> {
   const db = await openDb();
   const ownerKey = messageOwnerKey(session);
-  const tx = db.transaction(SYNC_STORE, "readwrite");
-  const store = tx.objectStore(SYNC_STORE);
-  const existing = await requestToPromise<MessageSyncState | undefined>(store.get(ownerKey));
-  const next = {
-    ...defaultSyncState(session),
-    ...existing,
-    openCount: (existing?.openCount ?? 0) + 1,
-    updatedAt: new Date().toISOString(),
-  };
-  store.put(next);
-  await transactionDone(tx);
+  let next = defaultSyncState(session);
+  await runTransaction(db, [SYNC_STORE], "readwrite", (tx) => {
+    const store = tx.objectStore(SYNC_STORE);
+    const request = store.get(ownerKey);
+    request.onsuccess = () => {
+      const existing = request.result as MessageSyncState | undefined;
+      next = {
+        ...defaultSyncState(session),
+        ...existing,
+        openCount: (existing?.openCount ?? 0) + 1,
+        updatedAt: new Date().toISOString(),
+      };
+      store.put(next);
+    };
+  });
   return next;
 }
 
@@ -98,45 +102,55 @@ export async function upsertMessagesAndSyncState(
 ): Promise<Message[]> {
   const db = await openDb();
   const ownerKey = messageOwnerKey(session);
-  const tx = db.transaction([MESSAGE_STORE, SYNC_STORE], "readwrite");
-  const messageStore = tx.objectStore(MESSAGE_STORE);
-  const stateStore = tx.objectStore(SYNC_STORE);
+  await runTransaction(db, [MESSAGE_STORE, SYNC_STORE], "readwrite", (tx) => {
+    const messageStore = tx.objectStore(MESSAGE_STORE);
+    const stateStore = tx.objectStore(SYNC_STORE);
 
-  messages.forEach((message) => {
-    const normalized = normalizeMessage(message);
-    const record: CachedMessageRecord = {
-      ...normalized,
-      ownerKey,
-      cacheKey: `${ownerKey}:${normalized.id}`,
-    };
-    messageStore.put(record);
+    messages.forEach((message) => {
+      const normalized = normalizeMessage(message);
+      const record: CachedMessageRecord = {
+        ...normalized,
+        ownerKey,
+        cacheKey: `${ownerKey}:${normalized.id}`,
+      };
+      messageStore.put(record);
+    });
+
+    const prune = () => queuePruneOwnerMessages(messageStore, ownerKey);
+
+    if (patch) {
+      const stateRequest = stateStore.get(ownerKey);
+      stateRequest.onsuccess = () => {
+        const existing = stateRequest.result as MessageSyncState | undefined;
+        const next: MessageSyncState = {
+          ...defaultSyncState(session),
+          ...existing,
+          ...patch,
+          updatedAt: new Date().toISOString(),
+        };
+        stateStore.put(next);
+        prune();
+      };
+    } else {
+      prune();
+    }
   });
-
-  if (patch) {
-    const existing = awaitMaybe<MessageSyncState | undefined>(stateStore.get(ownerKey));
-    const next: MessageSyncState = {
-      ...defaultSyncState(session),
-      ...existing,
-      ...patch,
-      updatedAt: new Date().toISOString(),
-    };
-    stateStore.put(next);
-  }
-
-  await pruneOwnerMessagesInTransaction(tx, ownerKey);
-  await transactionDone(tx);
   return loadCachedMessages(session);
 }
 
 export async function clearMessageCacheForSession(session: LocalSession): Promise<void> {
   const db = await openDb();
   const ownerKey = messageOwnerKey(session);
-  const tx = db.transaction([MESSAGE_STORE, SYNC_STORE], "readwrite");
-  const messageStore = tx.objectStore(MESSAGE_STORE);
-  const records = await readOwnerMessagesFromStore(messageStore, ownerKey);
-  records.forEach((record) => messageStore.delete(record.cacheKey));
-  tx.objectStore(SYNC_STORE).delete(ownerKey);
-  await transactionDone(tx);
+  await runTransaction(db, [MESSAGE_STORE, SYNC_STORE], "readwrite", (tx) => {
+    const messageStore = tx.objectStore(MESSAGE_STORE);
+    const request = messageStore.index("ownerKey").getAll(IDBKeyRange.only(ownerKey));
+    request.onsuccess = () => {
+      (request.result as CachedMessageRecord[]).forEach((record) =>
+        messageStore.delete(record.cacheKey),
+      );
+      tx.objectStore(SYNC_STORE).delete(ownerKey);
+    };
+  });
 }
 
 export function cursorFromMessages(messages: Message[]): SyncCursor {
@@ -223,24 +237,26 @@ async function readOwnerMessagesFromStore(
   return requestToPromise<CachedMessageRecord[]>(index.getAll(range));
 }
 
-async function pruneOwnerMessagesInTransaction(
-  tx: IDBTransaction,
+function queuePruneOwnerMessages(
+  store: IDBObjectStore,
   ownerKey: string,
-): Promise<void> {
-  const store = tx.objectStore(MESSAGE_STORE);
-  const records = await readOwnerMessagesFromStore(store, ownerKey);
-  if (records.length <= MAX_RETAINED_MESSAGES) return;
+): void {
+  const request = store.index("ownerKey").getAll(IDBKeyRange.only(ownerKey));
+  request.onsuccess = () => {
+    const records = request.result as CachedMessageRecord[];
+    if (records.length <= MAX_RETAINED_MESSAGES) return;
 
-  const cutoff = Date.now() - OLD_MESSAGE_MAX_AGE_MS;
-  records
-    .sort((a, b) => -compareCreatedAtAsc(a, b))
-    .forEach((record, index) => {
-      const createdAt = new Date(record.created_at).getTime();
-      const keep =
-        index < MIN_RETAINED_MESSAGES ||
-        (index < MAX_RETAINED_MESSAGES && createdAt >= cutoff);
-      if (!keep) store.delete(record.cacheKey);
-    });
+    const cutoff = Date.now() - OLD_MESSAGE_MAX_AGE_MS;
+    records
+      .sort((a, b) => -compareCreatedAtAsc(a, b))
+      .forEach((record, index) => {
+        const createdAt = new Date(record.created_at).getTime();
+        const keep =
+          index < MIN_RETAINED_MESSAGES ||
+          (index < MAX_RETAINED_MESSAGES && createdAt >= cutoff);
+        if (!keep) store.delete(record.cacheKey);
+      });
+  };
 }
 
 function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
@@ -250,14 +266,17 @@ function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
   });
 }
 
-function transactionDone(tx: IDBTransaction): Promise<void> {
+function runTransaction(
+  db: IDBDatabase,
+  stores: string[],
+  mode: IDBTransactionMode,
+  queue: (tx: IDBTransaction) => void,
+): Promise<void> {
   return new Promise((resolve, reject) => {
+    const tx = db.transaction(stores, mode);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error ?? new Error("indexeddb_transaction_failed"));
     tx.onabort = () => reject(tx.error ?? new Error("indexeddb_transaction_aborted"));
+    queue(tx);
   });
-}
-
-function awaitMaybe<T>(request: IDBRequest<T>): Promise<T> {
-  return requestToPromise(request);
 }

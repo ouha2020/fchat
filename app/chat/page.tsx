@@ -82,7 +82,6 @@ export default function ChatPage() {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [syncNotice, setSyncNotice] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
   const [chatBackgroundUrl, setChatBackgroundUrl] = useState<string | null>(null);
@@ -256,15 +255,6 @@ export default function ChatPage() {
     setImportantNotifications(rows);
   }, []);
 
-  const showSyncFailure = useCallback(() => {
-    setSyncNotice(t("chatSyncFailed"));
-    window.setTimeout(() => {
-      setSyncNotice((current) =>
-        current === t("chatSyncFailed") ? null : current,
-      );
-    }, 2800);
-  }, [t]);
-
   const refreshChatData = useCallback(async (forceFullRefresh = false) => {
     if (!session) return;
     try {
@@ -276,15 +266,13 @@ export default function ChatPage() {
         listImportantNotifications(session),
       ]);
       if (syncResult.messages.length > 0) setMessages(syncResult.messages);
-      if (syncResult.status === "failed") showSyncFailure();
       setMembers(mems);
       setImportantNotifications(important);
       setError(null);
     } catch (err) {
-      showSyncFailure();
       setError(humanizeError(err, language));
     }
-  }, [language, session, showSyncFailure]);
+  }, [language, session]);
 
   function isHeaderActionTarget(target: EventTarget | null): boolean {
     return target instanceof Element && !!target.closest("a,button");
@@ -405,14 +393,11 @@ export default function ChatPage() {
         });
         if (cancelled) return;
         if (syncResult.messages.length > 0) setMessages(syncResult.messages);
-        if (syncResult.status === "failed") showSyncFailure();
         setLoadError(null);
       } catch (err) {
         if (!cancelled) {
           if (!hadCachedMessages) {
             setLoadError(humanizeError(err, language) || t("chatLoadFailed"));
-          } else {
-            showSyncFailure();
           }
         }
       } finally {
@@ -423,7 +408,7 @@ export default function ChatPage() {
     return () => {
       cancelled = true;
     };
-  }, [language, retryNonce, router, showSyncFailure, t]);
+  }, [language, retryNonce, router, t]);
 
   // Realtime subscription for new messages.
   useEffect(() => {
@@ -1185,12 +1170,6 @@ export default function ChatPage() {
           {error}
         </div>
       ) : null}
-      {syncNotice ? (
-        <div className="border-b border-amber-100 bg-amber-50 px-4 py-2 text-sm text-amber-700">
-          {syncNotice}
-        </div>
-      ) : null}
-
       <ImportantNoticeBar
         notifications={visibleImportantNotifications}
         members={memberMap}

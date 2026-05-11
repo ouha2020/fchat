@@ -59,6 +59,9 @@ import type { ImportantNotification } from "@/types/importantNotification";
 import type { FamilyMember } from "@/types/member";
 import type { Message } from "@/types/message";
 
+const MESSAGE_FALLBACK_POLL_MS = 30_000;
+const METADATA_FALLBACK_POLL_MS = 120_000;
+
 export default function ChatPage() {
   const router = useRouter();
   const { language, t } = useLanguage();
@@ -557,20 +560,34 @@ export default function ChatPage() {
       )
       .subscribe();
 
-    // Fallback: poll through token-checked RPCs every 8s in case Realtime is
-    // blocked by the tighter RLS policies or a broadcast is missed.
-    const interval = window.setInterval(() => {
+    // Fallback: Realtime gives immediacy; these low-frequency polls are only
+    // a safety net for missed broadcasts or temporary channel failures.
+    const messagePoll = window.setInterval(() => {
       if (document.visibilityState !== "visible") return;
-      refreshChatData().catch(() => undefined);
-    }, 8000);
+      syncMessages(session, { onMessages: setMessages }).catch(() => undefined);
+    }, MESSAGE_FALLBACK_POLL_MS);
+
+    const metadataPoll = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      Promise.all([
+        listMembers(session, { includeRemoved: true }),
+        listImportantNotifications(session),
+      ])
+        .then(([mems, important]) => {
+          setMembers(mems);
+          setImportantNotifications(important);
+        })
+        .catch(() => undefined);
+    }, METADATA_FALLBACK_POLL_MS);
 
     return () => {
       sb.removeChannel(messagesChannel);
       sb.removeChannel(importantChannel);
       sb.removeChannel(membersChannel);
-      window.clearInterval(interval);
+      window.clearInterval(messagePoll);
+      window.clearInterval(metadataPoll);
     };
-  }, [refreshChatData, refreshImportantNotifications, router, session, t]);
+  }, [refreshImportantNotifications, router, session, t]);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
     bottomScrollTimeoutsRef.current.forEach((id) => window.clearTimeout(id));

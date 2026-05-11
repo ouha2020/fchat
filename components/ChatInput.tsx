@@ -18,6 +18,8 @@ interface Props {
 const MAX_RECORD_MS = 60_000;
 const iconButtonClass =
   "inline-flex h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-cover bg-center bg-no-repeat shadow-sm ring-1 ring-slate-200/70 transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-50";
+const inputShellClass =
+  "fixed inset-x-0 bottom-0 z-50 mx-auto min-h-[61px] w-full max-w-3xl border-t border-slate-200 bg-white";
 
 export default function ChatInput({
   disabled,
@@ -30,6 +32,7 @@ export default function ChatInput({
   const { language, t } = useLanguage();
   const [text, setText] = useState("");
   const [recording, setRecording] = useState<RecordingHandle | null>(null);
+  const [stoppingRecording, setStoppingRecording] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [actionsOpen, setActionsOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -48,10 +51,11 @@ export default function ChatInput({
   // Auto-stop on max duration
   useEffect(() => {
     if (!recording) return;
+    if (stoppingRecording) return;
     if (elapsed < MAX_RECORD_MS) return;
     void handleStopRecording();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [elapsed, recording]);
+  }, [elapsed, recording, stoppingRecording]);
 
   useEffect(() => {
     if (!actionsOpen) return;
@@ -85,12 +89,13 @@ export default function ChatInput({
   }
 
   async function handleStartRecording() {
-    if (disabled || sending || recording) return;
+    if (disabled || sending || recording || stoppingRecording) return;
     setActionsOpen(false);
     try {
       const handle = await startRecording();
       setElapsed(0);
       setRecording(handle);
+      setStoppingRecording(false);
     } catch (err) {
       const rawMsg = err instanceof Error ? err.message : String(err);
       const msg = humanizeError(err, language);
@@ -103,9 +108,9 @@ export default function ChatInput({
   }
 
   async function handleStopRecording() {
-    if (!recording) return;
+    if (!recording || stoppingRecording) return;
     const handle = recording;
-    setRecording(null);
+    setStoppingRecording(true);
     try {
       const result = await handle.stop();
       if (result.durationMs < 600) {
@@ -118,13 +123,18 @@ export default function ChatInput({
       if (!msg.includes("recording_cancelled")) {
         alert(t("inputAudioSendError", { message: msg }));
       }
+    } finally {
+      setRecording(null);
+      setStoppingRecording(false);
+      setElapsed(0);
     }
   }
 
   function handleCancelRecording() {
-    if (!recording) return;
+    if (!recording || stoppingRecording) return;
     recording.cancel();
     setRecording(null);
+    setElapsed(0);
   }
 
   function handlePickImage() {
@@ -142,7 +152,7 @@ export default function ChatInput({
   if (recording) {
     return (
       <div
-        className="fixed inset-x-0 bottom-0 z-50 mx-auto w-full max-w-3xl border-t border-slate-200 bg-white"
+        className={inputShellClass}
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       >
         <div className="flex items-center gap-2 px-3 py-2 sm:px-4">
@@ -150,12 +160,17 @@ export default function ChatInput({
             type="button"
             className="btn-ghost h-10 w-10 px-0 text-xl leading-none"
             aria-label={t("inputCancelRecording")}
+            disabled={stoppingRecording}
             onClick={handleCancelRecording}
           >
             ✕
           </button>
           <div className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-rose-50 px-3 py-3 text-sm text-rose-700">
-            <span className="inline-block h-2.5 w-2.5 animate-pulse rounded-full bg-rose-500" />
+            <span
+              className={`inline-block h-2.5 w-2.5 rounded-full bg-rose-500 ${
+                stoppingRecording ? "" : "animate-pulse"
+              }`}
+            />
             <span className="font-medium">{t("inputRecording")}</span>
             <span className="font-mono">{formatDuration(elapsed)}</span>
             <span className="text-xs text-rose-500">{t("inputMaxDuration")}</span>
@@ -163,6 +178,7 @@ export default function ChatInput({
           <button
             type="button"
             className="btn-primary h-10 px-4"
+            disabled={stoppingRecording}
             onClick={() => void handleStopRecording()}
           >
             {t("commonSend")}
@@ -174,7 +190,7 @@ export default function ChatInput({
 
   return (
     <div
-      className="fixed inset-x-0 bottom-0 z-50 mx-auto w-full max-w-3xl border-t border-slate-200 bg-white"
+      className={inputShellClass}
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
       {actionsOpen ? (

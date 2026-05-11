@@ -88,6 +88,9 @@ export default function ChatPage() {
   const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const lastHeaderTapRef = useRef(0);
   const didInitialScrollRef = useRef(false);
+  const forceImmediateBottomScrollRef = useRef(false);
+  const bottomScrollTimeoutsRef = useRef<number[]>([]);
+  const isIOSRef = useRef(false);
   const membersRef = useRef<FamilyMember[]>([]);
   useEffect(() => {
     membersRef.current = members;
@@ -105,18 +108,45 @@ export default function ChatPage() {
     const previous = {
       htmlOverflow: html.style.overflow,
       htmlOverscrollBehavior: html.style.overscrollBehavior,
+      chatViewportHeight: html.style.getPropertyValue("--chat-viewport-height"),
       bodyOverflow: body.style.overflow,
       bodyHeight: body.style.height,
       bodyOverscrollBehavior: body.style.overscrollBehavior,
+    };
+    const visualViewport = window.visualViewport;
+
+    isIOSRef.current =
+      /iP(ad|hone|od)/.test(window.navigator.userAgent) ||
+      (window.navigator.platform === "MacIntel" &&
+        window.navigator.maxTouchPoints > 1);
+
+    const updateViewportHeight = () => {
+      const height = visualViewport?.height ?? window.innerHeight;
+      html.style.setProperty("--chat-viewport-height", `${height}px`);
     };
 
     html.style.overflow = "hidden";
     html.style.overscrollBehavior = "none";
     body.style.overflow = "hidden";
-    body.style.height = "100dvh";
+    body.style.height = "var(--chat-viewport-height, 100dvh)";
     body.style.overscrollBehavior = "none";
+    updateViewportHeight();
+    visualViewport?.addEventListener("resize", updateViewportHeight);
+    window.addEventListener("orientationchange", updateViewportHeight);
 
     return () => {
+      bottomScrollTimeoutsRef.current.forEach((id) => window.clearTimeout(id));
+      bottomScrollTimeoutsRef.current = [];
+      visualViewport?.removeEventListener("resize", updateViewportHeight);
+      window.removeEventListener("orientationchange", updateViewportHeight);
+      if (previous.chatViewportHeight) {
+        html.style.setProperty(
+          "--chat-viewport-height",
+          previous.chatViewportHeight,
+        );
+      } else {
+        html.style.removeProperty("--chat-viewport-height");
+      }
       html.style.overflow = previous.htmlOverflow;
       html.style.overscrollBehavior = previous.htmlOverscrollBehavior;
       body.style.overflow = previous.bodyOverflow;
@@ -484,28 +514,40 @@ export default function ChatPage() {
   }, [refreshChatData, refreshImportantNotifications, router, session, t]);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
-    const scroll = () => {
+    bottomScrollTimeoutsRef.current.forEach((id) => window.clearTimeout(id));
+    bottomScrollTimeoutsRef.current = [];
+
+    const primaryBehavior: ScrollBehavior =
+      isIOSRef.current && behavior === "smooth" ? "auto" : behavior;
+
+    const scroll = (mode: ScrollBehavior = "auto") => {
       const scroller = scrollRef.current;
       if (!scroller) return;
       scroller.scrollTo({
         top: scroller.scrollHeight,
-        behavior,
+        behavior: mode,
       });
     };
 
     requestAnimationFrame(() => {
-      scroll();
-      requestAnimationFrame(scroll);
+      scroll(primaryBehavior);
+      requestAnimationFrame(() => scroll("auto"));
     });
-    window.setTimeout(scroll, 180);
-    window.setTimeout(scroll, 600);
-    window.setTimeout(scroll, 1000);
+    [180, 520].forEach((delay) => {
+      const id = window.setTimeout(() => scroll("auto"), delay);
+      bottomScrollTimeoutsRef.current.push(id);
+    });
   }, []);
 
   // Auto scroll to bottom on new messages.
   useLayoutEffect(() => {
     if (loading || messages.length === 0) return;
-    scrollToBottom(didInitialScrollRef.current ? "smooth" : "auto");
+    const shouldScrollImmediately =
+      !didInitialScrollRef.current ||
+      forceImmediateBottomScrollRef.current ||
+      isIOSRef.current;
+    scrollToBottom(shouldScrollImmediately ? "auto" : "smooth");
+    forceImmediateBottomScrollRef.current = false;
     didInitialScrollRef.current = true;
   }, [loading, messages.length, scrollToBottom]);
 
@@ -569,6 +611,7 @@ export default function ChatPage() {
     partial: Pick<Message, "id" | "message_type"> & Partial<Message>,
   ) {
     if (!session) return;
+    forceImmediateBottomScrollRef.current = true;
     setMessages((prev) => {
       if (prev.some((m) => m.id === partial.id)) return prev;
       const optimistic: Message = {
@@ -592,7 +635,7 @@ export default function ChatPage() {
       };
       return [...prev, optimistic];
     });
-    scrollToBottom("smooth");
+    scrollToBottom("auto");
   }
 
   async function handleDeleteMessage(messageId: string) {
@@ -902,7 +945,10 @@ export default function ChatPage() {
   }
 
   return (
-    <div className="flex h-[100dvh] overflow-hidden flex-col">
+    <div
+      className="flex overflow-hidden flex-col"
+      style={{ height: "var(--chat-viewport-height, 100dvh)" }}
+    >
       {effectShow ? (
         <EffectOverlay
           key={effectShow.key}

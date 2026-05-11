@@ -3,6 +3,7 @@
 import { getSupabase } from "./supabaseClient";
 import type { LocalSession } from "@/lib/authLocal";
 import type { ImportantNotification } from "@/types/importantNotification";
+import { normalizeMessage } from "@/lib/messageService";
 import type { MessageType } from "@/types/message";
 
 interface ImportantNotificationRow {
@@ -28,6 +29,7 @@ interface ImportantNotificationRow {
   message_effect_caption: string | null;
   message_deleted_at: string | null;
   message_deleted_by_member_id: string | null;
+  message_updated_at: string;
   message_created_at: string;
 }
 
@@ -49,7 +51,7 @@ export async function listImportantNotifications(
     removed_by_member_id: row.removed_by_member_id,
     created_at: row.created_at,
     message: row.message_id
-      ? {
+      ? normalizeMessage({
           id: row.message_id,
           family_id: row.message_family_id,
           sender_member_id: row.message_sender_member_id,
@@ -66,8 +68,9 @@ export async function listImportantNotifications(
           effect_caption: row.message_effect_caption,
           deleted_at: row.message_deleted_at,
           deleted_by_member_id: row.message_deleted_by_member_id,
+          updated_at: row.message_updated_at,
           created_at: row.message_created_at,
-        }
+        })
       : null,
   })) as ImportantNotification[];
 }

@@ -52,6 +52,14 @@ export function updateSession(patch: Partial<LocalSession>): LocalSession | null
 
 export function clearSession(): void {
   if (typeof window === "undefined") return;
+  const current = loadSession();
+  if (current) {
+    import("@/lib/messageCache")
+      .then(({ clearMessageCacheForSession }) =>
+        clearMessageCacheForSession(current),
+      )
+      .catch(() => undefined);
+  }
   window.localStorage.removeItem(STORAGE_KEY);
   expireCookie(MEMBER_ID_COOKIE);
   expireCookie(MEMBER_TOKEN_COOKIE);

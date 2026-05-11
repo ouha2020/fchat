@@ -1,5 +1,5 @@
-const PRECACHE = "family-chat-precache-v4";
-const RUNTIME = "family-chat-runtime-v4";
+const PRECACHE = "family-chat-precache-v5";
+const RUNTIME = "family-chat-runtime-v5";
 
 const PRECACHE_URLS = [
   "/offline",
@@ -119,15 +119,8 @@ function isStaticAsset(url) {
 
 async function networkFirstNavigation(request) {
   try {
-    const response = await fetch(request);
-    if (response && response.ok) {
-      const cache = await caches.open(RUNTIME);
-      cache.put(request, response.clone());
-    }
-    return response;
+    return await fetch(request);
   } catch {
-    const cached = await caches.match(request);
-    if (cached) return cached;
     return (
       (await caches.match("/offline")) ||
       new Response("Offline", {

@@ -89,7 +89,7 @@ export async function POST(request: Request) {
         ),
         important_enabled: boolOrDefault(
           body.preferences?.importantEnabled,
-          true,
+          false,
         ),
         updated_at: now,
       },
@@ -102,7 +102,10 @@ export async function POST(request: Request) {
     if (error instanceof ApiRequestError) {
       return badRequest(error);
     }
-    console.warn("[push subscribe]", error);
+    console.warn(
+      "[push subscribe]",
+      error instanceof Error ? error.message : "push_subscribe_failed",
+    );
     return NextResponse.json({ error: "push_subscribe_failed" }, { status: 500 });
   }
 }

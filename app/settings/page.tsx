@@ -18,7 +18,6 @@ import {
 import { LANGUAGE_OPTIONS } from "@/lib/i18n";
 import {
   pushNotificationErrorMessage,
-  type PushPreferences,
 } from "@/lib/pushNotificationService";
 import { isSupabaseConfigured } from "@/lib/supabaseClient";
 import { usePushNotificationControls } from "@/lib/usePushNotificationControls";
@@ -193,14 +192,6 @@ export default function SettingsPage() {
     }
   }
 
-  function handlePushPreference<K extends keyof PushPreferences>(
-    key: K,
-    value: PushPreferences[K],
-  ) {
-    if (!session) return;
-    void push.updatePreference(key, value).catch(() => undefined);
-  }
-
   if (loading) {
     return (
       <div className="flex flex-1 flex-col px-5 py-6 sm:px-8">
@@ -337,30 +328,25 @@ export default function SettingsPage() {
             {push.support.permission === "denied" ? (
               <p className="text-sm text-rose-600">{t("settingsPushDenied")}</p>
             ) : null}
-            <ToggleRow
-              label={t("settingsPushNewMessages")}
-              checked={push.preferences.messagesEnabled}
-              disabled={!!busy || push.busy}
-              onChange={(checked) =>
-                handlePushPreference("messagesEnabled", checked)
-              }
-            />
-            <ToggleRow
-              label={t("settingsPushLocation")}
-              checked={push.preferences.locationEnabled}
-              disabled={!!busy || push.busy}
-              onChange={(checked) =>
-                handlePushPreference("locationEnabled", checked)
-              }
-            />
-            <ToggleRow
-              label={t("settingsPushImportant")}
-              checked={push.preferences.importantEnabled}
-              disabled={!!busy || push.busy}
-              onChange={(checked) =>
-                handlePushPreference("importantEnabled", checked)
-              }
-            />
+            <div className="rounded-xl bg-slate-50 p-3 text-sm leading-6 text-slate-600">
+              <div className="flex items-center justify-between gap-3">
+                <span className="font-medium text-slate-700">
+                  {t("settingsPushNewMessages")}
+                </span>
+                <span
+                  className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                    push.enabled
+                      ? "bg-emerald-100 text-emerald-700"
+                      : "bg-slate-200 text-slate-600"
+                  }`}
+                >
+                  {push.enabled ? t("commonYes") : t("commonNo")}
+                </span>
+              </div>
+              <p className="mt-2 text-slate-500">
+                {t("settingsPushPrivacyNote")}
+              </p>
+            </div>
           </>
         ) : (
           <p className="rounded-xl bg-slate-50 p-3 text-sm text-slate-500">
@@ -432,30 +418,5 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
       <span className="text-sm text-slate-500">{label}</span>
       <span className="text-sm font-medium text-slate-800">{value}</span>
     </div>
-  );
-}
-
-function ToggleRow({
-  label,
-  checked,
-  disabled,
-  onChange,
-}: {
-  label: string;
-  checked: boolean;
-  disabled?: boolean;
-  onChange: (checked: boolean) => void;
-}) {
-  return (
-    <label className="flex items-center justify-between rounded-xl px-1 py-2">
-      <span className="text-sm text-slate-700">{label}</span>
-      <input
-        type="checkbox"
-        className="h-5 w-5"
-        checked={checked}
-        disabled={disabled}
-        onChange={(e) => onChange(e.target.checked)}
-      />
-    </label>
   );
 }

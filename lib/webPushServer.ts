@@ -63,6 +63,11 @@ export function buildMessagePushBody(
   }
 }
 
+export function pushErrorStatus(error: unknown): number | string {
+  const statusCode = (error as { statusCode?: number } | null)?.statusCode;
+  return typeof statusCode === "number" ? statusCode : "unknown";
+}
+
 export function isGonePushError(error: unknown): boolean {
   const statusCode = (error as { statusCode?: number } | null)?.statusCode;
   return statusCode === 404 || statusCode === 410;

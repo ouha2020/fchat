@@ -13,6 +13,7 @@ import {
   buildMessagePushBody,
   getWebPush,
   isGonePushError,
+  pushErrorStatus,
   toWebPushSubscription,
   type StoredPushSubscription,
 } from "@/lib/webPushServer";
@@ -42,8 +43,6 @@ interface PushSubscriptionRow extends StoredPushSubscription {
   id: string;
   member_id: string;
   messages_enabled: boolean;
-  location_enabled: boolean;
-  important_enabled: boolean;
   last_notified_at: string | null;
 }
 
@@ -129,10 +128,12 @@ export async function POST(request: Request) {
 
     const activeMemberIds = new Set(
       ((presenceRows ?? []) as PresenceRow[])
-        .filter((row) => {
-          if (row.current_page === "chat") return true;
-          return row.last_seen_at > activeCutoff;
-        })
+        .filter(
+          (row) =>
+            row.current_page === "chat" &&
+            row.is_active &&
+            row.last_seen_at > activeCutoff,
+        )
         .map((row) => row.member_id),
     );
     const targetMemberIds = recipientIds.filter((id) => !activeMemberIds.has(id));
@@ -143,7 +144,7 @@ export async function POST(request: Request) {
     const { data: subscriptions, error: subError } = await sb
       .from("push_subscriptions")
       .select(
-        "id, member_id, endpoint, p256dh, auth, messages_enabled, location_enabled, important_enabled, last_notified_at",
+        "id, member_id, endpoint, p256dh, auth, messages_enabled, last_notified_at",
       )
       .eq("family_id", message.family_id)
       .eq("enabled", true)
@@ -183,7 +184,7 @@ export async function POST(request: Request) {
       } else if (isGonePushError(result.reason)) {
         goneIds.push(sub.id);
       } else {
-        console.warn("[push send failed]", result.reason);
+        console.warn("[push send failed]", pushErrorStatus(result.reason));
       }
     });
 
@@ -209,18 +210,20 @@ export async function POST(request: Request) {
     if (error instanceof ApiRequestError) {
       return badRequest(error);
     }
-    console.warn("[push send-message]", error);
+    console.warn(
+      "[push send-message]",
+      error instanceof Error ? error.message : "push_send_failed",
+    );
     return NextResponse.json({ ok: false, error: "push_send_failed" });
   }
 }
 
 function shouldNotify(
   sub: PushSubscriptionRow,
-  messageType: MessageType,
+  _messageType: MessageType,
   dedupeCutoff: number,
 ): boolean {
-  if (messageType === "location" && !sub.location_enabled) return false;
-  if (messageType !== "location" && !sub.messages_enabled) return false;
+  if (!sub.messages_enabled) return false;
   if (
     sub.last_notified_at &&
     new Date(sub.last_notified_at).getTime() > dedupeCutoff

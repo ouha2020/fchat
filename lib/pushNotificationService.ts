@@ -24,7 +24,7 @@ const PREF_PREFIX = "family-chat:push-preferences:";
 export const DEFAULT_PUSH_PREFERENCES: PushPreferences = {
   messagesEnabled: true,
   locationEnabled: true,
-  importantEnabled: true,
+  importantEnabled: false,
 };
 
 export function getPushPreferences(session: LocalSession): PushPreferences {
@@ -114,8 +114,9 @@ export async function subscribeToPush(
       ),
     }));
 
-  await savePushSubscription(session, subscription, preferences);
-  savePushPreferences(session, preferences);
+  const nextPreferences = toNewMessagePushPreferences(preferences);
+  await savePushSubscription(session, subscription, nextPreferences);
+  savePushPreferences(session, nextPreferences);
 }
 
 export async function savePushSubscription(
@@ -225,6 +226,16 @@ async function ensureServiceWorker(): Promise<ServiceWorkerRegistration> {
 
 function prefKey(session: LocalSession): string {
   return `${PREF_PREFIX}${session.family_id}:${session.member_id}`;
+}
+
+function toNewMessagePushPreferences(
+  _preferences: PushPreferences,
+): PushPreferences {
+  return {
+    messagesEnabled: true,
+    locationEnabled: true,
+    importantEnabled: false,
+  };
 }
 
 function urlBase64ToArrayBuffer(base64String: string): ArrayBuffer {

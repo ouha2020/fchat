@@ -1309,11 +1309,13 @@ begin
   select count(*) into v_minute_count
     from join_attempts
    where ip_hash = v_ip_hash
+     and success = false
      and created_at > now() - interval '1 minute';
 
   select count(*) into v_hour_count
     from join_attempts
    where ip_hash = v_ip_hash
+     and success = false
      and created_at > now() - interval '1 hour';
 
   if v_minute_count >= 5 or v_hour_count >= 30 then

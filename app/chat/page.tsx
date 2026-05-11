@@ -32,11 +32,15 @@ import {
 import { listMembers } from "@/lib/memberService";
 import {
   deleteMessage,
-  listMessages,
+  forceRefreshMessages,
+  loadCachedMessagesForSession,
+  mergeRealtimeMessage,
+  noteMessageCacheOpen,
   sendMessage,
+  syncMessages,
   uploadChatAudio,
   uploadChatImage,
-} from "@/lib/messageService";
+} from "@/lib/messageRepository";
 import { getCurrentLocation, createGoogleMapUrl } from "@/lib/locationService";
 import {
   installAudioUnlock,
@@ -78,6 +82,7 @@ export default function ChatPage() {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [syncNotice, setSyncNotice] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
   const [chatBackgroundUrl, setChatBackgroundUrl] = useState<string | null>(null);
@@ -86,6 +91,7 @@ export default function ChatPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const lastHeaderTapRef = useRef(0);
+  const pullStartYRef = useRef<number | null>(null);
   const didInitialScrollRef = useRef(false);
   const forceImmediateBottomScrollRef = useRef(false);
   const bottomScrollTimeoutsRef = useRef<number[]>([]);
@@ -250,22 +256,35 @@ export default function ChatPage() {
     setImportantNotifications(rows);
   }, []);
 
-  const refreshChatData = useCallback(async () => {
+  const showSyncFailure = useCallback(() => {
+    setSyncNotice(t("chatSyncFailed"));
+    window.setTimeout(() => {
+      setSyncNotice((current) =>
+        current === t("chatSyncFailed") ? null : current,
+      );
+    }, 2800);
+  }, [t]);
+
+  const refreshChatData = useCallback(async (forceFullRefresh = false) => {
     if (!session) return;
     try {
-      const [msgs, mems, important] = await Promise.all([
-        listMessages(session),
+      const [syncResult, mems, important] = await Promise.all([
+        forceFullRefresh
+          ? forceRefreshMessages(session, setMessages)
+          : syncMessages(session, { onMessages: setMessages }),
         listMembers(session, { includeRemoved: true }),
         listImportantNotifications(session),
       ]);
-      setMessages(msgs);
+      if (syncResult.messages.length > 0) setMessages(syncResult.messages);
+      if (syncResult.status === "failed") showSyncFailure();
       setMembers(mems);
       setImportantNotifications(important);
       setError(null);
     } catch (err) {
+      showSyncFailure();
       setError(humanizeError(err, language));
     }
-  }, [language, session]);
+  }, [language, session, showSyncFailure]);
 
   function isHeaderActionTarget(target: EventTarget | null): boolean {
     return target instanceof Element && !!target.closest("a,button");
@@ -273,7 +292,7 @@ export default function ChatPage() {
 
   function handleHeaderDoubleClick(e: React.MouseEvent<HTMLElement>) {
     if (isHeaderActionTarget(e.target)) return;
-    void refreshChatData();
+    void refreshChatData(true);
   }
 
   function handleHeaderTouchEnd(e: React.TouchEvent<HTMLElement>) {
@@ -282,7 +301,7 @@ export default function ChatPage() {
     if (now - lastHeaderTapRef.current < 320) {
       e.preventDefault();
       lastHeaderTapRef.current = 0;
-      void refreshChatData();
+      void refreshChatData(true);
       return;
     }
     lastHeaderTapRef.current = now;
@@ -348,6 +367,7 @@ export default function ChatPage() {
         }
         saveSession(fresh);
         setSession(fresh);
+        noteMessageCacheOpen(fresh).catch(() => undefined);
       } catch (err) {
         if (!cancelled) {
           setLoadError(humanizeError(err, language) || t("chatLoadFailed"));
@@ -356,23 +376,44 @@ export default function ChatPage() {
         return;
       }
 
+      let hadCachedMessages = false;
       try {
-        const [msgs, mems, important] = await Promise.all([
-          listMessages(fresh),
+        const cached = await loadCachedMessagesForSession(fresh).catch(() => []);
+        if (cancelled) return;
+        hadCachedMessages = cached.length > 0;
+        if (hadCachedMessages) {
+          setMessages(cached);
+          setLoading(false);
+        }
+
+        const [mems, important] = await Promise.all([
           listMembers(fresh, { includeRemoved: true }),
           listImportantNotifications(fresh),
         ]);
         if (cancelled) return;
-        setMessages(msgs);
         setMembers(mems);
         setImportantNotifications(important);
         setDismissedImportantIds(
           getDismissedImportantIds(fresh.family_id, fresh.member_id),
         );
+
+        const syncResult = await syncMessages(fresh, {
+          forceFullRefresh: cached.length === 0,
+          onMessages: (next) => {
+            if (!cancelled) setMessages(next);
+          },
+        });
+        if (cancelled) return;
+        if (syncResult.messages.length > 0) setMessages(syncResult.messages);
+        if (syncResult.status === "failed") showSyncFailure();
         setLoadError(null);
       } catch (err) {
         if (!cancelled) {
-          setLoadError(humanizeError(err, language) || t("chatLoadFailed"));
+          if (!hadCachedMessages) {
+            setLoadError(humanizeError(err, language) || t("chatLoadFailed"));
+          } else {
+            showSyncFailure();
+          }
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -382,7 +423,7 @@ export default function ChatPage() {
     return () => {
       cancelled = true;
     };
-  }, [language, retryNonce, router, t]);
+  }, [language, retryNonce, router, showSyncFailure, t]);
 
   // Realtime subscription for new messages.
   useEffect(() => {
@@ -401,10 +442,18 @@ export default function ChatPage() {
         },
         (payload) => {
           const incoming = payload.new as Message;
-          setMessages((prev) => {
-            if (prev.some((m) => m.id === incoming.id)) return prev;
-            return [...prev, incoming];
-          });
+          mergeRealtimeMessage(session, incoming)
+            .then(setMessages)
+            .catch(() => {
+              setMessages((prev) => {
+                if (prev.some((m) => m.id === incoming.id)) return prev;
+                return [...prev, incoming].sort(
+                  (a, b) =>
+                    new Date(a.created_at).getTime() -
+                    new Date(b.created_at).getTime(),
+                );
+              });
+            });
           // Always attempt the effect — tryTriggerEffect dedupes by id via
           // the ref, so re-runs (Realtime echo, polling) are safe. Doing
           // this OUTSIDE the setMessages updater avoids React 18's batched
@@ -461,9 +510,13 @@ export default function ChatPage() {
         },
         (payload) => {
           const updated = payload.new as Message;
-          setMessages((prev) =>
-            prev.map((m) => (m.id === updated.id ? { ...m, ...updated } : m)),
-          );
+          mergeRealtimeMessage(session, updated)
+            .then(setMessages)
+            .catch(() => {
+              setMessages((prev) =>
+                prev.map((m) => (m.id === updated.id ? { ...m, ...updated } : m)),
+              );
+            });
         },
       )
       .subscribe((status) => {
@@ -633,29 +686,34 @@ export default function ChatPage() {
   ) {
     if (!session) return;
     forceImmediateBottomScrollRef.current = true;
+    const now = new Date().toISOString();
+    const optimistic: Message = {
+      id: partial.id,
+      family_id: session.family_id,
+      sender_member_id: session.member_id,
+      message_type: partial.message_type,
+      content: partial.content ?? null,
+      image_url: partial.image_url ?? null,
+      audio_url: partial.audio_url ?? null,
+      audio_duration_ms: partial.audio_duration_ms ?? null,
+      latitude: partial.latitude ?? null,
+      longitude: partial.longitude ?? null,
+      address: partial.address ?? null,
+      map_url: partial.map_url ?? null,
+      effect_id: partial.effect_id ?? null,
+      effect_caption: partial.effect_caption ?? null,
+      deleted_at: null,
+      deleted_by_member_id: null,
+      updated_at: now,
+      created_at: now,
+    };
     setMessages((prev) => {
       if (prev.some((m) => m.id === partial.id)) return prev;
-      const optimistic: Message = {
-        id: partial.id,
-        family_id: session.family_id,
-        sender_member_id: session.member_id,
-        message_type: partial.message_type,
-        content: partial.content ?? null,
-        image_url: partial.image_url ?? null,
-        audio_url: partial.audio_url ?? null,
-        audio_duration_ms: partial.audio_duration_ms ?? null,
-        latitude: partial.latitude ?? null,
-        longitude: partial.longitude ?? null,
-        address: partial.address ?? null,
-        map_url: partial.map_url ?? null,
-        effect_id: partial.effect_id ?? null,
-        effect_caption: partial.effect_caption ?? null,
-        deleted_at: null,
-        deleted_by_member_id: null,
-        created_at: new Date().toISOString(),
-      };
       return [...prev, optimistic];
     });
+    mergeRealtimeMessage(session, optimistic)
+      .then(setMessages)
+      .catch(() => undefined);
     scrollToBottom("auto");
   }
 
@@ -665,13 +723,27 @@ export default function ChatPage() {
     if (!ok) return;
     try {
       await deleteMessage(session, messageId);
+      const updatedAt = new Date().toISOString();
+      const current = messages.find((m) => m.id === messageId);
+      const patched: Message | null = current
+        ? {
+            ...current,
+            deleted_at: updatedAt,
+            deleted_by_member_id: session.member_id,
+            updated_at: updatedAt,
+          }
+        : null;
       setMessages((prev) =>
-        prev.map((m) =>
-          m.id === messageId
-            ? { ...m, deleted_at: new Date().toISOString(), deleted_by_member_id: session.member_id }
-            : m,
-        ),
+        prev.map((m) => {
+          if (m.id !== messageId || !patched) return m;
+          return patched;
+        }),
       );
+      if (patched) {
+        mergeRealtimeMessage(session, patched)
+          .then(setMessages)
+          .catch(() => undefined);
+      }
     } catch (err) {
       alert(humanizeError(err, language));
     }
@@ -759,6 +831,25 @@ export default function ChatPage() {
     }, 3000);
   }
 
+  function handleMessagesTouchStart(e: React.TouchEvent<HTMLDivElement>) {
+    const scroller = scrollRef.current;
+    if (!scroller || scroller.scrollTop > 4) {
+      pullStartYRef.current = null;
+      return;
+    }
+    pullStartYRef.current = e.touches[0]?.clientY ?? null;
+  }
+
+  function handleMessagesTouchEnd(e: React.TouchEvent<HTMLDivElement>) {
+    const startY = pullStartYRef.current;
+    pullStartYRef.current = null;
+    if (startY == null) return;
+    const endY = e.changedTouches[0]?.clientY ?? startY;
+    if (endY - startY > 72) {
+      void refreshChatData(true);
+    }
+  }
+
   function handleSelectImportant(notification: ImportantNotification) {
     if (!session) return;
     const next = dismissImportantNotification(
@@ -769,6 +860,9 @@ export default function ChatPage() {
     setDismissedImportantIds(next);
 
     if (notification.message && !messages.some((m) => m.id === notification.message_id)) {
+      mergeRealtimeMessage(session, notification.message as Message)
+        .then(setMessages)
+        .catch(() => undefined);
       setMessages((prev) => {
         if (prev.some((m) => m.id === notification.message_id)) return prev;
         return [...prev, notification.message as Message].sort(
@@ -1091,6 +1185,11 @@ export default function ChatPage() {
           {error}
         </div>
       ) : null}
+      {syncNotice ? (
+        <div className="border-b border-amber-100 bg-amber-50 px-4 py-2 text-sm text-amber-700">
+          {syncNotice}
+        </div>
+      ) : null}
 
       <ImportantNoticeBar
         notifications={visibleImportantNotifications}
@@ -1101,6 +1200,8 @@ export default function ChatPage() {
 
       <div
         ref={scrollRef}
+        onTouchStart={handleMessagesTouchStart}
+        onTouchEnd={handleMessagesTouchEnd}
         className="no-scrollbar flex-1 min-h-0 overflow-y-auto overscroll-contain bg-slate-50 bg-cover bg-center bg-no-repeat px-3 pt-4 sm:px-5"
         style={{
           ...(chatBackgroundUrl

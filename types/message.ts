@@ -18,5 +18,6 @@ export interface Message {
   push_requested_at?: string | null;
   deleted_at: string | null;
   deleted_by_member_id: string | null;
+  updated_at: string;
   created_at: string;
 }

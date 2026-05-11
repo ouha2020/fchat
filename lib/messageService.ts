@@ -33,7 +33,25 @@ export async function listMessages(
     p_limit: limit,
   });
   if (error) throw error;
-  return ((data ?? []) as Message[]).reverse();
+  return ((data ?? []) as Message[]).map(normalizeMessage).reverse();
+}
+
+export async function listMessagesDelta(
+  session: LocalSession,
+  cursorUpdatedAt: string | null,
+  cursorId: string | null,
+  limit = 300,
+): Promise<Message[]> {
+  const sb = getSupabase();
+  const { data, error } = await sb.rpc("list_messages_delta", {
+    p_member_id: session.member_id,
+    p_member_token: session.member_token,
+    p_cursor_updated_at: cursorUpdatedAt,
+    p_cursor_id: cursorId,
+    p_limit: limit,
+  });
+  if (error) throw error;
+  return ((data ?? []) as Message[]).map(normalizeMessage);
 }
 
 interface SendMessageInput {
@@ -176,4 +194,15 @@ async function uploadViaApi(path: string, form: FormData): Promise<string> {
   if (!res.ok) throw new Error(payload?.error ?? "upload_failed");
   if (!payload?.url || !isSafeHttpUrl(payload.url)) throw new Error("upload_failed");
   return payload.url;
+}
+
+export function normalizeMessage(message: Message): Message {
+  return {
+    ...message,
+    updated_at:
+      message.updated_at ??
+      message.deleted_at ??
+      message.created_at ??
+      new Date(0).toISOString(),
+  };
 }

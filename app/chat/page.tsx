@@ -33,6 +33,7 @@ import { listMembers } from "@/lib/memberService";
 import {
   deleteMessage,
   forceRefreshMessages,
+  getMessageById,
   loadCachedMessagesForSession,
   mergeRealtimeMessage,
   noteMessageCacheOpen,
@@ -59,8 +60,16 @@ import type { ImportantNotification } from "@/types/importantNotification";
 import type { FamilyMember } from "@/types/member";
 import type { Message } from "@/types/message";
 
-const MESSAGE_FALLBACK_POLL_MS = 30_000;
+const MESSAGE_FALLBACK_POLL_MS = 8_000;
 const METADATA_FALLBACK_POLL_MS = 120_000;
+
+interface MessageRealtimeEvent {
+  id: string;
+  family_id: string;
+  message_id: string;
+  event_type: "insert" | "update";
+  created_at: string;
+}
 
 export default function ChatPage() {
   const router = useRouter();
@@ -102,12 +111,25 @@ export default function ChatPage() {
   useEffect(() => {
     membersRef.current = members;
   }, [members]);
+  const knownMessageIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    knownMessageIdsRef.current = new Set(messages.map((message) => message.id));
+  }, [messages]);
+  const realtimeEventTimersRef = useRef<Map<string, number>>(new Map());
   const [effectShow, setEffectShow] = useState<{
     effect: Effect;
     key: string;
   } | null>(null);
   const triggeredEffectIdsRef = useRef<Set<string>>(new Set());
   const handleEffectDone = useCallback(() => setEffectShow(null), []);
+  const tryTriggerEffect = useCallback((messageId: string, eff: Effect | null) => {
+    if (!eff) return;
+    if (triggeredEffectIdsRef.current.has(messageId)) return;
+    triggeredEffectIdsRef.current.add(messageId);
+    // Unique key per trigger forces React to unmount the previous overlay
+    // so the CSS keyframes restart from 0.
+    setEffectShow({ effect: eff, key: `${messageId}-${Date.now()}` });
+  }, []);
 
   useEffect(() => {
     const html = document.documentElement;
@@ -183,6 +205,66 @@ export default function ChatPage() {
   useEffect(() => {
     pushEnabledRef.current = push.enabled;
   }, [push.enabled]);
+
+  const handleIncomingMessageSideEffects = useCallback(
+    (incoming: Message) => {
+      const eff =
+        effectFromColumns(incoming.effect_id, incoming.effect_caption) ??
+        (incoming.message_type === "text" ? detectEffect(incoming.content) : null);
+      tryTriggerEffect(incoming.id, eff);
+
+      const activeSession = sessionRef.current;
+      if (
+        activeSession &&
+        incoming.sender_member_id &&
+        !membersRef.current.some((m) => m.id === incoming.sender_member_id)
+      ) {
+        listMembers(activeSession, { includeRemoved: true })
+          .then(setMembers)
+          .catch(() => undefined);
+      }
+
+      if (
+        activeSession &&
+        incoming.sender_member_id &&
+        incoming.sender_member_id !== activeSession.member_id &&
+        incoming.message_type !== "system" &&
+        !incoming.deleted_at &&
+        pushEnabledRef.current &&
+        !notifiedIdsRef.current.has(incoming.id)
+      ) {
+        notifiedIdsRef.current.add(incoming.id);
+        playNotificationSound();
+        if (typeof document !== "undefined" && document.hidden) {
+          setUnreadCount((c) => c + 1);
+          vibrate(120);
+        }
+      }
+    },
+    [tryTriggerEffect],
+  );
+
+  const handleSyncedMessages = useCallback(
+    (next: Message[]) => {
+      const knownIds = knownMessageIdsRef.current;
+      const unseenMessages = next.filter((message) => !knownIds.has(message.id));
+      setMessages(next);
+      unseenMessages.forEach(handleIncomingMessageSideEffects);
+    },
+    [handleIncomingMessageSideEffects],
+  );
+
+  const fetchRealtimeMessage = useCallback(
+    async (messageId: string) => {
+      const activeSession = sessionRef.current;
+      if (!activeSession) return;
+      const incoming = await getMessageById(activeSession, messageId);
+      if (!incoming) return;
+      const next = await mergeRealtimeMessage(activeSession, incoming);
+      handleSyncedMessages(next);
+    },
+    [handleSyncedMessages],
+  );
 
   useEffect(() => {
     if (!session) return;
@@ -413,104 +495,40 @@ export default function ChatPage() {
     };
   }, [language, retryNonce, router, t]);
 
-  // Realtime subscription for new messages.
+  // Realtime subscription for lightweight message events.
   useEffect(() => {
     if (!session) return;
     const sb = getSupabase();
+    const realtimeTimers = realtimeEventTimersRef.current;
 
-    const messagesChannel = sb
-      .channel(`messages:${session.family_id}`)
+    const scheduleRealtimeFetch = (event: MessageRealtimeEvent) => {
+      const existingTimer = realtimeTimers.get(event.message_id);
+      if (existingTimer) window.clearTimeout(existingTimer);
+      const timer = window.setTimeout(() => {
+        realtimeTimers.delete(event.message_id);
+        fetchRealtimeMessage(event.message_id).catch(() => undefined);
+      }, 80);
+      realtimeTimers.set(event.message_id, timer);
+    };
+
+    const messageEventsChannel = sb
+      .channel(`message_events:${session.family_id}`)
       .on(
         "postgres_changes",
         {
           event: "INSERT",
           schema: "public",
-          table: "messages",
+          table: "message_realtime_events",
           filter: `family_id=eq.${session.family_id}`,
         },
         (payload) => {
-          const incoming = payload.new as Message;
-          mergeRealtimeMessage(session, incoming)
-            .then(setMessages)
-            .catch(() => {
-              setMessages((prev) => {
-                if (prev.some((m) => m.id === incoming.id)) return prev;
-                return [...prev, incoming].sort(
-                  (a, b) =>
-                    new Date(a.created_at).getTime() -
-                    new Date(b.created_at).getTime(),
-                );
-              });
-            });
-          // Always attempt the effect — tryTriggerEffect dedupes by id via
-          // the ref, so re-runs (Realtime echo, polling) are safe. Doing
-          // this OUTSIDE the setMessages updater avoids React 18's batched
-          // updater scheduling, which kept the previous "isNew" closure
-          // false for subsequent triggers.
-          const eff =
-            effectFromColumns(
-              incoming.effect_id,
-              incoming.effect_caption,
-            ) ??
-            (incoming.message_type === "text"
-              ? detectEffect(incoming.content)
-              : null);
-          tryTriggerEffect(incoming.id, eff);
-          // If the sender isn't in our member map yet (e.g. they just joined
-          // and the family_members realtime event hasn't landed), refresh.
-          if (
-            incoming.sender_member_id &&
-            !membersRef.current.some((m) => m.id === incoming.sender_member_id)
-          ) {
-            listMembers(session, { includeRemoved: true })
-              .then(setMembers)
-              .catch(() => undefined);
-          }
-          // Notification path — once per message id, only for inbound,
-          // non-system, non-deleted messages.
-          const me = sessionRef.current;
-
-          if (
-            me &&
-            incoming.sender_member_id &&
-            incoming.sender_member_id !== me.member_id &&
-            incoming.message_type !== "system" &&
-            !incoming.deleted_at &&
-            pushEnabledRef.current &&
-            !notifiedIdsRef.current.has(incoming.id)
-          ) {
-            notifiedIdsRef.current.add(incoming.id);
-            playNotificationSound();
-            if (typeof document !== "undefined" && document.hidden) {
-              setUnreadCount((c) => c + 1);
-              vibrate(120);
-            }
-          }
-        },
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "messages",
-          filter: `family_id=eq.${session.family_id}`,
-        },
-        (payload) => {
-          const updated = payload.new as Message;
-          mergeRealtimeMessage(session, updated)
-            .then(setMessages)
-            .catch(() => {
-              setMessages((prev) =>
-                prev.map((m) => (m.id === updated.id ? { ...m, ...updated } : m)),
-              );
-            });
+          scheduleRealtimeFetch(payload.new as MessageRealtimeEvent);
         },
       )
       .subscribe((status) => {
         if (typeof window !== "undefined") {
           // eslint-disable-next-line no-console
-          console.log(`[realtime messages] ${status}`);
+          console.log(`[realtime message events] ${status}`);
         }
       });
 
@@ -560,12 +578,17 @@ export default function ChatPage() {
       )
       .subscribe();
 
-    // Fallback: Realtime gives immediacy; these low-frequency polls are only
-    // a safety net for missed broadcasts or temporary channel failures.
-    const messagePoll = window.setInterval(() => {
+    const syncVisibleMessages = () => {
       if (document.visibilityState !== "visible") return;
-      syncMessages(session, { onMessages: setMessages }).catch(() => undefined);
-    }, MESSAGE_FALLBACK_POLL_MS);
+      syncMessages(session, { onMessages: handleSyncedMessages }).catch(
+        () => undefined,
+      );
+    };
+
+    const messagePoll = window.setInterval(
+      syncVisibleMessages,
+      MESSAGE_FALLBACK_POLL_MS,
+    );
 
     const metadataPoll = window.setInterval(() => {
       if (document.visibilityState !== "visible") return;
@@ -580,14 +603,30 @@ export default function ChatPage() {
         .catch(() => undefined);
     }, METADATA_FALLBACK_POLL_MS);
 
+    window.addEventListener("focus", syncVisibleMessages);
+    window.addEventListener("online", syncVisibleMessages);
+    document.addEventListener("visibilitychange", syncVisibleMessages);
+
     return () => {
-      sb.removeChannel(messagesChannel);
+      sb.removeChannel(messageEventsChannel);
       sb.removeChannel(importantChannel);
       sb.removeChannel(membersChannel);
       window.clearInterval(messagePoll);
       window.clearInterval(metadataPoll);
+      window.removeEventListener("focus", syncVisibleMessages);
+      window.removeEventListener("online", syncVisibleMessages);
+      document.removeEventListener("visibilitychange", syncVisibleMessages);
+      realtimeTimers.forEach((timer) => window.clearTimeout(timer));
+      realtimeTimers.clear();
     };
-  }, [refreshImportantNotifications, router, session, t]);
+  }, [
+    fetchRealtimeMessage,
+    handleSyncedMessages,
+    refreshImportantNotifications,
+    router,
+    session,
+    t,
+  ]);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
     bottomScrollTimeoutsRef.current.forEach((id) => window.clearTimeout(id));
@@ -881,16 +920,6 @@ export default function ChatPage() {
     scrollToMessage(notification.message_id);
   }
 
-  function tryTriggerEffect(messageId: string, eff: Effect | null) {
-    if (!eff) return;
-    if (triggeredEffectIdsRef.current.has(messageId)) return;
-    triggeredEffectIdsRef.current.add(messageId);
-    // Unique key per trigger forces React to unmount the previous overlay
-    // so the CSS keyframes restart from 0 — otherwise the second hit would
-    // reuse particles that have already animated off-screen.
-    setEffectShow({ effect: eff, key: `${messageId}-${Date.now()}` });
-  }
-
   async function handleSendText(text: string) {
     if (!session) return;
     setSending(true);
@@ -949,8 +978,7 @@ export default function ChatPage() {
   async function handleSendAudio(result: RecordingResult) {
     if (!session) return;
     if (result.blob.size > 2 * 1024 * 1024) {
-      alert(t("chatAudioTooLarge"));
-      return;
+      throw new Error("audio_too_large");
     }
     setSending(true);
     try {
@@ -973,8 +1001,6 @@ export default function ChatPage() {
         content: t("chatAudioMessage"),
       });
       requestMessagePush(session, id);
-    } catch (err) {
-      alert(humanizeError(err, language));
     } finally {
       setSending(false);
     }

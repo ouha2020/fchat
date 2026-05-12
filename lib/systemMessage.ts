@@ -104,15 +104,18 @@ const LEGACY_PATTERNS: Array<{
   },
 ];
 
-const LEGACY_MOJIBAKE = {
-  familyCreated: "鎻掑灡",
-  familyRenamed: "崥宥",
-  codeReset: "锝囩垳",
-  joinEnabled: "妯虹磻",
-  joinDisabled: "妯哄彠",
-  memberJoined: "閸旂姴鍙嗘禍鍡楊啀",
-  memberRemoved: "瀹歌尪顫︾粔",
-  memberLeft: "缁傝绱戞禍鍡楊啀",
+const LEGACY_CORRUPTED_MARKERS = {
+  familyCreated: "\u{93bb}\u{6391}\u{7061}",
+  familyRenamed: "\u{5d25}\u{5ba5}",
+  codeReset: "\u{951d}\u{56e9}\u{57b3}",
+  joinEnabled: "\u{59af}\u{8679}\u{78fb}",
+  joinDisabled: "\u{59af}\u{54c4}\u{5f60}",
+  memberJoined:
+    "\u{95b8}\u{65c2}\u{59f4}\u{9359}\u{55d8}\u{798d}\u{9361}\u{694a}\u{5540}",
+  memberRemoved:
+    "\u{7039}\u{6b4c}\u{5c2a}\u{986b}\u{fe3e}\u{7c94}",
+  memberLeft:
+    "\u{7f01}\u{509d}\u{e1e7}\u{7ef1}\u{621e}\u{798d}\u{9361}\u{694a}\u{5540}",
 } as const;
 
 export function localizeSystemMessage(input: SystemMessageInput, t: T): string {
@@ -179,50 +182,50 @@ function matchLegacy(
     }
   }
 
-  if (content.includes(LEGACY_MOJIBAKE.familyCreated)) {
+  if (content.includes(LEGACY_CORRUPTED_MARKERS.familyCreated)) {
     return {
       key: "systemFamilyCreated",
       varName: "name",
       value: valueAfterQuestionMark(content),
     };
   }
-  if (content.includes(LEGACY_MOJIBAKE.familyRenamed)) {
+  if (content.includes(LEGACY_CORRUPTED_MARKERS.familyRenamed)) {
     return {
       key: "systemFamilyRenamed",
       varName: "name",
       value: valueAfterQuestionMark(content),
     };
   }
-  if (content.includes(LEGACY_MOJIBAKE.codeReset)) {
+  if (content.includes(LEGACY_CORRUPTED_MARKERS.codeReset)) {
     return { key: "systemFamilyCodeReset" };
   }
-  if (content.includes(LEGACY_MOJIBAKE.joinEnabled)) {
+  if (content.includes(LEGACY_CORRUPTED_MARKERS.joinEnabled)) {
     return { key: "systemJoinEnabled" };
   }
-  if (content.includes(LEGACY_MOJIBAKE.joinDisabled)) {
+  if (content.includes(LEGACY_CORRUPTED_MARKERS.joinDisabled)) {
     return { key: "systemJoinDisabled" };
   }
-  if (content.includes(LEGACY_MOJIBAKE.memberJoined)) {
+  if (content.includes(LEGACY_CORRUPTED_MARKERS.memberJoined)) {
     return {
       key: "systemMemberJoined",
       varName: "nickname",
-      value: valueBefore(content, LEGACY_MOJIBAKE.memberJoined),
+      value: valueBefore(content, LEGACY_CORRUPTED_MARKERS.memberJoined),
       tone: "joined",
     };
   }
-  if (content.includes(LEGACY_MOJIBAKE.memberRemoved)) {
+  if (content.includes(LEGACY_CORRUPTED_MARKERS.memberRemoved)) {
     return {
       key: "systemMemberRemoved",
       varName: "nickname",
-      value: valueBefore(content, LEGACY_MOJIBAKE.memberRemoved),
+      value: valueBefore(content, LEGACY_CORRUPTED_MARKERS.memberRemoved),
       tone: "left",
     };
   }
-  if (content.includes(LEGACY_MOJIBAKE.memberLeft)) {
+  if (content.includes(LEGACY_CORRUPTED_MARKERS.memberLeft)) {
     return {
       key: "systemMemberLeft",
       varName: "nickname",
-      value: valueBefore(content, LEGACY_MOJIBAKE.memberLeft),
+      value: valueBefore(content, LEGACY_CORRUPTED_MARKERS.memberLeft),
       tone: "left",
     };
   }

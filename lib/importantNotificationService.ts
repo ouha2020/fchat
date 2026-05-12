@@ -4,7 +4,7 @@ import { getSupabase } from "./supabaseClient";
 import type { LocalSession } from "@/lib/authLocal";
 import type { ImportantNotification } from "@/types/importantNotification";
 import { normalizeMessage } from "@/lib/messageService";
-import type { MessageType } from "@/types/message";
+import type { MessageType, SystemEventType } from "@/types/message";
 
 interface ImportantNotificationRow {
   id: string;
@@ -27,6 +27,8 @@ interface ImportantNotificationRow {
   message_map_url: string | null;
   message_effect_id: string | null;
   message_effect_caption: string | null;
+  message_system_event_type: SystemEventType | null;
+  message_system_event_payload: Record<string, unknown> | null;
   message_deleted_at: string | null;
   message_deleted_by_member_id: string | null;
   message_updated_at: string;
@@ -66,6 +68,8 @@ export async function listImportantNotifications(
           map_url: row.message_map_url,
           effect_id: row.message_effect_id,
           effect_caption: row.message_effect_caption,
+          system_event_type: row.message_system_event_type,
+          system_event_payload: row.message_system_event_payload,
           deleted_at: row.message_deleted_at,
           deleted_by_member_id: row.message_deleted_by_member_id,
           updated_at: row.message_updated_at,

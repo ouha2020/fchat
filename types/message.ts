@@ -1,4 +1,13 @@
 export type MessageType = "text" | "image" | "audio" | "location" | "system";
+export type SystemEventType =
+  | "family_created"
+  | "member_joined"
+  | "family_renamed"
+  | "family_code_reset"
+  | "join_enabled"
+  | "join_disabled"
+  | "member_removed"
+  | "member_left";
 
 export interface Message {
   id: string;
@@ -15,6 +24,8 @@ export interface Message {
   map_url: string | null;
   effect_id: string | null;
   effect_caption: string | null;
+  system_event_type: SystemEventType | null;
+  system_event_payload: Record<string, unknown> | null;
   push_requested_at?: string | null;
   deleted_at: string | null;
   deleted_by_member_id: string | null;

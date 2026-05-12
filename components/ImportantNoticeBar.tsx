@@ -124,7 +124,7 @@ function buildPreview(
 
   if (message.message_type === "system") {
     return {
-      text: truncate(localizeSystemMessage(message.content, t), 40),
+      text: truncate(localizeSystemMessage(message, t), 40),
       iconText: "!",
     };
   }

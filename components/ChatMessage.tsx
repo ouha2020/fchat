@@ -59,7 +59,7 @@ export default function ChatMessage({
     : "";
 
   if (message.message_type === "system") {
-    const tone = getSystemMessageTone(message.content);
+    const tone = getSystemMessageTone(message);
     const toneClass =
       tone === "joined"
         ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100"
@@ -69,7 +69,7 @@ export default function ChatMessage({
     return (
       <div className="flex justify-center py-2" {...actionHandlers}>
         <span className={`rounded-full px-3 py-1 text-xs ${toneClass} ${actionClass} ${highlightClass}`}>
-          {localizeSystemMessage(message.content, t)}
+          {localizeSystemMessage(message, t)}
         </span>
       </div>
     );

@@ -1,5 +1,7 @@
-const PRECACHE = "family-chat-precache-v5";
-const RUNTIME = "family-chat-runtime-v5";
+const PRECACHE = "family-chat-precache-v6";
+const RUNTIME = "family-chat-runtime-v6";
+
+const PUSH_RECEIVED = "family-chat:push-received";
 
 const PRECACHE_URLS = [
   "/offline",
@@ -63,26 +65,22 @@ self.addEventListener("fetch", (event) => {
 });
 
 self.addEventListener("push", (event) => {
-  let data = {};
-  try {
-    data = event.data ? event.data.json() : {};
-  } catch {
-    data = {};
-  }
-
-  const title = data.title || "家族チャット";
+  const data = readPushData(event);
+  const title = data.title || "\u5bb6\u5ead\u804a\u5929";
   const options = {
-    body: data.body || "新しい通知があります",
+    body: data.body || "\u6709\u65b0\u6d88\u606f",
     icon: "/icon.png",
     badge: "/icon.png",
     tag: data.tag || "family-chat",
     renotify: false,
     data: {
       url: data.url || "/chat",
+      familyId: data.familyId || null,
+      messageId: data.messageId || null,
     },
   };
 
-  event.waitUntil(showNotificationUnlessAppVisible(title, options));
+  event.waitUntil(deliverForegroundOrNotify(title, options));
 });
 
 self.addEventListener("notificationclick", (event) => {
@@ -106,6 +104,14 @@ self.addEventListener("notificationclick", (event) => {
       }),
   );
 });
+
+function readPushData(event) {
+  try {
+    return event.data ? event.data.json() : {};
+  } catch {
+    return {};
+  }
+}
 
 function isStaticAsset(url) {
   return (
@@ -143,16 +149,27 @@ async function cacheFirst(request) {
   return response;
 }
 
-async function showNotificationUnlessAppVisible(title, options) {
-  if (await hasVisibleWindowClient()) return;
+async function deliverForegroundOrNotify(title, options) {
+  const visibleClients = await getVisibleWindowClients();
+  if (visibleClients.length > 0) {
+    visibleClients.forEach((client) => {
+      client.postMessage({
+        type: PUSH_RECEIVED,
+        familyId: options.data.familyId,
+        messageId: options.data.messageId,
+      });
+    });
+    return;
+  }
+
   return self.registration.showNotification(title, options);
 }
 
-async function hasVisibleWindowClient() {
+async function getVisibleWindowClients() {
   const clientList = await clients.matchAll({
     type: "window",
     includeUncontrolled: true,
   });
 
-  return clientList.some((client) => client.visibilityState === "visible");
+  return clientList.filter((client) => client.visibilityState === "visible");
 }

@@ -71,6 +71,12 @@ interface MessageRealtimeEvent {
   created_at: string;
 }
 
+interface PushReceivedMessage {
+  type?: string;
+  familyId?: string | null;
+  messageId?: string | null;
+}
+
 export default function ChatPage() {
   const router = useRouter();
   const { language, t } = useLanguage();
@@ -265,6 +271,43 @@ export default function ChatPage() {
     },
     [handleSyncedMessages],
   );
+
+  useEffect(() => {
+    if (!session) return;
+    if (!("serviceWorker" in navigator)) return;
+
+    const syncVisibleMessages = () => {
+      if (document.visibilityState !== "visible") return;
+      syncMessages(session, { onMessages: handleSyncedMessages }).catch(
+        () => undefined,
+      );
+    };
+
+    const handleServiceWorkerMessage = (event: MessageEvent) => {
+      const data = event.data as PushReceivedMessage | null;
+      if (!data || data.type !== "family-chat:push-received") return;
+      if (data.familyId !== session.family_id) return;
+      if (window.location.pathname !== "/chat") return;
+
+      if (data.messageId) {
+        fetchRealtimeMessage(data.messageId).catch(syncVisibleMessages);
+        return;
+      }
+
+      syncVisibleMessages();
+    };
+
+    navigator.serviceWorker.addEventListener(
+      "message",
+      handleServiceWorkerMessage,
+    );
+    return () => {
+      navigator.serviceWorker.removeEventListener(
+        "message",
+        handleServiceWorkerMessage,
+      );
+    };
+  }, [fetchRealtimeMessage, handleSyncedMessages, session]);
 
   useEffect(() => {
     if (!session) return;

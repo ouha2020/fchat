@@ -129,6 +129,8 @@ export async function POST(request: Request) {
       title: "\u5bb6\u5ead\u804a\u5929",
       body: buildMessagePushBody(sender.nickname, message.message_type),
       url: "/chat",
+      familyId: message.family_id,
+      messageId: message.id,
       tag: `family-chat:${message.family_id}:${message.id}`,
     });
 

@@ -21,9 +21,6 @@ import type { MessageType } from "@/types/message";
 
 export const runtime = "nodejs";
 
-const ACTIVE_WINDOW_MS = 60_000;
-const DEDUPE_WINDOW_MS = 30_000;
-
 interface SendPushBody {
   memberId?: unknown;
   memberToken?: unknown;
@@ -43,14 +40,8 @@ interface PushSubscriptionRow extends StoredPushSubscription {
   id: string;
   member_id: string;
   messages_enabled: boolean;
+  location_enabled: boolean;
   last_notified_at: string | null;
-}
-
-interface PresenceRow {
-  member_id: string;
-  current_page: string | null;
-  is_active: boolean;
-  last_seen_at: string;
 }
 
 export async function POST(request: Request) {
@@ -117,53 +108,28 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true, sent: 0 });
     }
 
-    const activeCutoff = new Date(Date.now() - ACTIVE_WINDOW_MS).toISOString();
-    const { data: presenceRows, error: presenceError } = await sb
-      .from("user_presence")
-      .select("member_id, current_page, is_active, last_seen_at")
-      .eq("family_id", message.family_id)
-      .eq("is_active", true)
-      .in("member_id", recipientIds);
-    if (presenceError) throw presenceError;
-
-    const activeMemberIds = new Set(
-      ((presenceRows ?? []) as PresenceRow[])
-        .filter(
-          (row) =>
-            row.current_page === "chat" &&
-            row.is_active &&
-            row.last_seen_at > activeCutoff,
-        )
-        .map((row) => row.member_id),
-    );
-    const targetMemberIds = recipientIds.filter((id) => !activeMemberIds.has(id));
-    if (targetMemberIds.length === 0) {
-      return NextResponse.json({ ok: true, sent: 0, skipped: "active_app" });
-    }
-
     const { data: subscriptions, error: subError } = await sb
       .from("push_subscriptions")
       .select(
-        "id, member_id, endpoint, p256dh, auth, messages_enabled, last_notified_at",
+        "id, member_id, endpoint, p256dh, auth, messages_enabled, location_enabled, last_notified_at",
       )
       .eq("family_id", message.family_id)
       .eq("enabled", true)
-      .in("member_id", targetMemberIds);
+      .in("member_id", recipientIds);
     if (subError) throw subError;
 
-    const dedupeCutoff = Date.now() - DEDUPE_WINDOW_MS;
     const targets = ((subscriptions ?? []) as PushSubscriptionRow[]).filter(
-      (sub) => shouldNotify(sub, message.message_type, dedupeCutoff),
+      (sub) => shouldNotify(sub, message.message_type),
     );
     if (targets.length === 0) {
-      return NextResponse.json({ ok: true, sent: 0, skipped: "deduped" });
+      return NextResponse.json({ ok: true, sent: 0, skipped: "preferences" });
     }
 
     const payload = JSON.stringify({
-      title: "家族チャット",
+      title: "\u5bb6\u5ead\u804a\u5929",
       body: buildMessagePushBody(sender.nickname, message.message_type),
       url: "/chat",
-      tag: `family-chat:${message.family_id}`,
+      tag: `family-chat:${message.family_id}:${message.id}`,
     });
 
     const results = await Promise.allSettled(
@@ -220,15 +186,10 @@ export async function POST(request: Request) {
 
 function shouldNotify(
   sub: PushSubscriptionRow,
-  _messageType: MessageType,
-  dedupeCutoff: number,
+  messageType: MessageType,
 ): boolean {
   if (!sub.messages_enabled) return false;
-  if (
-    sub.last_notified_at &&
-    new Date(sub.last_notified_at).getTime() > dedupeCutoff
-  ) {
-    return false;
-  }
+  if (messageType === "location" && !sub.location_enabled) return false;
+  if (messageType === "system") return false;
   return true;
 }

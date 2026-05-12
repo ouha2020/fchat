@@ -4,7 +4,12 @@ import { useEffect, useRef, useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
 import { humanizeError } from "@/lib/errors";
-import { formatDuration, startRecording, type RecordingHandle, type RecordingResult } from "@/lib/recordingService";
+import {
+  formatDuration,
+  startRecording,
+  type RecordingHandle,
+  type RecordingResult,
+} from "@/lib/recordingService";
 
 interface Props {
   disabled?: boolean;
@@ -15,7 +20,35 @@ interface Props {
   onSendAudio: (result: RecordingResult) => Promise<void> | void;
 }
 
+type RecordingState =
+  | { status: "idle" }
+  | {
+      status: "recording";
+      handle: RecordingHandle;
+      elapsedMs: number;
+      stopping: boolean;
+    }
+  | {
+      status: "preview";
+      result: RecordingResult;
+      objectUrl: string;
+      notice?: string;
+    }
+  | {
+      status: "uploading";
+      result: RecordingResult;
+      objectUrl: string;
+    }
+  | {
+      status: "failed";
+      result: RecordingResult;
+      objectUrl: string;
+      error: string;
+    };
+
 const MAX_RECORD_MS = 60_000;
+const MIN_RECORD_MS = 600;
+const CONSENT_KEY = "family-chat:voice-recording-consent:v1";
 const iconButtonClass =
   "inline-flex h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-cover bg-center bg-no-repeat shadow-sm ring-1 ring-slate-200/70 transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-50";
 const inputShellClass =
@@ -31,31 +64,77 @@ export default function ChatInput({
 }: Props) {
   const { language, t } = useLanguage();
   const [text, setText] = useState("");
-  const [recording, setRecording] = useState<RecordingHandle | null>(null);
-  const [stoppingRecording, setStoppingRecording] = useState(false);
-  const [elapsed, setElapsed] = useState(0);
+  const [recordingState, setRecordingState] = useState<RecordingState>({
+    status: "idle",
+  });
   const [actionsOpen, setActionsOpen] = useState(false);
+  const [privacyNotice, setPrivacyNotice] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
   const moreButtonRef = useRef<HTMLButtonElement>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const recordingStateRef = useRef<RecordingState>(recordingState);
 
-  // Tick recording timer
   useEffect(() => {
-    if (!recording) return;
+    recordingStateRef.current = recordingState;
+  }, [recordingState]);
+
+  useEffect(() => {
+    return () => {
+      cleanupRecordingState(recordingStateRef.current);
+      audioRef.current?.pause();
+      audioRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (recordingState.status !== "recording") return;
     const id = window.setInterval(() => {
-      setElapsed(Date.now() - recording.startedAt);
+      setRecordingState((current) => {
+        if (current.status !== "recording") return current;
+        return {
+          ...current,
+          elapsedMs: Date.now() - current.handle.startedAt,
+        };
+      });
     }, 200);
     return () => window.clearInterval(id);
-  }, [recording]);
+  }, [recordingState.status]);
 
-  // Auto-stop on max duration
   useEffect(() => {
-    if (!recording) return;
-    if (stoppingRecording) return;
-    if (elapsed < MAX_RECORD_MS) return;
-    void handleStopRecording();
+    if (recordingState.status !== "recording") return;
+    if (recordingState.stopping) return;
+    if (recordingState.elapsedMs < MAX_RECORD_MS) return;
+    void stopRecording("max");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [elapsed, recording, stoppingRecording]);
+  }, [recordingState]);
+
+  useEffect(() => {
+    if (recordingState.status !== "recording") return;
+
+    function discardForPrivacy() {
+      const current = recordingStateRef.current;
+      if (current.status !== "recording") return;
+      current.handle.cancel();
+      setRecordingState({ status: "idle" });
+      setPrivacyNotice(t("inputRecordingBackgroundStopped"));
+    }
+
+    function handleVisibilityChange() {
+      if (document.visibilityState !== "visible") discardForPrivacy();
+    }
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("blur", discardForPrivacy);
+    window.addEventListener("pagehide", discardForPrivacy);
+    window.addEventListener("beforeunload", discardForPrivacy);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("blur", discardForPrivacy);
+      window.removeEventListener("pagehide", discardForPrivacy);
+      window.removeEventListener("beforeunload", discardForPrivacy);
+    };
+  }, [recordingState.status, t]);
 
   useEffect(() => {
     if (!actionsOpen) return;
@@ -82,74 +161,148 @@ export default function ChatInput({
 
   async function submit() {
     const trimmed = text.trim();
-    if (!trimmed || disabled || sending) return;
+    if (!trimmed || disabled || sending || recordingState.status !== "idle") return;
     setActionsOpen(false);
     await onSendText(trimmed);
     setText("");
   }
 
   async function handleStartRecording() {
-    if (disabled || sending || recording || stoppingRecording) return;
+    if (disabled || sending || recordingState.status !== "idle") return;
     setActionsOpen(false);
+    setPrivacyNotice(null);
+
+    if (!hasRecordingConsent()) {
+      const ok = window.confirm(t("inputRecordingConsent"));
+      if (!ok) return;
+      saveRecordingConsent();
+    }
+
     try {
       const handle = await startRecording();
-      setElapsed(0);
-      setRecording(handle);
-      setStoppingRecording(false);
+      setRecordingState({
+        status: "recording",
+        handle,
+        elapsedMs: 0,
+        stopping: false,
+      });
     } catch (err) {
-      const rawMsg = err instanceof Error ? err.message : String(err);
-      const msg = humanizeError(err, language);
-      if (rawMsg.includes("Permission") || rawMsg.toLowerCase().includes("denied")) {
-        alert(t("inputMicPermission"));
-      } else {
-        alert(t("inputRecordStartError", { message: msg }));
-      }
+      alert(recordingStartErrorMessage(err));
     }
   }
 
-  async function handleStopRecording() {
-    if (!recording || stoppingRecording) return;
-    const handle = recording;
-    setStoppingRecording(true);
+  async function stopRecording(reason: "manual" | "max") {
+    const current = recordingStateRef.current;
+    if (current.status !== "recording" || current.stopping) return;
+
+    setRecordingState({ ...current, stopping: true });
     try {
-      const result = await handle.stop();
-      if (result.durationMs < 600) {
+      const result = await current.handle.stop();
+      if (result.durationMs < MIN_RECORD_MS) {
         alert(t("inputRecordingTooShort"));
+        setRecordingState({ status: "idle" });
         return;
       }
-      await onSendAudio(result);
+
+      const objectUrl = URL.createObjectURL(result.blob);
+      setRecordingState({
+        status: "preview",
+        result,
+        objectUrl,
+        notice: reason === "max" ? t("inputMaxDurationReached") : undefined,
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (!msg.includes("recording_cancelled")) {
-        alert(t("inputAudioSendError", { message: msg }));
+        alert(t("inputRecordStartError", { message: humanizeError(err, language) }));
       }
-    } finally {
-      setRecording(null);
-      setStoppingRecording(false);
-      setElapsed(0);
+      setRecordingState({ status: "idle" });
     }
   }
 
   function handleCancelRecording() {
-    if (!recording || stoppingRecording) return;
-    recording.cancel();
-    setRecording(null);
-    setElapsed(0);
+    const current = recordingStateRef.current;
+    if (current.status !== "recording" || current.stopping) return;
+    current.handle.cancel();
+    setRecordingState({ status: "idle" });
+  }
+
+  function deletePreview() {
+    const current = recordingStateRef.current;
+    cleanupRecordingState(current);
+    setRecordingState({ status: "idle" });
+  }
+
+  async function playPreview() {
+    const current = recordingStateRef.current;
+    if (current.status !== "preview" && current.status !== "failed") return;
+    try {
+      audioRef.current?.pause();
+      audioRef.current = new Audio(current.objectUrl);
+      await audioRef.current.play();
+    } catch {
+      alert(t("inputPreviewPlayFailed"));
+    }
+  }
+
+  async function sendPreview() {
+    const current = recordingStateRef.current;
+    if (current.status !== "preview" && current.status !== "failed") return;
+    setRecordingState({
+      status: "uploading",
+      result: current.result,
+      objectUrl: current.objectUrl,
+    });
+
+    try {
+      await onSendAudio(current.result);
+      revokeObjectUrl(current.objectUrl);
+      audioRef.current?.pause();
+      audioRef.current = null;
+      setRecordingState({ status: "idle" });
+    } catch {
+      setRecordingState({
+        status: "failed",
+        result: current.result,
+        objectUrl: current.objectUrl,
+        error: t("inputAudioSendFailed"),
+      });
+    }
   }
 
   function handlePickImage() {
-    if (disabled || sending) return;
+    if (disabled || sending || recordingState.status !== "idle") return;
     setActionsOpen(false);
     fileRef.current?.click();
   }
 
   function handleSendLocation() {
-    if (disabled || sending) return;
+    if (disabled || sending || recordingState.status !== "idle") return;
     setActionsOpen(false);
     void onSendLocation();
   }
 
-  if (recording) {
+  function recordingStartErrorMessage(err: unknown): string {
+    const rawMsg = err instanceof Error ? err.message : String(err);
+    if (
+      rawMsg.includes("Permission") ||
+      rawMsg.toLowerCase().includes("denied") ||
+      rawMsg.includes("NotAllowedError")
+    ) {
+      return t("inputMicPermission");
+    }
+    if (
+      rawMsg.includes("recording_unsupported") ||
+      rawMsg.includes("media_recorder_unsupported")
+    ) {
+      return t("inputRecordingUnsupported");
+    }
+    return t("inputRecordStartError", {
+      message: humanizeError(err, language),
+    });
+  }
+
+  if (recordingState.status === "recording") {
     return (
       <div
         className={inputShellClass}
@@ -158,31 +311,103 @@ export default function ChatInput({
         <div className="flex items-center gap-2 px-3 py-2 sm:px-4">
           <button
             type="button"
-            className="btn-ghost h-10 w-10 px-0 text-xl leading-none"
-            aria-label={t("inputCancelRecording")}
-            disabled={stoppingRecording}
+            className="btn-secondary h-10 px-3 text-sm"
+            disabled={recordingState.stopping}
             onClick={handleCancelRecording}
           >
-            ✕
+            {t("inputCancelRecordingShort")}
           </button>
-          <div className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-rose-50 px-3 py-3 text-sm text-rose-700">
+          <div className="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg bg-rose-50 px-3 py-3 text-sm text-rose-700 ring-1 ring-rose-100">
             <span
-              className={`inline-block h-2.5 w-2.5 rounded-full bg-rose-500 ${
-                stoppingRecording ? "" : "animate-pulse"
+              aria-hidden
+              className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full bg-rose-500 ${
+                recordingState.stopping ? "" : "animate-pulse"
               }`}
             />
-            <span className="font-medium">{t("inputRecording")}</span>
-            <span className="font-mono">{formatDuration(elapsed)}</span>
-            <span className="text-xs text-rose-500">{t("inputMaxDuration")}</span>
+            <span className="truncate font-semibold">{t("inputRecording")}</span>
+            <span className="font-mono tabular-nums">
+              {formatDuration(recordingState.elapsedMs)}
+            </span>
           </div>
           <button
             type="button"
-            className="btn-primary h-10 px-4"
-            disabled={stoppingRecording}
-            onClick={() => void handleStopRecording()}
+            className="btn-primary h-10 px-4 text-sm"
+            disabled={recordingState.stopping}
+            onClick={() => void stopRecording("manual")}
           >
-            {t("commonSend")}
+            {t("inputStopRecording")}
           </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (
+    recordingState.status === "preview" ||
+    recordingState.status === "uploading" ||
+    recordingState.status === "failed"
+  ) {
+    const result = recordingState.result;
+    const isUploading = recordingState.status === "uploading";
+    const failedMessage =
+      recordingState.status === "failed" ? recordingState.error : null;
+    const notice =
+      recordingState.status === "preview" ? recordingState.notice : null;
+
+    return (
+      <div
+        className={inputShellClass}
+        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+      >
+        <div className="space-y-2 px-3 py-2 sm:px-4">
+          {notice ? (
+            <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 ring-1 ring-amber-100">
+              {notice}
+            </div>
+          ) : null}
+          {failedMessage ? (
+            <div className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700 ring-1 ring-rose-100">
+              {failedMessage}
+            </div>
+          ) : null}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex min-w-40 flex-1 items-center justify-center gap-2 rounded-lg bg-slate-50 px-3 py-3 text-sm text-slate-700 ring-1 ring-slate-100">
+              <span className="truncate font-semibold">
+                {t("inputRecordingDone")}
+              </span>
+              <span className="font-mono tabular-nums">
+                {formatDuration(result.durationMs)}
+              </span>
+            </div>
+            <button
+              type="button"
+              className="btn-secondary h-10 px-3 text-sm"
+              disabled={isUploading}
+              onClick={() => void playPreview()}
+            >
+              {t("inputPreviewAudio")}
+            </button>
+            <button
+              type="button"
+              className="btn-secondary h-10 px-3 text-sm"
+              disabled={isUploading}
+              onClick={deletePreview}
+            >
+              {t("inputDeleteRecording")}
+            </button>
+            <button
+              type="button"
+              className="btn-primary h-10 px-4 text-sm"
+              disabled={isUploading}
+              onClick={() => void sendPreview()}
+            >
+              {isUploading
+                ? t("inputRecordingSending")
+                : recordingState.status === "failed"
+                  ? t("inputRetryAudioSend")
+                  : t("inputSendRecording")}
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -219,6 +444,11 @@ export default function ChatInput({
             disabled={disabled || sending}
             onClick={handleSendLocation}
           />
+        </div>
+      ) : null}
+      {privacyNotice ? (
+        <div className="border-b border-amber-100 bg-amber-50 px-4 py-2 text-xs text-amber-700">
+          {privacyNotice}
         </div>
       ) : null}
       <div className="flex items-center gap-2 px-3 py-2 sm:px-4">
@@ -279,4 +509,43 @@ export default function ChatInput({
       </div>
     </div>
   );
+}
+
+function hasRecordingConsent(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(CONSENT_KEY) === "yes";
+  } catch {
+    return false;
+  }
+}
+
+function saveRecordingConsent(): void {
+  try {
+    window.localStorage.setItem(CONSENT_KEY, "yes");
+  } catch {
+    // Best effort only. If localStorage is blocked, ask again next time.
+  }
+}
+
+function cleanupRecordingState(state: RecordingState): void {
+  if (state.status === "recording") {
+    state.handle.cancel();
+    return;
+  }
+  if (
+    state.status === "preview" ||
+    state.status === "uploading" ||
+    state.status === "failed"
+  ) {
+    revokeObjectUrl(state.objectUrl);
+  }
+}
+
+function revokeObjectUrl(url: string): void {
+  try {
+    URL.revokeObjectURL(url);
+  } catch {
+    // Best effort only.
+  }
 }

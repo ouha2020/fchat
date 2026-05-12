@@ -11,6 +11,7 @@ import {
 } from "@/lib/messageSync";
 import {
   deleteMessage,
+  getMessageById,
   sendMessage,
   uploadChatAudio,
   uploadChatImage,
@@ -20,6 +21,7 @@ export {
   clearMessageCacheForSession,
   deleteMessage,
   forceRefreshMessages,
+  getMessageById,
   loadCachedMessagesForSession,
   mergeRealtimeMessage,
   noteMessageCacheOpen,

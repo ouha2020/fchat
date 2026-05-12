@@ -54,6 +54,22 @@ export async function listMessagesDelta(
   return ((data ?? []) as Message[]).map(normalizeMessage);
 }
 
+export async function getMessageById(
+  session: LocalSession,
+  messageId: string,
+): Promise<Message | null> {
+  const sb = getSupabase();
+  const { data, error } = await sb.rpc("get_message_for_member", {
+    p_member_id: session.member_id,
+    p_member_token: session.member_token,
+    p_message_id: messageId,
+  });
+  if (error) throw error;
+  const rows = (data ?? []) as Message[];
+  const message = rows[0];
+  return message ? normalizeMessage(message) : null;
+}
+
 interface SendMessageInput {
   type: MessageType;
   content?: string | null;

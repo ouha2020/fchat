@@ -50,16 +50,16 @@ export function buildMessagePushBody(
 ): string {
   switch (messageType) {
     case "image":
-      return `${senderName}が画像を送信しました`;
+      return `${senderName} \u53d1\u6765\u4e86\u4e00\u5f20\u56fe\u7247`;
     case "audio":
-      return `${senderName}が音声メッセージを送信しました`;
+      return `${senderName} \u53d1\u6765\u4e86\u4e00\u6761\u8bed\u97f3`;
     case "location":
-      return `${senderName}が現在地を送信しました`;
+      return `${senderName} \u5206\u4eab\u4e86\u4f4d\u7f6e`;
     case "system":
-      return "家族チャットに新しいお知らせがあります";
+      return "\u5bb6\u5ead\u804a\u5929\u6709\u65b0\u63d0\u9192";
     case "text":
     default:
-      return `${senderName}から新しいメッセージがあります`;
+      return `${senderName} \u53d1\u6765\u4e86\u4e00\u6761\u6d88\u606f`;
   }
 }
 

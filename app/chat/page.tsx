@@ -704,6 +704,8 @@ export default function ChatPage() {
       map_url: partial.map_url ?? null,
       effect_id: partial.effect_id ?? null,
       effect_caption: partial.effect_caption ?? null,
+      system_event_type: null,
+      system_event_payload: null,
       deleted_at: null,
       deleted_by_member_id: null,
       updated_at: now,

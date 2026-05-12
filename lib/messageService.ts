@@ -199,6 +199,8 @@ async function uploadViaApi(path: string, form: FormData): Promise<string> {
 export function normalizeMessage(message: Message): Message {
   return {
     ...message,
+    system_event_type: message.system_event_type ?? null,
+    system_event_payload: message.system_event_payload ?? null,
     updated_at:
       message.updated_at ??
       message.deleted_at ??

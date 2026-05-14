@@ -29,12 +29,6 @@ type RecordingState =
       stopping: boolean;
     }
   | {
-      status: "preview";
-      result: RecordingResult;
-      objectUrl: string;
-      notice?: string;
-    }
-  | {
       status: "uploading";
       result: RecordingResult;
       objectUrl: string;
@@ -74,6 +68,12 @@ export default function ChatInput({
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const recordingStateRef = useRef<RecordingState>(recordingState);
+  const voiceButtonRef = useRef<HTMLButtonElement>(null);
+  const recordingBarRef = useRef<HTMLDivElement>(null);
+  const safeRectRef = useRef<DOMRect | null>(null);
+  const [slideOffActive, setSlideOffActive] = useState(false);
+  const isHoldingRef = useRef(false);
+  const docPointerCleanupRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     recordingStateRef.current = recordingState;
@@ -81,11 +81,18 @@ export default function ChatInput({
 
   useEffect(() => {
     return () => {
+      removeDocPointerListeners();
       cleanupRecordingState(recordingStateRef.current);
       audioRef.current?.pause();
       audioRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    if (recordingState.status === "recording" && recordingBarRef.current) {
+      safeRectRef.current = recordingBarRef.current.getBoundingClientRect();
+    }
+  }, [recordingState.status]);
 
   useEffect(() => {
     if (recordingState.status !== "recording") return;
@@ -115,6 +122,7 @@ export default function ChatInput({
     function discardForPrivacy() {
       const current = recordingStateRef.current;
       if (current.status !== "recording") return;
+      removeDocPointerListeners();
       current.handle.cancel();
       setRecordingState({ status: "idle" });
       setPrivacyNotice(t("inputRecordingBackgroundStopped"));
@@ -159,6 +167,67 @@ export default function ChatInput({
     };
   }, [actionsOpen]);
 
+  function expandRect(rect: DOMRect, margin: number): DOMRect {
+    return new DOMRect(
+      rect.left - margin,
+      rect.top - margin,
+      rect.width + margin * 2,
+      rect.height + margin * 2,
+    );
+  }
+
+  function removeDocPointerListeners() {
+    docPointerCleanupRef.current?.();
+    docPointerCleanupRef.current = null;
+    setSlideOffActive(false);
+    isHoldingRef.current = false;
+  }
+
+  function addDocPointerListeners() {
+    function isInZone(clientX: number, clientY: number): boolean {
+      const rect = safeRectRef.current;
+      if (!rect) return true;
+      return (
+        clientX >= rect.left &&
+        clientX <= rect.right &&
+        clientY >= rect.top &&
+        clientY <= rect.bottom
+      );
+    }
+
+    function handlePointerMove(e: PointerEvent) {
+      setSlideOffActive(!isInZone(e.clientX, e.clientY));
+    }
+
+    function handlePointerUp(e: PointerEvent) {
+      removeDocPointerListeners();
+      const current = recordingStateRef.current;
+      if (current.status !== "recording" || current.stopping) return;
+      if (isInZone(e.clientX, e.clientY)) {
+        void stopRecording("manual");
+      } else {
+        handleCancelRecording();
+      }
+    }
+
+    function handlePointerCancel() {
+      removeDocPointerListeners();
+      const current = recordingStateRef.current;
+      if (current.status !== "recording" || current.stopping) return;
+      handleCancelRecording();
+    }
+
+    document.addEventListener("pointermove", handlePointerMove);
+    document.addEventListener("pointerup", handlePointerUp);
+    document.addEventListener("pointercancel", handlePointerCancel);
+
+    docPointerCleanupRef.current = () => {
+      document.removeEventListener("pointermove", handlePointerMove);
+      document.removeEventListener("pointerup", handlePointerUp);
+      document.removeEventListener("pointercancel", handlePointerCancel);
+    };
+  }
+
   async function submit() {
     const trimmed = text.trim();
     if (!trimmed || disabled || sending || recordingState.status !== "idle") return;
@@ -167,19 +236,37 @@ export default function ChatInput({
     setText("");
   }
 
-  async function handleStartRecording() {
+  async function handleVoicePointerDown(
+    e: React.PointerEvent<HTMLButtonElement>,
+  ) {
     if (disabled || sending || recordingState.status !== "idle") return;
+    e.preventDefault();
+
+    safeRectRef.current = expandRect(
+      e.currentTarget.getBoundingClientRect(),
+      40,
+    );
+    addDocPointerListeners();
+    isHoldingRef.current = true;
+
     setActionsOpen(false);
     setPrivacyNotice(null);
 
     if (!hasRecordingConsent()) {
       const ok = window.confirm(t("inputRecordingConsent"));
-      if (!ok) return;
+      if (!ok) {
+        removeDocPointerListeners();
+        return;
+      }
       saveRecordingConsent();
     }
 
     try {
       const handle = await startRecording();
+      if (!isHoldingRef.current) {
+        handle.cancel();
+        return;
+      }
       setRecordingState({
         status: "recording",
         handle,
@@ -187,6 +274,7 @@ export default function ChatInput({
         stopping: false,
       });
     } catch (err) {
+      removeDocPointerListeners();
       alert(recordingStartErrorMessage(err));
     }
   }
@@ -195,6 +283,7 @@ export default function ChatInput({
     const current = recordingStateRef.current;
     if (current.status !== "recording" || current.stopping) return;
 
+    removeDocPointerListeners();
     setRecordingState({ ...current, stopping: true });
     try {
       const result = await current.handle.stop();
@@ -205,12 +294,22 @@ export default function ChatInput({
       }
 
       const objectUrl = URL.createObjectURL(result.blob);
-      setRecordingState({
-        status: "preview",
-        result,
-        objectUrl,
-        notice: reason === "max" ? t("inputMaxDurationReached") : undefined,
-      });
+      setRecordingState({ status: "uploading", result, objectUrl });
+
+      try {
+        await onSendAudio(result);
+        revokeObjectUrl(objectUrl);
+        audioRef.current?.pause();
+        audioRef.current = null;
+        setRecordingState({ status: "idle" });
+      } catch {
+        setRecordingState({
+          status: "failed",
+          result,
+          objectUrl,
+          error: t("inputAudioSendFailed"),
+        });
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (!msg.includes("recording_cancelled")) {
@@ -223,31 +322,20 @@ export default function ChatInput({
   function handleCancelRecording() {
     const current = recordingStateRef.current;
     if (current.status !== "recording" || current.stopping) return;
+    removeDocPointerListeners();
     current.handle.cancel();
     setRecordingState({ status: "idle" });
   }
 
-  function deletePreview() {
+  function dismissFailed() {
     const current = recordingStateRef.current;
     cleanupRecordingState(current);
     setRecordingState({ status: "idle" });
   }
 
-  async function playPreview() {
+  async function retrySend() {
     const current = recordingStateRef.current;
-    if (current.status !== "preview" && current.status !== "failed") return;
-    try {
-      audioRef.current?.pause();
-      audioRef.current = new Audio(current.objectUrl);
-      await audioRef.current.play();
-    } catch {
-      alert(t("inputPreviewPlayFailed"));
-    }
-  }
-
-  async function sendPreview() {
-    const current = recordingStateRef.current;
-    if (current.status !== "preview" && current.status !== "failed") return;
+    if (current.status !== "failed") return;
     setRecordingState({
       status: "uploading",
       result: current.result,
@@ -305,107 +393,96 @@ export default function ChatInput({
   if (recordingState.status === "recording") {
     return (
       <div
+        ref={recordingBarRef}
         className={inputShellClass}
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       >
-        <div className="flex items-center gap-2 px-3 py-2 sm:px-4">
-          <button
-            type="button"
-            className="btn-secondary h-10 px-3 text-sm"
-            disabled={recordingState.stopping}
-            onClick={handleCancelRecording}
+        <div className="px-3 py-2 sm:px-4">
+          <div
+            className={
+              slideOffActive
+                ? "flex items-center justify-center gap-2 rounded-lg bg-slate-100 px-4 py-4 text-sm text-slate-500 ring-1 ring-slate-200 transition-colors"
+                : "flex items-center justify-center gap-2 rounded-lg bg-rose-50 px-4 py-4 text-sm text-rose-700 ring-1 ring-rose-100 transition-colors"
+            }
           >
-            {t("inputCancelRecordingShort")}
-          </button>
-          <div className="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg bg-rose-50 px-3 py-3 text-sm text-rose-700 ring-1 ring-rose-100">
             <span
               aria-hidden
-              className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full bg-rose-500 ${
-                recordingState.stopping ? "" : "animate-pulse"
-              }`}
+              className={
+                slideOffActive
+                  ? "inline-block h-2.5 w-2.5 shrink-0 rounded-full bg-slate-400"
+                  : recordingState.stopping
+                    ? "inline-block h-2.5 w-2.5 shrink-0 rounded-full bg-rose-500"
+                    : "inline-block h-2.5 w-2.5 shrink-0 animate-pulse rounded-full bg-rose-500"
+              }
             />
-            <span className="truncate font-semibold">{t("inputRecording")}</span>
+            <span className="truncate font-semibold">
+              {slideOffActive
+                ? t("inputRecordingReleaseCancel")
+                : t("inputRecordingHoldHint")}
+            </span>
             <span className="font-mono tabular-nums">
               {formatDuration(recordingState.elapsedMs)}
             </span>
           </div>
-          <button
-            type="button"
-            className="btn-primary h-10 px-4 text-sm"
-            disabled={recordingState.stopping}
-            onClick={() => void stopRecording("manual")}
-          >
-            {t("inputStopRecording")}
-          </button>
         </div>
       </div>
     );
   }
 
-  if (
-    recordingState.status === "preview" ||
-    recordingState.status === "uploading" ||
-    recordingState.status === "failed"
-  ) {
-    const result = recordingState.result;
-    const isUploading = recordingState.status === "uploading";
-    const failedMessage =
-      recordingState.status === "failed" ? recordingState.error : null;
-    const notice =
-      recordingState.status === "preview" ? recordingState.notice : null;
+  if (recordingState.status === "uploading") {
+    return (
+      <div
+        className={inputShellClass}
+        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+      >
+        <div className="flex items-center gap-2 px-3 py-2 sm:px-4">
+          <div className="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg bg-blue-50 px-3 py-3 text-sm text-blue-700 ring-1 ring-blue-100">
+            <span
+              aria-hidden
+              className="inline-block h-2.5 w-2.5 shrink-0 animate-pulse rounded-full bg-blue-500"
+            />
+            <span className="truncate font-semibold">{t("inputRecordingSending")}</span>
+            <span className="font-mono tabular-nums">
+              {formatDuration(recordingState.result.durationMs)}
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
+  if (recordingState.status === "failed") {
     return (
       <div
         className={inputShellClass}
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       >
         <div className="space-y-2 px-3 py-2 sm:px-4">
-          {notice ? (
-            <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 ring-1 ring-amber-100">
-              {notice}
-            </div>
-          ) : null}
-          {failedMessage ? (
-            <div className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700 ring-1 ring-rose-100">
-              {failedMessage}
-            </div>
-          ) : null}
+          <div className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700 ring-1 ring-rose-100">
+            {recordingState.error}
+          </div>
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex min-w-40 flex-1 items-center justify-center gap-2 rounded-lg bg-slate-50 px-3 py-3 text-sm text-slate-700 ring-1 ring-slate-100">
               <span className="truncate font-semibold">
                 {t("inputRecordingDone")}
               </span>
               <span className="font-mono tabular-nums">
-                {formatDuration(result.durationMs)}
+                {formatDuration(recordingState.result.durationMs)}
               </span>
             </div>
             <button
               type="button"
               className="btn-secondary h-10 px-3 text-sm"
-              disabled={isUploading}
-              onClick={() => void playPreview()}
-            >
-              {t("inputPreviewAudio")}
-            </button>
-            <button
-              type="button"
-              className="btn-secondary h-10 px-3 text-sm"
-              disabled={isUploading}
-              onClick={deletePreview}
+              onClick={dismissFailed}
             >
               {t("inputDeleteRecording")}
             </button>
             <button
               type="button"
               className="btn-primary h-10 px-4 text-sm"
-              disabled={isUploading}
-              onClick={() => void sendPreview()}
+              onClick={() => void retrySend()}
             >
-              {isUploading
-                ? t("inputRecordingSending")
-                : recordingState.status === "failed"
-                  ? t("inputRetryAudioSend")
-                  : t("inputSendRecording")}
+              {t("inputRetryAudioSend")}
             </button>
           </div>
         </div>
@@ -476,13 +553,19 @@ export default function ChatInput({
           onClick={() => setActionsOpen((open) => !open)}
         />
         <button
+          ref={voiceButtonRef}
           type="button"
           className={iconButtonClass}
-          style={{ backgroundImage: "url(/ui-icons/voice.png)" }}
+          style={{
+            backgroundImage: "url(/ui-icons/voice.png)",
+            touchAction: "none",
+          }}
           aria-label={t("inputRecordVoice")}
           title={t("inputRecordVoice")}
           disabled={disabled || sending}
-          onClick={() => void handleStartRecording()}
+          onPointerDown={(e) => {
+            void handleVoicePointerDown(e);
+          }}
         />
         <textarea
           rows={1}
@@ -533,11 +616,7 @@ function cleanupRecordingState(state: RecordingState): void {
     state.handle.cancel();
     return;
   }
-  if (
-    state.status === "preview" ||
-    state.status === "uploading" ||
-    state.status === "failed"
-  ) {
+  if (state.status === "uploading" || state.status === "failed") {
     revokeObjectUrl(state.objectUrl);
   }
 }

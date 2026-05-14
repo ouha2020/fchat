@@ -111,6 +111,8 @@ const DICTIONARY = {
     inputRecordingBackgroundStopped:
       "录音已停止。为了保护隐私，切换到后台时不会继续录音。",
     inputMaxDurationReached: "已达到最长录音时间，请确认是否发送。",
+    inputRecordingReleaseCancel: "松开取消",
+    inputRecordingHoldHint: "按住录音，松开发送",
     inputRecordingUnsupported:
       "当前浏览器不支持语音录制，请使用 Chrome 或 Safari。",
     inputPreviewPlayFailed: "无法播放录音，请重试。",
@@ -354,6 +356,8 @@ const DICTIONARY = {
     inputRecordingBackgroundStopped:
       "録音を停止しました。プライバシー保護のため、バックグラウンドでは録音を続けません。",
     inputMaxDurationReached: "最長録音時間に達しました。送信するか確認してください。",
+    inputRecordingReleaseCancel: "離してキャンセル",
+    inputRecordingHoldHint: "長押しで録音、離して送信",
     inputRecordingUnsupported:
       "このブラウザは音声録音に対応していません。Chrome または Safari を使用してください。",
     inputPreviewPlayFailed: "録音を再生できません。もう一度お試しください。",
@@ -597,6 +601,8 @@ const DICTIONARY = {
     inputRecordingBackgroundStopped:
       "Recording stopped. To protect your privacy, recording will not continue in the background.",
     inputMaxDurationReached: "Maximum recording time reached. Please confirm whether to send.",
+    inputRecordingReleaseCancel: "Release to cancel",
+    inputRecordingHoldHint: "Hold to record, release to send",
     inputRecordingUnsupported:
       "This browser does not support voice recording. Please use Chrome or Safari.",
     inputPreviewPlayFailed: "Could not play the recording. Please try again.",

@@ -104,6 +104,8 @@ export async function sendMessage(
     p_map_url: input.map_url ?? null,
     p_effect_id: input.effect_id ?? null,
     p_effect_caption: input.effect_caption ?? null,
+    p_sticker_id: null,
+    p_sticker_url: null,
   });
   if (error) throw error;
   return data as string;

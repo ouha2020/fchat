@@ -312,30 +312,42 @@ export default function ChatPage() {
   useEffect(() => {
     if (!session) return;
 
-    updatePushPresence(session, document.visibilityState === "visible", false, "chat");
-    const interval = window.setInterval(() => {
-      updatePushPresence(session, document.visibilityState === "visible", false, "chat");
-    }, 30_000);
-
-    const markVisibility = () => {
+    const markCurrentPresence = (keepalive = false) => {
       updatePushPresence(
         session,
         document.visibilityState === "visible",
-        document.visibilityState !== "visible",
+        keepalive,
         "chat",
       );
+    };
+    const markActive = () => {
+      if (document.visibilityState !== "visible") return;
+      updatePushPresence(session, true, false, "chat");
+    };
+
+    markCurrentPresence();
+    const interval = window.setInterval(() => {
+      markCurrentPresence();
+    }, 30_000);
+
+    const markVisibility = () => {
+      markCurrentPresence(document.visibilityState !== "visible");
     };
     const markInactive = () => {
       updatePushPresence(session, false, true, "chat");
     };
 
     document.addEventListener("visibilitychange", markVisibility);
+    window.addEventListener("focus", markActive);
+    window.addEventListener("online", markActive);
     window.addEventListener("pagehide", markInactive);
     window.addEventListener("beforeunload", markInactive);
     return () => {
       window.clearInterval(interval);
       markInactive();
       document.removeEventListener("visibilitychange", markVisibility);
+      window.removeEventListener("focus", markActive);
+      window.removeEventListener("online", markActive);
       window.removeEventListener("pagehide", markInactive);
       window.removeEventListener("beforeunload", markInactive);
     };

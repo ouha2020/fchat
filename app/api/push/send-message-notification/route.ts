@@ -112,11 +112,12 @@ export async function POST(request: Request) {
     // they receive messages via the realtime subscription. This also
     // prevents notification banners on iOS where the service worker's
     // foreground detection can't always suppress them.
-    const ACTIVE_THRESHOLD_MS = 45_000;
+    const ACTIVE_THRESHOLD_MS = 60_000;
     const { data: activePresence } = await sb
       .from("user_presence")
       .select("member_id")
       .eq("family_id", message.family_id)
+      .eq("current_page", "chat")
       .eq("is_active", true)
       .gt("last_seen_at", new Date(Date.now() - ACTIVE_THRESHOLD_MS).toISOString())
       .in("member_id", recipientIds);

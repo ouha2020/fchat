@@ -61,6 +61,7 @@ import type { FamilyMember } from "@/types/member";
 import type { Message } from "@/types/message";
 
 const MESSAGE_FALLBACK_POLL_MS = 8_000;
+const IMPORTANT_FALLBACK_POLL_MS = 30_000;
 const METADATA_FALLBACK_POLL_MS = 120_000;
 
 interface MessageRealtimeEvent {
@@ -639,38 +640,47 @@ export default function ChatPage() {
         () => undefined,
       );
     };
+    const refreshVisibleImportantNotifications = () => {
+      if (document.visibilityState !== "visible") return;
+      refreshImportantNotifications(session).catch(() => undefined);
+    };
+    const refreshVisibleChatData = () => {
+      syncVisibleMessages();
+      refreshVisibleImportantNotifications();
+    };
 
     const messagePoll = window.setInterval(
       syncVisibleMessages,
       MESSAGE_FALLBACK_POLL_MS,
     );
+    const importantPoll = window.setInterval(
+      refreshVisibleImportantNotifications,
+      IMPORTANT_FALLBACK_POLL_MS,
+    );
 
     const metadataPoll = window.setInterval(() => {
       if (document.visibilityState !== "visible") return;
-      Promise.all([
-        listMembers(session, { includeRemoved: true }),
-        listImportantNotifications(session),
-      ])
-        .then(([mems, important]) => {
+      listMembers(session, { includeRemoved: true })
+        .then((mems) => {
           setMembers(mems);
-          setImportantNotifications(important);
         })
         .catch(() => undefined);
     }, METADATA_FALLBACK_POLL_MS);
 
-    window.addEventListener("focus", syncVisibleMessages);
-    window.addEventListener("online", syncVisibleMessages);
-    document.addEventListener("visibilitychange", syncVisibleMessages);
+    window.addEventListener("focus", refreshVisibleChatData);
+    window.addEventListener("online", refreshVisibleChatData);
+    document.addEventListener("visibilitychange", refreshVisibleChatData);
 
     return () => {
       sb.removeChannel(messageEventsChannel);
       sb.removeChannel(importantChannel);
       sb.removeChannel(membersChannel);
       window.clearInterval(messagePoll);
+      window.clearInterval(importantPoll);
       window.clearInterval(metadataPoll);
-      window.removeEventListener("focus", syncVisibleMessages);
-      window.removeEventListener("online", syncVisibleMessages);
-      document.removeEventListener("visibilitychange", syncVisibleMessages);
+      window.removeEventListener("focus", refreshVisibleChatData);
+      window.removeEventListener("online", refreshVisibleChatData);
+      document.removeEventListener("visibilitychange", refreshVisibleChatData);
       realtimeTimers.forEach((timer) => window.clearTimeout(timer));
       realtimeTimers.clear();
     };

@@ -72,6 +72,15 @@ interface MessageRealtimeEvent {
   created_at: string;
 }
 
+interface ImportantNotificationRealtimeEvent {
+  id: string;
+  family_id: string;
+  notification_id: string;
+  message_id: string;
+  event_type: "add" | "remove";
+  created_at: string;
+}
+
 interface PushReceivedMessage {
   type?: string;
   familyId?: string | null;
@@ -588,17 +597,19 @@ export default function ChatPage() {
         }
       });
 
-    const importantChannel = sb
-      .channel(`important_notifications:${session.family_id}`)
+    const importantEventsChannel = sb
+      .channel(`important_notification_events:${session.family_id}`)
       .on(
         "postgres_changes",
         {
-          event: "*",
+          event: "INSERT",
           schema: "public",
-          table: "important_notifications",
+          table: "important_notification_realtime_events",
           filter: `family_id=eq.${session.family_id}`,
         },
-        () => {
+        (payload) => {
+          const event = payload.new as ImportantNotificationRealtimeEvent;
+          if (event.family_id !== session.family_id) return;
           refreshImportantNotifications(session).catch(() => undefined);
         },
       )
@@ -673,7 +684,7 @@ export default function ChatPage() {
 
     return () => {
       sb.removeChannel(messageEventsChannel);
-      sb.removeChannel(importantChannel);
+      sb.removeChannel(importantEventsChannel);
       sb.removeChannel(membersChannel);
       window.clearInterval(messagePoll);
       window.clearInterval(importantPoll);

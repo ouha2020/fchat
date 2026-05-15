@@ -1,5 +1,5 @@
-const PRECACHE = "family-chat-precache-v6";
-const RUNTIME = "family-chat-runtime-v6";
+const PRECACHE = "family-chat-precache-v7";
+const RUNTIME = "family-chat-runtime-v7";
 
 const PUSH_RECEIVED = "family-chat:push-received";
 
@@ -150,9 +150,11 @@ async function cacheFirst(request) {
 }
 
 async function deliverForegroundOrNotify(title, options) {
-  const visibleClients = await getVisibleWindowClients();
-  if (visibleClients.length > 0) {
-    visibleClients.forEach((client) => {
+  const visibleChatClients = await getVisibleChatWindowClients(
+    options.data.url || "/chat",
+  );
+  if (visibleChatClients.length > 0) {
+    visibleChatClients.forEach((client) => {
       client.postMessage({
         type: PUSH_RECEIVED,
         familyId: options.data.familyId,
@@ -165,11 +167,23 @@ async function deliverForegroundOrNotify(title, options) {
   return self.registration.showNotification(title, options);
 }
 
-async function getVisibleWindowClients() {
+async function getVisibleChatWindowClients(targetUrl) {
+  const targetPath = new URL(targetUrl || "/chat", self.location.origin).pathname;
   const clientList = await clients.matchAll({
     type: "window",
     includeUncontrolled: true,
   });
 
-  return clientList.filter((client) => client.visibilityState === "visible");
+  return clientList.filter((client) => {
+    if (client.visibilityState !== "visible") return false;
+    try {
+      const clientUrl = new URL(client.url);
+      return (
+        clientUrl.origin === self.location.origin &&
+        clientUrl.pathname === targetPath
+      );
+    } catch {
+      return false;
+    }
+  });
 }

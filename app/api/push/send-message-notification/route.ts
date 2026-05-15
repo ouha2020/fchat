@@ -108,6 +108,23 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true, sent: 0 });
     }
 
+    // Skip push for recipients who are currently active in the app —
+    // they receive messages via the realtime subscription. This also
+    // prevents notification banners on iOS where the service worker's
+    // foreground detection can't always suppress them.
+    const ACTIVE_THRESHOLD_MS = 45_000;
+    const { data: activePresence } = await sb
+      .from("user_presence")
+      .select("member_id")
+      .eq("family_id", message.family_id)
+      .eq("is_active", true)
+      .gt("last_seen_at", new Date(Date.now() - ACTIVE_THRESHOLD_MS).toISOString())
+      .in("member_id", recipientIds);
+
+    const activeMemberIds = new Set(
+      (activePresence ?? []).map((p) => p.member_id as string),
+    );
+
     const { data: subscriptions, error: subError } = await sb
       .from("push_subscriptions")
       .select(
@@ -119,7 +136,9 @@ export async function POST(request: Request) {
     if (subError) throw subError;
 
     const targets = ((subscriptions ?? []) as PushSubscriptionRow[]).filter(
-      (sub) => shouldNotify(sub, message.message_type),
+      (sub) =>
+        shouldNotify(sub, message.message_type) &&
+        !activeMemberIds.has(sub.member_id),
     );
     if (targets.length === 0) {
       return NextResponse.json({ ok: true, sent: 0, skipped: "preferences" });

@@ -93,6 +93,40 @@ interface PushReceivedMessage {
   endpoint?: string | null;
 }
 
+function isMessageVisibleToSession(
+  message: Message,
+  activeSession: LocalSession,
+): boolean {
+  return (
+    !message.recipient_member_id ||
+    message.sender_member_id === activeSession.member_id ||
+    message.recipient_member_id === activeSession.member_id
+  );
+}
+
+function filterVisibleMessages(
+  rows: Message[],
+  activeSession: LocalSession,
+): Message[] {
+  return rows.filter((message) =>
+    isMessageVisibleToSession(message, activeSession),
+  );
+}
+
+function removeWhisperParamFromUrl(): void {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  url.searchParams.delete("whisper");
+  window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+}
+
+function setWhisperParamInUrl(memberId: string): void {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  url.searchParams.set("whisper", memberId);
+  window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+}
+
 export default function ChatPage() {
   const router = useRouter();
   const { language, t } = useLanguage();
@@ -101,6 +135,7 @@ export default function ChatPage() {
   const [session, setSession] = useState<LocalSession | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [members, setMembers] = useState<FamilyMember[]>([]);
+  const [whisperTargetId, setWhisperTargetId] = useState<string | null>(null);
   const [importantNotifications, setImportantNotifications] = useState<
     ImportantNotification[]
   >([]);
@@ -294,9 +329,13 @@ export default function ChatPage() {
 
   const handleSyncedMessages = useCallback(
     (next: Message[]) => {
+      const activeSession = sessionRef.current;
+      const visible = activeSession
+        ? filterVisibleMessages(next, activeSession)
+        : next;
       const knownIds = knownMessageIdsRef.current;
-      const unseenMessages = next.filter((message) => !knownIds.has(message.id));
-      setMessages(next);
+      const unseenMessages = visible.filter((message) => !knownIds.has(message.id));
+      setMessages(visible);
       unseenMessages.forEach(handleIncomingMessageSideEffects);
     },
     [handleIncomingMessageSideEffects],
@@ -308,6 +347,7 @@ export default function ChatPage() {
       if (!activeSession) return;
       const incoming = await getMessageById(activeSession, messageId);
       if (!incoming) return;
+      if (!isMessageVisibleToSession(incoming, activeSession)) return;
       const next = await mergeRealtimeMessage(activeSession, incoming);
       handleSyncedMessages(next);
     },
@@ -452,19 +492,19 @@ export default function ChatPage() {
     try {
       const [syncResult, mems, important] = await Promise.all([
         forceFullRefresh
-          ? forceRefreshMessages(session, setMessages)
-          : syncMessages(session, { onMessages: setMessages }),
+          ? forceRefreshMessages(session, handleSyncedMessages)
+          : syncMessages(session, { onMessages: handleSyncedMessages }),
         listMembers(session, { includeRemoved: true }),
         listImportantNotifications(session),
       ]);
-      if (syncResult.messages.length > 0) setMessages(syncResult.messages);
+      if (syncResult.messages.length > 0) handleSyncedMessages(syncResult.messages);
       setMembers(mems);
       setImportantNotifications(important);
       setError(null);
     } catch (err) {
       setError(humanizeError(err, language));
     }
-  }, [language, session]);
+  }, [handleSyncedMessages, language, session]);
 
   function isHeaderActionTarget(target: EventTarget | null): boolean {
     return target instanceof Element && !!target.closest("a,button");
@@ -562,7 +602,7 @@ export default function ChatPage() {
         if (cancelled) return;
         hadCachedMessages = cached.length > 0;
         if (hadCachedMessages) {
-          setMessages(cached);
+          setMessages(filterVisibleMessages(cached, fresh));
           setLoading(false);
         }
 
@@ -580,11 +620,13 @@ export default function ChatPage() {
         const syncResult = await syncMessages(fresh, {
           forceFullRefresh: cached.length === 0,
           onMessages: (next) => {
-            if (!cancelled) setMessages(next);
+            if (!cancelled) setMessages(filterVisibleMessages(next, fresh));
           },
         });
         if (cancelled) return;
-        if (syncResult.messages.length > 0) setMessages(syncResult.messages);
+        if (syncResult.messages.length > 0) {
+          setMessages(filterVisibleMessages(syncResult.messages, fresh));
+        }
         setLoadError(null);
       } catch (err) {
         if (!cancelled) {
@@ -829,10 +871,70 @@ export default function ChatPage() {
     return m;
   }, [members]);
 
+  const whisperTarget = useMemo(() => {
+    if (!whisperTargetId) return null;
+    const target = memberMap.get(whisperTargetId) ?? null;
+    if (!target || target.status !== "active" || target.id === session?.member_id) {
+      return null;
+    }
+    return target;
+  }, [memberMap, session?.member_id, whisperTargetId]);
+
+  useEffect(() => {
+    if (!session || members.length === 0 || typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    const targetId = url.searchParams.get("whisper");
+    if (!targetId) {
+      setWhisperTargetId(null);
+      return;
+    }
+
+    const target = members.find(
+      (member) =>
+        member.id === targetId &&
+        member.status === "active" &&
+        member.id !== session.member_id,
+    );
+    if (!target) {
+      setWhisperTargetId(null);
+      removeWhisperParamFromUrl();
+      toast.info(t("whisperTargetUnavailable"));
+      return;
+    }
+
+    setWhisperTargetId(target.id);
+  }, [members, session, t, toast]);
+
+  function exitWhisperMode() {
+    setWhisperTargetId(null);
+    removeWhisperParamFromUrl();
+  }
+
+  function enterWhisperMode(memberId: string) {
+    if (!session) return;
+    const target = members.find(
+      (member) =>
+        member.id === memberId &&
+        member.status === "active" &&
+        member.id !== session.member_id,
+    );
+    if (!target) {
+      setWhisperTargetId(null);
+      removeWhisperParamFromUrl();
+      toast.info(t("whisperTargetUnavailable"));
+      return;
+    }
+
+    setWhisperTargetId(target.id);
+    setWhisperParamInUrl(target.id);
+  }
+
   const importantByMessageId = useMemo(() => {
     const m = new Map<string, ImportantNotification>();
     importantNotifications.forEach((notification) => {
-      if (!notification.removed_at) m.set(notification.message_id, notification);
+      if (!notification.removed_at && !notification.message?.recipient_member_id) {
+        m.set(notification.message_id, notification);
+      }
     });
     return m;
   }, [importantNotifications]);
@@ -841,7 +943,9 @@ export default function ChatPage() {
     () =>
       importantNotifications.filter(
         (notification) =>
-          !notification.removed_at && !dismissedImportantIds.has(notification.id),
+          !notification.removed_at &&
+          !notification.message?.recipient_member_id &&
+          !dismissedImportantIds.has(notification.id),
       ),
     [dismissedImportantIds, importantNotifications],
   );
@@ -871,6 +975,7 @@ export default function ChatPage() {
       id: partial.id,
       family_id: session.family_id,
       sender_member_id: session.member_id,
+      recipient_member_id: partial.recipient_member_id ?? null,
       message_type: partial.message_type,
       content: partial.content ?? null,
       image_url: partial.image_url ?? null,
@@ -1063,6 +1168,7 @@ export default function ChatPage() {
         content,
         effect_id: eff?.id ?? null,
         effect_caption: eff?.caption ?? null,
+        recipient_member_id: whisperTarget?.id ?? null,
       });
       pushOptimistic({
         id,
@@ -1070,6 +1176,7 @@ export default function ChatPage() {
         content,
         effect_id: eff?.id ?? null,
         effect_caption: eff?.caption ?? null,
+        recipient_member_id: whisperTarget?.id ?? null,
       });
       requestMessagePush(session, id);
       tryTriggerEffect(id, eff);
@@ -1093,12 +1200,14 @@ export default function ChatPage() {
         type: "image",
         image_url: url,
         content: t("chatImageMessage"),
+        recipient_member_id: whisperTarget?.id ?? null,
       });
       pushOptimistic({
         id,
         message_type: "image",
         image_url: url,
         content: t("chatImageMessage"),
+        recipient_member_id: whisperTarget?.id ?? null,
       });
       requestMessagePush(session, id);
     } catch (err) {
@@ -1125,6 +1234,7 @@ export default function ChatPage() {
         audio_url: url,
         audio_duration_ms: result.durationMs,
         content: t("chatAudioMessage"),
+        recipient_member_id: whisperTarget?.id ?? null,
       });
       pushOptimistic({
         id,
@@ -1132,6 +1242,7 @@ export default function ChatPage() {
         audio_url: url,
         audio_duration_ms: result.durationMs,
         content: t("chatAudioMessage"),
+        recipient_member_id: whisperTarget?.id ?? null,
       });
       requestMessagePush(session, id);
     } finally {
@@ -1151,6 +1262,7 @@ export default function ChatPage() {
         latitude: fix.latitude,
         longitude: fix.longitude,
         map_url: mapUrl,
+        recipient_member_id: whisperTarget?.id ?? null,
       });
       pushOptimistic({
         id,
@@ -1159,6 +1271,7 @@ export default function ChatPage() {
         latitude: fix.latitude,
         longitude: fix.longitude,
         map_url: mapUrl,
+        recipient_member_id: whisperTarget?.id ?? null,
       });
       requestMessagePush(session, id);
     } catch (err) {
@@ -1246,7 +1359,7 @@ export default function ChatPage() {
             className="fixed z-50 min-w-44 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 text-sm shadow-xl"
             style={{ left: messageActionMenu.x, top: messageActionMenu.y }}
           >
-            {selectedActionNotification ? (
+            {selectedActionMessage.recipient_member_id ? null : selectedActionNotification ? (
               <button
                 type="button"
                 className="block w-full px-4 py-2 text-left text-slate-700 hover:bg-slate-50"
@@ -1277,7 +1390,7 @@ export default function ChatPage() {
             {selectedActionMessage.message_type !== "system" &&
             !selectedActionMessage.deleted_at &&
             (selectedActionMessage.sender_member_id === session.member_id ||
-              session.is_admin) ? (
+              (!selectedActionMessage.recipient_member_id && session.is_admin)) ? (
               <button
                 type="button"
                 className="block w-full px-4 py-2 text-left text-rose-600 hover:bg-rose-50"
@@ -1412,10 +1525,38 @@ export default function ChatPage() {
           <div
             ref={messagesEndRef}
             aria-hidden
-            style={{ height: "calc(96px + env(safe-area-inset-bottom))" }}
+            style={{
+              height: `calc(${whisperTarget ? 140 : 96}px + env(safe-area-inset-bottom))`,
+            }}
           />
         </div>
       </div>
+
+      {whisperTarget ? (
+        <div
+          className="fixed inset-x-0 z-40 mx-auto flex h-10 w-full max-w-3xl items-center justify-between gap-2 border-t border-violet-100 bg-violet-50/95 px-3 text-sm text-violet-800 shadow-sm backdrop-blur sm:px-4"
+          style={{ bottom: "calc(61px + env(safe-area-inset-bottom))" }}
+        >
+          <div className="flex min-w-0 items-center gap-2">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/ui-icons/whisper-lock.png"
+              alt=""
+              className="h-5 w-5 shrink-0 rounded-md"
+            />
+            <span className="truncate font-semibold">
+              {t("whisperModeLabel", { nickname: whisperTarget.nickname })}
+            </span>
+          </div>
+          <button
+            type="button"
+            className="shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold text-violet-700 transition hover:bg-violet-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-200"
+            onClick={exitWhisperMode}
+          >
+            {t("whisperExit")}
+          </button>
+        </div>
+      ) : null}
 
       <ChatInput
         sending={sending}
@@ -1423,6 +1564,10 @@ export default function ChatPage() {
         onPickImage={handlePickImage}
         onSendLocation={handleSendLocation}
         onSendAudio={handleSendAudio}
+        members={members}
+        currentMemberId={session.member_id}
+        whisperTargetId={whisperTarget?.id ?? null}
+        onSelectWhisper={enterWhisperMode}
       />
     </div>
   );

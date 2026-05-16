@@ -28,6 +28,8 @@ const ERROR_MAP: Record<string, TranslationKey> = {
   important_notification_not_found: "error_important_notification_not_found",
   cannot_delete_system: "error_cannot_delete_system",
   not_allowed: "error_not_allowed",
+  cannot_whisper_self: "error_cannot_whisper_self",
+  private_message_not_allowed: "error_private_message_not_allowed",
   geolocation_unsupported: "error_geolocation_unsupported",
   recording_unsupported: "error_recording_unsupported",
   media_recorder_unsupported: "error_media_recorder_unsupported",

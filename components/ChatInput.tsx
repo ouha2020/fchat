@@ -12,6 +12,7 @@ import {
   type RecordingHandle,
   type RecordingResult,
 } from "@/lib/recordingService";
+import type { FamilyMember } from "@/types/member";
 
 interface Props {
   disabled?: boolean;
@@ -20,6 +21,10 @@ interface Props {
   onPickImage: (file: File) => Promise<void> | void;
   onSendLocation: () => Promise<void> | void;
   onSendAudio: (result: RecordingResult) => Promise<void> | void;
+  members?: FamilyMember[];
+  currentMemberId?: string | null;
+  whisperTargetId?: string | null;
+  onSelectWhisper?: (memberId: string) => void;
 }
 
 type RecordingState =
@@ -57,6 +62,10 @@ export default function ChatInput({
   onPickImage,
   onSendLocation,
   onSendAudio,
+  members = [],
+  currentMemberId = null,
+  whisperTargetId = null,
+  onSelectWhisper,
 }: Props) {
   const { language, t } = useLanguage();
   const dialog = useDialog();
@@ -66,10 +75,13 @@ export default function ChatInput({
     status: "idle",
   });
   const [actionsOpen, setActionsOpen] = useState(false);
+  const [whisperPickerOpen, setWhisperPickerOpen] = useState(false);
   const [privacyNotice, setPrivacyNotice] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
   const moreButtonRef = useRef<HTMLButtonElement>(null);
+  const whisperPickerRef = useRef<HTMLDivElement>(null);
+  const whisperButtonRef = useRef<HTMLButtonElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const recordingStateRef = useRef<RecordingState>(recordingState);
   const voiceButtonRef = useRef<HTMLButtonElement>(null);
@@ -78,6 +90,10 @@ export default function ChatInput({
   const [slideOffActive, setSlideOffActive] = useState(false);
   const isHoldingRef = useRef(false);
   const docPointerCleanupRef = useRef<(() => void) | null>(null);
+  const whisperCandidates = members.filter(
+    (member) => member.status === "active" && member.id !== currentMemberId,
+  );
+  const canPickWhisper = Boolean(onSelectWhisper) && whisperCandidates.length > 0;
 
   useEffect(() => {
     recordingStateRef.current = recordingState;
@@ -149,18 +165,24 @@ export default function ChatInput({
   }, [recordingState.status, t]);
 
   useEffect(() => {
-    if (!actionsOpen) return;
+    if (!actionsOpen && !whisperPickerOpen) return;
 
     function handlePointerDown(event: PointerEvent) {
       const target = event.target as Node | null;
       if (!target) return;
       if (moreMenuRef.current?.contains(target)) return;
       if (moreButtonRef.current?.contains(target)) return;
+      if (whisperPickerRef.current?.contains(target)) return;
+      if (whisperButtonRef.current?.contains(target)) return;
       setActionsOpen(false);
+      setWhisperPickerOpen(false);
     }
 
     function handleEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") setActionsOpen(false);
+      if (event.key === "Escape") {
+        setActionsOpen(false);
+        setWhisperPickerOpen(false);
+      }
     }
 
     document.addEventListener("pointerdown", handlePointerDown);
@@ -169,7 +191,13 @@ export default function ChatInput({
       document.removeEventListener("pointerdown", handlePointerDown);
       document.removeEventListener("keydown", handleEscape);
     };
-  }, [actionsOpen]);
+  }, [actionsOpen, whisperPickerOpen]);
+
+  useEffect(() => {
+    if (whisperPickerOpen && !canPickWhisper) {
+      setWhisperPickerOpen(false);
+    }
+  }, [canPickWhisper, whisperPickerOpen]);
 
   function expandRect(rect: DOMRect, margin: number): DOMRect {
     return new DOMRect(
@@ -236,6 +264,7 @@ export default function ChatInput({
     const trimmed = text.trim();
     if (!trimmed || disabled || sending || recordingState.status !== "idle") return;
     setActionsOpen(false);
+    setWhisperPickerOpen(false);
     await onSendText(trimmed);
     setText("");
   }
@@ -254,6 +283,7 @@ export default function ChatInput({
     isHoldingRef.current = true;
 
     setActionsOpen(false);
+    setWhisperPickerOpen(false);
     setPrivacyNotice(null);
 
     if (!hasRecordingConsent()) {
@@ -368,13 +398,27 @@ export default function ChatInput({
   function handlePickImage() {
     if (disabled || sending || recordingState.status !== "idle") return;
     setActionsOpen(false);
+    setWhisperPickerOpen(false);
     fileRef.current?.click();
   }
 
   function handleSendLocation() {
     if (disabled || sending || recordingState.status !== "idle") return;
     setActionsOpen(false);
+    setWhisperPickerOpen(false);
     void onSendLocation();
+  }
+
+  function handleOpenWhisperPicker() {
+    if (disabled || sending || recordingState.status !== "idle" || !canPickWhisper) return;
+    setActionsOpen(false);
+    setWhisperPickerOpen(true);
+  }
+
+  function handleSelectWhisper(memberId: string) {
+    onSelectWhisper?.(memberId);
+    setActionsOpen(false);
+    setWhisperPickerOpen(false);
   }
 
   function recordingStartErrorMessage(err: unknown): string {
@@ -528,6 +572,66 @@ export default function ChatInput({
             disabled={disabled || sending}
             onClick={handleSendLocation}
           />
+          <button
+            ref={whisperButtonRef}
+            type="button"
+            className={iconButtonClass}
+            style={{ backgroundImage: "url(/ui-icons/whisper-lock.png)" }}
+            aria-label={t("inputWhisper")}
+            title={canPickWhisper ? t("inputWhisper") : t("inputWhisperNoMembers")}
+            role="menuitem"
+            disabled={disabled || sending || !canPickWhisper}
+            onClick={handleOpenWhisperPicker}
+          />
+        </div>
+      ) : null}
+      {whisperPickerOpen ? (
+        <div
+          ref={whisperPickerRef}
+          className="absolute bottom-full left-3 right-3 mb-2 max-h-72 overflow-hidden rounded-2xl border border-violet-100 bg-white/95 shadow-xl shadow-violet-100/70 backdrop-blur sm:left-4 sm:right-4"
+          role="dialog"
+          aria-label={t("inputWhisperPick")}
+        >
+          <div className="flex items-center gap-2 border-b border-violet-50 px-3 py-2 text-sm font-semibold text-violet-800">
+            <span
+              aria-hidden
+              className="h-5 w-5 shrink-0 rounded-md bg-cover bg-center"
+              style={{ backgroundImage: "url(/ui-icons/whisper-lock.png)" }}
+            />
+            <span className="truncate">{t("inputWhisperPick")}</span>
+          </div>
+          <div className="max-h-52 overflow-y-auto py-1">
+            {whisperCandidates.map((member) => (
+              <button
+                key={member.id}
+                type="button"
+                className="flex min-h-11 w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-800 transition hover:bg-violet-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-200"
+                onClick={() => handleSelectWhisper(member.id)}
+              >
+                <span
+                  aria-hidden
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-violet-100 text-xs font-bold text-violet-700"
+                >
+                  {member.nickname.trim().slice(0, 1) || "?"}
+                </span>
+                <span className="min-w-0 flex-1 truncate font-semibold">
+                  {member.nickname}
+                </span>
+                {member.id === whisperTargetId ? (
+                  <span className="shrink-0 rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-700">
+                    {t("inputWhisperCurrent")}
+                  </span>
+                ) : null}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            className="w-full border-t border-slate-100 px-3 py-2 text-sm font-semibold text-slate-500 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-slate-200"
+            onClick={() => setWhisperPickerOpen(false)}
+          >
+            {t("commonCancel")}
+          </button>
         </div>
       ) : null}
       {privacyNotice ? (
@@ -557,7 +661,10 @@ export default function ChatInput({
           disabled={disabled || sending}
           aria-haspopup="menu"
           aria-expanded={actionsOpen}
-          onClick={() => setActionsOpen((open) => !open)}
+          onClick={() => {
+            setWhisperPickerOpen(false);
+            setActionsOpen((open) => !open);
+          }}
         />
         <button
           ref={voiceButtonRef}

@@ -16,6 +16,7 @@ interface ImportantNotificationRow {
   created_at: string;
   message_family_id: string;
   message_sender_member_id: string | null;
+  message_recipient_member_id: string | null;
   message_type: MessageType;
   message_content: string | null;
   message_image_url: string | null;
@@ -57,6 +58,7 @@ export async function listImportantNotifications(
           id: row.message_id,
           family_id: row.message_family_id,
           sender_member_id: row.message_sender_member_id,
+          recipient_member_id: row.message_recipient_member_id,
           message_type: row.message_type,
           content: row.message_content,
           image_url: row.message_image_url,

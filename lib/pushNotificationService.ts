@@ -188,6 +188,94 @@ export function requestMessagePush(
   }).catch(() => undefined);
 }
 
+export interface PushDiagnostics {
+  permission: NotificationPermission | "unsupported";
+  swRegistered: boolean;
+  subscriptionExists: boolean;
+  subscriptionEndpoint: string | null;
+  subscriptionExpiration: number | null;
+  platform: PushPlatform;
+  isStandalone: boolean;
+  serverSubscriptions: ServerSubscriptionInfo[];
+  presence: { current_page: string | null; is_active: boolean; last_seen_at: string | null } | null;
+}
+
+export interface ServerSubscriptionInfo {
+  id: string;
+  endpoint: string;
+  platform: string;
+  enabled: boolean;
+  messages_enabled: boolean;
+  location_enabled: boolean;
+  important_enabled: boolean;
+  last_notified_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function fetchPushDiagnostics(
+  session: LocalSession,
+): Promise<PushDiagnostics> {
+  const permission =
+    typeof Notification === "undefined" ? "unsupported" : Notification.permission;
+
+  let swRegistered = false;
+  let subscriptionExists = false;
+  let subscriptionEndpoint: string | null = null;
+  let subscriptionExpiration: number | null = null;
+
+  if ("serviceWorker" in navigator) {
+    try {
+      const reg = await navigator.serviceWorker.getRegistration("/");
+      swRegistered = Boolean(reg);
+      if (reg) {
+        const sub = await reg.pushManager.getSubscription();
+        subscriptionExists = Boolean(sub);
+        if (sub) {
+          subscriptionEndpoint = sub.endpoint;
+          subscriptionExpiration = sub.expirationTime ?? null;
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  let serverSubscriptions: ServerSubscriptionInfo[] = [];
+  let presence: PushDiagnostics["presence"] = null;
+
+  try {
+    const params = new URLSearchParams({
+      memberId: session.member_id,
+      memberToken: session.member_token,
+    });
+    const resp = await fetch(`/api/push/diagnostics?${params.toString()}`);
+    if (resp.ok) {
+      const data = (await resp.json()) as {
+        ok: boolean;
+        subscriptions: ServerSubscriptionInfo[];
+        presence: PushDiagnostics["presence"];
+      };
+      serverSubscriptions = data.subscriptions ?? [];
+      presence = data.presence ?? null;
+    }
+  } catch {
+    // ignore
+  }
+
+  return {
+    permission,
+    swRegistered,
+    subscriptionExists,
+    subscriptionEndpoint,
+    subscriptionExpiration,
+    platform: detectPlatform(),
+    isStandalone: isStandalonePwa(),
+    serverSubscriptions,
+    presence,
+  };
+}
+
 export function pushNotificationErrorMessage(
   err: unknown,
   t: (key: TranslationKey) => string,
@@ -224,17 +312,65 @@ async function ensureServiceWorker(): Promise<ServiceWorkerRegistration> {
   return navigator.serviceWorker.ready;
 }
 
+const HEALTH_CHECK_DEBOUNCE_MS = 300_000; // 5 minutes between re-saves
+let lastHealthSaveAt = 0;
+
+export async function checkPushSubscriptionHealth(
+  session: LocalSession,
+): Promise<"ok" | "resubscribed" | "expired" | "no_subscription"> {
+  if (!("serviceWorker" in navigator)) return "no_subscription";
+
+  const registration = await navigator.serviceWorker.getRegistration("/");
+  if (!registration) return "no_subscription";
+
+  const subscription = await registration.pushManager.getSubscription();
+  if (!subscription) return "no_subscription";
+
+  if (subscription.expirationTime && subscription.expirationTime < Date.now()) {
+    await savePushSubscriptionStatus(session, subscription.endpoint, false);
+    return "expired";
+  }
+
+  const now = Date.now();
+  if (now - lastHealthSaveAt < HEALTH_CHECK_DEBOUNCE_MS) {
+    return "ok";
+  }
+  lastHealthSaveAt = now;
+
+  const prefs = getPushPreferences(session);
+  await savePushSubscription(session, subscription, prefs);
+  return "ok";
+}
+
+async function savePushSubscriptionStatus(
+  session: LocalSession,
+  endpoint: string,
+  enabled: boolean,
+): Promise<void> {
+  if (!enabled) {
+    await fetch("/api/push/unsubscribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        memberId: session.member_id,
+        memberToken: session.member_token,
+        endpoint,
+      }),
+    }).catch(() => undefined);
+  }
+}
+
 function prefKey(session: LocalSession): string {
   return `${PREF_PREFIX}${session.family_id}:${session.member_id}`;
 }
 
 function toNewMessagePushPreferences(
-  _preferences: PushPreferences,
+  preferences: PushPreferences,
 ): PushPreferences {
   return {
-    messagesEnabled: true,
-    locationEnabled: true,
-    importantEnabled: false,
+    messagesEnabled: preferences.messagesEnabled,
+    locationEnabled: preferences.locationEnabled,
+    importantEnabled: preferences.importantEnabled,
   };
 }
 

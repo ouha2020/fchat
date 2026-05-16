@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
+import { useDialog } from "@/components/Dialog";
+import { useToast } from "@/components/Toast";
 import { clearSession, loadSession, saveSession, updateSession, type LocalSession } from "@/lib/authLocal";
 import { humanizeError } from "@/lib/errors";
 import {
@@ -12,12 +14,16 @@ import {
   leaveFamily,
   resetFamilyCode,
   setJoinEnabled,
+  updateAdminPassword,
   updateFamilyName,
   validateMember,
 } from "@/lib/familyService";
 import { LANGUAGE_OPTIONS } from "@/lib/i18n";
 import {
+  fetchPushDiagnostics,
   pushNotificationErrorMessage,
+  type PushDiagnostics,
+  type ServerSubscriptionInfo,
 } from "@/lib/pushNotificationService";
 import { isSupabaseConfigured } from "@/lib/supabaseClient";
 import { usePushNotificationControls } from "@/lib/usePushNotificationControls";
@@ -25,6 +31,8 @@ import { usePushNotificationControls } from "@/lib/usePushNotificationControls";
 export default function SettingsPage() {
   const router = useRouter();
   const { language, setLanguage, t } = useLanguage();
+  const dialog = useDialog();
+  const toast = useToast();
   const [session, setSession] = useState<LocalSession | null>(null);
   const [joinOn, setJoinOn] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -32,6 +40,53 @@ export default function SettingsPage() {
   const [retryNonce, setRetryNonce] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
   const push = usePushNotificationControls(session);
+  const [diagnostics, setDiagnostics] = useState<PushDiagnostics | null>(null);
+  const [diagLoading, setDiagLoading] = useState(false);
+
+  async function loadDiagnostics() {
+    if (!session) return;
+    setDiagLoading(true);
+    try {
+      setDiagnostics(await fetchPushDiagnostics(session));
+    } catch {
+      // ignore
+    } finally {
+      setDiagLoading(false);
+    }
+  }
+
+  async function handleTestNotification() {
+    if (!session) return;
+    setBusy("test");
+    try {
+      let shown = false;
+      if ("serviceWorker" in navigator) {
+        const reg = await navigator.serviceWorker.getRegistration("/");
+        if (reg?.showNotification) {
+          await reg.showNotification(t("settingsPushTitle"), {
+            body: t("settingsPushDiagnosticsTestSuccess"),
+            icon: "/icon.png",
+            badge: "/icon.png",
+            tag: "family-chat-test",
+          });
+          shown = true;
+        }
+      }
+      if (!shown) {
+        // eslint-disable-next-line no-new
+        new Notification(t("settingsPushTitle"), {
+          body: t("settingsPushDiagnosticsTestSuccess"),
+          icon: "/icon.png",
+          tag: "family-chat-test",
+        });
+      }
+      toast.success(t("settingsPushDiagnosticsTestSuccess"));
+    } catch {
+      toast.error(t("settingsPushDiagnosticsTestFailed"));
+    } finally {
+      setBusy(null);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -96,18 +151,29 @@ export default function SettingsPage() {
     };
   }, [language, retryNonce, router, t]);
 
+  useEffect(() => {
+    if (session && push.support?.supported) {
+      void loadDiagnostics();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, push.enabled, push.support?.supported]);
+
   async function withAdmin(action: string, fn: (password: string) => Promise<void>) {
     if (!session?.is_admin) {
-      alert(t("settingsAdminOnly"));
+      toast.info(t("settingsAdminOnly"));
       return;
     }
-    const password = window.prompt(t("settingsAdminPasswordPrompt", { action }));
+    const password = await dialog.prompt({
+      title: t("settingsAdminPasswordPrompt", { action }),
+      placeholder: "输入管理员密码",
+      validate: (v) => (!v ? "请输入密码" : null),
+    });
     if (!password) return;
     setBusy(action);
     try {
       await fn(password);
     } catch (err) {
-      alert(humanizeError(err, language));
+      toast.error(humanizeError(err, language));
     } finally {
       setBusy(null);
     }
@@ -115,7 +181,12 @@ export default function SettingsPage() {
 
   async function handleRename() {
     if (!session) return;
-    const newName = window.prompt(t("settingsRenamePrompt"), session.family_name);
+    const newName = await dialog.prompt({
+      title: t("settingsRenameFamily"),
+      message: t("settingsRenamePrompt"),
+      defaultValue: session.family_name,
+      validate: (v) => (!v.trim() ? "名称不能为空" : null),
+    });
     if (!newName || !newName.trim()) return;
     await withAdmin(t("settingsRenameFamily"), async (password) => {
       await updateFamilyName(session, password, newName.trim());
@@ -126,7 +197,11 @@ export default function SettingsPage() {
 
   async function handleResetCode() {
     if (!session) return;
-    const ok = window.confirm(t("settingsResetCodeConfirm"));
+    const ok = await dialog.confirm({
+      title: t("settingsResetCode"),
+      message: t("settingsResetCodeConfirm"),
+      danger: true,
+    });
     if (!ok) return;
     await withAdmin(t("settingsResetCode"), async (password) => {
       const newCode = await resetFamilyCode(session, password);
@@ -143,9 +218,28 @@ export default function SettingsPage() {
     });
   }
 
+  async function handleChangeAdminPassword() {
+    if (!session) return;
+    const result = await dialog.adminPassword();
+    if (!result) return;
+    setBusy("changePassword");
+    try {
+      await updateAdminPassword(session, result.currentPassword, result.newPassword);
+      toast.success(t("settingsAdminPasswordChanged"));
+    } catch (err) {
+      toast.error(humanizeError(err, language));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function handleLeave() {
     if (!session) return;
-    const ok = window.confirm(t("settingsLeaveConfirm"));
+    const ok = await dialog.confirm({
+      title: t("settingsLeaveFamily"),
+      message: t("settingsLeaveConfirm"),
+      danger: true,
+    });
     if (!ok) return;
     setBusy("leave");
     try {
@@ -153,14 +247,17 @@ export default function SettingsPage() {
       clearSession();
       router.replace("/");
     } catch (err) {
-      alert(humanizeError(err, language));
+      toast.error(humanizeError(err, language));
     } finally {
       setBusy(null);
     }
   }
 
-  function handleSwitch() {
-    const ok = window.confirm(t("settingsSwitchConfirm"));
+  async function handleSwitch() {
+    const ok = await dialog.confirm({
+      title: t("settingsSwitchFamily"),
+      message: t("settingsSwitchConfirm"),
+    });
     if (!ok) return;
     clearSession();
     router.replace("/");
@@ -171,9 +268,9 @@ export default function SettingsPage() {
     setBusy("push");
     try {
       await push.enable();
-      alert(t("settingsPushEnabledAlert"));
+      toast.success(t("settingsPushEnabledAlert"));
     } catch (err) {
-      alert(pushNotificationErrorMessage(err, t));
+      toast.error(pushNotificationErrorMessage(err, t));
     } finally {
       setBusy(null);
     }
@@ -184,9 +281,9 @@ export default function SettingsPage() {
     setBusy("push");
     try {
       await push.disable();
-      alert(t("settingsPushDisabledAlert"));
+      toast.success(t("settingsPushDisabledAlert"));
     } catch {
-      alert(t("settingsPushDisableFailed"));
+      toast.error(t("settingsPushDisableFailed"));
     } finally {
       setBusy(null);
     }
@@ -357,6 +454,115 @@ export default function SettingsPage() {
         )}
       </section>
 
+      {push.support?.supported && diagnostics ? (
+        <section className="card mt-4 flex flex-col gap-3">
+          <h2 className="text-base font-semibold">{t("settingsPushDiagnostics")}</h2>
+
+          <DiagRow
+            label={t("settingsPushDiagnosticsPermission")}
+            value={
+              diagnostics.permission === "granted"
+                ? t("settingsPushDiagnosticsPermissionGranted")
+                : diagnostics.permission === "denied"
+                  ? t("settingsPushDiagnosticsPermissionDenied")
+                  : t("settingsPushDiagnosticsPermissionDefault")
+            }
+            ok={diagnostics.permission === "granted"}
+          />
+          <DiagRow
+            label={t("settingsPushDiagnosticsSW")}
+            value={
+              diagnostics.swRegistered
+                ? t("settingsPushDiagnosticsSWRegistered")
+                : t("settingsPushDiagnosticsSWNotRegistered")
+            }
+            ok={diagnostics.swRegistered}
+          />
+          <DiagRow
+            label={t("settingsPushDiagnosticsSubscription")}
+            value={
+              diagnostics.subscriptionExists
+                ? t("settingsPushDiagnosticsSubscriptionActive")
+                : t("settingsPushDiagnosticsSubscriptionNone")
+            }
+            ok={diagnostics.subscriptionExists}
+          />
+          <DiagRow
+            label={t("settingsPushDiagnosticsEndpoint")}
+            value={
+              diagnostics.serverSubscriptions.some(
+                (s) => s.endpoint === diagnostics.subscriptionEndpoint,
+              )
+                ? t("settingsPushDiagnosticsEndpointSaved")
+                : diagnostics.subscriptionEndpoint
+                  ? t("settingsPushDiagnosticsEndpointNotSaved")
+                  : "—"
+            }
+            ok={diagnostics.serverSubscriptions.some(
+              (s) => s.endpoint === diagnostics.subscriptionEndpoint,
+            )}
+          />
+          <DiagRow
+            label={t("settingsPushDiagnosticsPlatform")}
+            value={diagnostics.platform}
+            ok={true}
+          />
+          <DiagRow
+            label={t("settingsPushDiagnosticsLastNotified")}
+            value={
+              diagnostics.serverSubscriptions[0]?.last_notified_at
+                ? new Date(
+                    diagnostics.serverSubscriptions[0].last_notified_at,
+                  ).toLocaleString()
+                : t("settingsPushDiagnosticsNever")
+            }
+            ok={true}
+          />
+          {diagnostics.presence ? (
+            <DiagRow
+              label={t("settingsPushDiagnosticsPresence")}
+              value={
+                diagnostics.presence.is_active
+                  ? t("commonYes")
+                  : t("commonNo")
+              }
+              ok={diagnostics.presence.is_active}
+            />
+          ) : null}
+
+          <button
+            type="button"
+            className="btn-secondary mt-1"
+            disabled={!!busy || diagLoading}
+            onClick={handleTestNotification}
+          >
+            {busy === "test"
+              ? t("commonLoading")
+              : t("settingsPushDiagnosticsTestButton")}
+          </button>
+
+          {diagnostics.platform === "android" ? (
+            <div className="rounded-xl bg-brand-50 p-3 text-sm leading-6 text-slate-700">
+              <p className="font-medium text-slate-900">
+                {t("settingsPushDiagnosticsAndroidTip")}
+              </p>
+              <p className="mt-1 text-slate-600">
+                {t("settingsPushDiagnosticsAndroidTipText")}
+              </p>
+            </div>
+          ) : null}
+
+          <button
+            type="button"
+            className="text-sm text-brand-600 hover:underline self-start"
+            onClick={loadDiagnostics}
+            disabled={diagLoading}
+          >
+            {diagLoading ? t("commonLoading") : "↻ " + t("chatRetry")}
+          </button>
+        </section>
+      ) : null}
+
       {session.is_admin ? (
         <section className="card mt-4 flex flex-col gap-3">
           <h2 className="text-base font-semibold">{t("settingsAdminActions")}</h2>
@@ -375,6 +581,16 @@ export default function SettingsPage() {
             onClick={handleResetCode}
           >
             {t("settingsResetCode")}
+          </button>
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={!!busy}
+            onClick={handleChangeAdminPassword}
+          >
+            {busy === "changePassword"
+              ? t("commonLoading")
+              : t("settingsChangeAdminPassword")}
           </button>
           <label className="flex items-center justify-between rounded-xl px-1 py-2">
             <span className="text-sm text-slate-700">{t("settingsAllowJoin")}</span>
@@ -417,6 +633,29 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
     <div className="flex items-center justify-between gap-3">
       <span className="text-sm text-slate-500">{label}</span>
       <span className="text-sm font-medium text-slate-800">{value}</span>
+    </div>
+  );
+}
+
+function DiagRow({
+  label,
+  value,
+  ok,
+}: {
+  label: string;
+  value: string;
+  ok: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-sm text-slate-500">{label}</span>
+      <span
+        className={`text-sm font-medium ${
+          ok ? "text-emerald-700" : "text-rose-600"
+        }`}
+      >
+        {value}
+      </span>
     </div>
   );
 }

@@ -64,6 +64,35 @@ self.addEventListener("fetch", (event) => {
   }
 });
 
+self.addEventListener("pushsubscriptionchange", (event) => {
+  event.waitUntil(
+    (async () => {
+      try {
+        const newSubscription = await self.registration.pushManager.subscribe(
+          event.oldSubscription.options,
+        );
+        const clients = await self.clients.matchAll({ type: "window" });
+        clients.forEach((client) => {
+          client.postMessage({
+            type: "family-chat:subscription-changed",
+            oldEndpoint: event.oldSubscription?.endpoint ?? null,
+            newEndpoint: newSubscription.endpoint,
+          });
+        });
+      } catch {
+        self.clients.matchAll({ type: "window" }).then((windowClients) => {
+          windowClients.forEach((client) => {
+            client.postMessage({
+              type: "family-chat:subscription-expired",
+              endpoint: event.oldSubscription?.endpoint ?? null,
+            });
+          });
+        });
+      }
+    })(),
+  );
+});
+
 self.addEventListener("push", (event) => {
   const data = readPushData(event);
   const title = data.title || "\u5bb6\u5ead\u804a\u5929";
@@ -85,16 +114,31 @@ self.addEventListener("push", (event) => {
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const targetUrl = event.notification.data?.url || "/chat";
+  const data = event.notification.data || {};
+  const baseUrl = data.url || "/chat";
+  const messageId = data.messageId || null;
+  const targetUrl = messageId
+    ? `${baseUrl}?mid=${encodeURIComponent(messageId)}`
+    : baseUrl;
   const absoluteUrl = new URL(targetUrl, self.location.origin).href;
+  const targetPath = new URL(targetUrl, self.location.origin).pathname;
 
   event.waitUntil(
     clients
       .matchAll({ type: "window", includeUncontrolled: true })
       .then((clientList) => {
         for (const client of clientList) {
-          if (client.url === absoluteUrl && "focus" in client) {
-            return client.focus();
+          try {
+            const clientUrl = new URL(client.url);
+            if (
+              clientUrl.origin === self.location.origin &&
+              clientUrl.pathname === targetPath &&
+              "focus" in client
+            ) {
+              return client.focus();
+            }
+          } catch {
+            // ignore
           }
         }
         if (clients.openWindow) {

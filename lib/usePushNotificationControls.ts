@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import type { LocalSession } from "@/lib/authLocal";
 import {
+  checkPushSubscriptionHealth,
   DEFAULT_PUSH_PREFERENCES,
   getCurrentPushSubscription,
   getPushPreferences,
@@ -34,7 +35,11 @@ export function usePushNotificationControls(session: LocalSession | null) {
     setSupport(getPushSupportState());
     setPreferences(getPushPreferences(session));
     try {
-      setEnabled(Boolean(await getCurrentPushSubscription()));
+      const hasSubscription = Boolean(await getCurrentPushSubscription());
+      setEnabled(hasSubscription);
+      if (hasSubscription) {
+        void checkPushSubscriptionHealth(session).catch(() => undefined);
+      }
     } catch {
       setEnabled(false);
     }

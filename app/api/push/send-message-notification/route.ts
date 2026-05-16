@@ -17,6 +17,7 @@ import {
   toWebPushSubscription,
   type StoredPushSubscription,
 } from "@/lib/webPushServer";
+import type { PushSubscription, SendResult } from "web-push";
 import type { MessageType } from "@/types/message";
 
 export const runtime = "nodejs";
@@ -156,14 +157,13 @@ export async function POST(request: Request) {
 
     const results = await Promise.allSettled(
       targets.map((sub) =>
-        webPush.sendNotification(toWebPushSubscription(sub), payload, {
-          TTL: 60 * 60,
-        }),
+        sendWithRetry(webPush, toWebPushSubscription(sub), payload),
       ),
     );
 
     const sentIds: string[] = [];
     const goneIds: string[] = [];
+    const failedEndpoints: string[] = [];
     results.forEach((result, index) => {
       const sub = targets[index];
       if (!sub) return;
@@ -172,7 +172,13 @@ export async function POST(request: Request) {
       } else if (isGonePushError(result.reason)) {
         goneIds.push(sub.id);
       } else {
-        console.warn("[push send failed]", pushErrorStatus(result.reason));
+        console.warn(
+          "[push send failed]",
+          pushErrorStatus(result.reason),
+          "endpoint:",
+          sub.endpoint.slice(0, 60),
+        );
+        failedEndpoints.push(sub.endpoint);
       }
     });
 
@@ -189,10 +195,40 @@ export async function POST(request: Request) {
         .in("id", goneIds);
     }
 
+    // Write delivery logs (fire-and-forget, best-effort).
+    const logEntries = targets.map((sub) => {
+      const isSent = sentIds.includes(sub.id);
+      const isGone = goneIds.includes(sub.id);
+      let logStatus: "sent" | "gone" | "failed" = "failed";
+      let retries = 0;
+      if (isSent) {
+        logStatus = "sent";
+      } else if (isGone) {
+        logStatus = "gone";
+      } else {
+        retries = MAX_RETRIES;
+      }
+      return {
+        family_id: message.family_id,
+        message_id: message.id,
+        subscription_id: sub.id,
+        member_id: sub.member_id,
+        endpoint: sub.endpoint,
+        status: logStatus,
+        retry_count: retries,
+        created_at: requestedAt,
+      };
+    });
+    sb.from("push_delivery_logs").insert(logEntries).then(
+      () => undefined,
+      () => undefined,
+    );
+
     return NextResponse.json({
       ok: true,
       sent: sentIds.length,
       disabled: goneIds.length,
+      failed: failedEndpoints.length,
     });
   } catch (error) {
     if (error instanceof ApiRequestError) {
@@ -214,4 +250,30 @@ function shouldNotify(
   if (messageType === "location" && !sub.location_enabled) return false;
   if (messageType === "system") return false;
   return true;
+}
+
+const MAX_RETRIES = 3;
+const RETRY_BASE_MS = 1000;
+
+async function sendWithRetry(
+  wp: ReturnType<typeof getWebPush>,
+  subscription: PushSubscription,
+  payload: string,
+): Promise<SendResult> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
+    if (attempt > 0) {
+      const delay = RETRY_BASE_MS * 2 ** (attempt - 1);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+    try {
+      return await wp.sendNotification(subscription, payload, {
+        TTL: 60 * 60,
+      });
+    } catch (error: unknown) {
+      lastError = error;
+      if (isGonePushError(error)) throw error;
+    }
+  }
+  throw lastError;
 }

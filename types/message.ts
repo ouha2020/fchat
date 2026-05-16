@@ -14,6 +14,7 @@ export interface Message {
   id: string;
   family_id: string;
   sender_member_id: string | null;
+  recipient_member_id: string | null;
   message_type: MessageType;
   content: string | null;
   image_url: string | null;

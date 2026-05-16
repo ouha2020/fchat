@@ -32,6 +32,7 @@ interface MessageRow {
   id: string;
   family_id: string;
   sender_member_id: string | null;
+  recipient_member_id: string | null;
   message_type: MessageType;
   deleted_at: string | null;
   push_requested_at: string | null;
@@ -67,7 +68,7 @@ export async function POST(request: Request) {
     const { data: message, error: messageError } = await sb
       .from("messages")
       .select(
-        "id, family_id, sender_member_id, message_type, deleted_at, push_requested_at",
+        "id, family_id, sender_member_id, recipient_member_id, message_type, deleted_at, push_requested_at",
       )
       .eq("id", body.messageId)
       .maybeSingle<MessageRow>();
@@ -96,15 +97,21 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true, skipped: "already_requested" });
     }
 
-    const { data: members, error: memberError } = await sb
+    const isWhisper = Boolean(message.recipient_member_id);
+    const memberQuery = sb
       .from("family_members")
       .select("id")
       .eq("family_id", message.family_id)
-      .eq("status", "active")
-      .neq("id", sender.member_id);
+      .eq("status", "active");
+
+    const { data: members, error: memberError } = isWhisper
+      ? await memberQuery.eq("id", message.recipient_member_id)
+      : await memberQuery.neq("id", sender.member_id);
     if (memberError) throw memberError;
 
-    const recipientIds = (members ?? []).map((m) => m.id as string);
+    const recipientIds = (members ?? [])
+      .map((m) => m.id as string)
+      .filter((id) => id !== sender.member_id);
     if (recipientIds.length === 0) {
       return NextResponse.json({ ok: true, sent: 0 });
     }
@@ -148,7 +155,11 @@ export async function POST(request: Request) {
 
     const payload = JSON.stringify({
       title: "\u5bb6\u5ead\u804a\u5929",
-      body: buildMessagePushBody(sender.nickname, message.message_type),
+      body: buildMessagePushBody(
+        sender.nickname,
+        message.message_type,
+        isWhisper,
+      ),
       url: "/chat",
       familyId: message.family_id,
       messageId: message.id,

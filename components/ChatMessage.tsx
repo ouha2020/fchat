@@ -57,6 +57,7 @@ export default function ChatMessage({
   const highlightClass = highlighted
     ? "important-message-highlight"
     : "";
+  const isPrivate = !!message.recipient_member_id;
 
   if (message.message_type === "system") {
     const tone = getSystemMessageTone(message);
@@ -103,6 +104,7 @@ export default function ChatMessage({
         }`}
       >
         <div className="flex items-center gap-1.5 text-xs text-slate-500">
+          {isPrivate ? <WhisperBadge /> : null}
           <span className="font-medium text-slate-700">
             {sender?.nickname ?? t("commonUnknownMember")}
           </span>
@@ -123,6 +125,7 @@ export default function ChatMessage({
           highlighted={highlighted}
           actionHandlers={actionHandlers}
           actionClass={actionClass}
+          isPrivate={isPrivate}
           onReplayEffect={
             message.effect_id && onReplayEffect
               ? () => onReplayEffect(message)
@@ -197,6 +200,7 @@ function useLongPress(
 function Bubble({
   message,
   isMine,
+  isPrivate,
   highlighted,
   actionHandlers,
   actionClass,
@@ -204,6 +208,7 @@ function Bubble({
 }: {
   message: Message;
   isMine: boolean;
+  isPrivate: boolean;
   highlighted?: boolean;
   actionHandlers: ReturnType<typeof useLongPress>;
   actionClass: string;
@@ -211,7 +216,11 @@ function Bubble({
 }) {
   const { t } = useLanguage();
   const base = `rounded-2xl px-3.5 py-2.5 text-sm shadow-sm ${
-    isMine
+    isPrivate && isMine
+      ? "bg-violet-500 text-white ring-1 ring-violet-300"
+      : isPrivate
+        ? "bg-violet-50 text-slate-800 ring-1 ring-violet-200"
+        : isMine
       ? "bg-brand-500 text-white"
       : "bg-white text-slate-800 ring-1 ring-slate-100"
   }`;
@@ -229,8 +238,13 @@ function Bubble({
     return (
       <div
         {...actionHandlers}
-        className={`overflow-hidden rounded-2xl ${actionClass} ${highlightClass}`}
+        className={`relative overflow-hidden rounded-2xl ${isPrivate ? "ring-2 ring-violet-200" : ""} ${actionClass} ${highlightClass}`}
       >
+        {isPrivate ? (
+          <span className="absolute left-2 top-2 z-10 rounded-full bg-white/90 px-2 py-0.5 text-[11px] font-semibold text-violet-700 shadow-sm">
+            {t("messageWhisperLabel")}
+          </span>
+        ) : null}
         <Link
           href={previewHref}
           className="block"
@@ -255,7 +269,16 @@ function Bubble({
     const audioUrl = safeHttpUrl(message.audio_url);
     if (!audioUrl) return null;
     return (
-      <div {...actionHandlers} className={actionClass}>
+      <div
+        {...actionHandlers}
+        className={`${isPrivate ? "rounded-2xl bg-violet-50 p-1 ring-1 ring-violet-200" : ""} ${actionClass}`}
+      >
+        {isPrivate ? (
+          <div className="mb-1 flex items-center gap-1 px-2 pt-1 text-[11px] font-semibold text-violet-700">
+            <WhisperIcon />
+            <span>{t("messageWhisperLabel")}</span>
+          </div>
+        ) : null}
         <AudioBubble
           messageId={message.id}
           url={audioUrl}
@@ -290,6 +313,12 @@ function Bubble({
         {...actionHandlers}
         className={`${base} flex min-w-40 max-w-56 flex-col gap-1 no-underline ${actionClass} ${highlightClass}`}
       >
+        {isPrivate ? (
+          <span className="mb-0.5 flex items-center gap-1 text-[11px] font-semibold opacity-90">
+            <WhisperIcon />
+            <span>{t("messageWhisperLabel")}</span>
+          </span>
+        ) : null}
         <span className="flex items-center gap-1.5 text-sm font-semibold">
           <span aria-hidden className="text-xs">
             📍
@@ -320,6 +349,7 @@ function Bubble({
       title={isEffect ? t("messageReplayEffect") : undefined}
       className={`${base} flex items-center gap-1.5 whitespace-pre-wrap break-words ${actionClass} ${effectClass} ${highlightClass}`}
     >
+      {isPrivate ? <WhisperIcon /> : null}
       <span>{message.content}</span>
       {isEffect ? (
         <span aria-hidden className="text-xs opacity-70">
@@ -327,5 +357,27 @@ function Bubble({
         </span>
       ) : null}
     </div>
+  );
+}
+
+function WhisperBadge() {
+  const { t } = useLanguage();
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-violet-50 px-1.5 py-0.5 text-[11px] font-semibold text-violet-700 ring-1 ring-violet-100">
+      <WhisperIcon />
+      <span>{t("messageWhisperLabel")}</span>
+    </span>
+  );
+}
+
+function WhisperIcon() {
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src="/ui-icons/whisper-lock.png"
+      alt=""
+      className="h-3.5 w-3.5 shrink-0 rounded-[3px]"
+      draggable={false}
+    />
   );
 }

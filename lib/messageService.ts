@@ -82,6 +82,7 @@ interface SendMessageInput {
   map_url?: string | null;
   effect_id?: string | null;
   effect_caption?: string | null;
+  recipient_member_id?: string | null;
 }
 
 export async function sendMessage(
@@ -104,8 +105,7 @@ export async function sendMessage(
     p_map_url: input.map_url ?? null,
     p_effect_id: input.effect_id ?? null,
     p_effect_caption: input.effect_caption ?? null,
-    p_sticker_id: null,
-    p_sticker_url: null,
+    p_recipient_member_id: input.recipient_member_id ?? null,
   });
   if (error) throw error;
   return data as string;
@@ -217,6 +217,7 @@ async function uploadViaApi(path: string, form: FormData): Promise<string> {
 export function normalizeMessage(message: Message): Message {
   return {
     ...message,
+    recipient_member_id: message.recipient_member_id ?? null,
     system_event_type: message.system_event_type ?? null,
     system_event_payload: message.system_event_payload ?? null,
     updated_at:

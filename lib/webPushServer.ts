@@ -47,7 +47,22 @@ export function toWebPushSubscription(
 export function buildMessagePushBody(
   senderName: string,
   messageType: MessageType,
+  isWhisper = false,
 ): string {
+  if (isWhisper) {
+    switch (messageType) {
+      case "image":
+        return `${senderName} 发来一张悄悄话图片`;
+      case "audio":
+        return `${senderName} 发来一条语音悄悄话`;
+      case "location":
+        return `${senderName} 发来一条位置悄悄话`;
+      case "text":
+      default:
+        return `${senderName} 发来一条悄悄话`;
+    }
+  }
+
   switch (messageType) {
     case "image":
       return `${senderName} \u53d1\u6765\u4e86\u4e00\u5f20\u56fe\u7247`;

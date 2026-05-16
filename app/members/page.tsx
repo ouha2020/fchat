@@ -183,7 +183,7 @@ export default function MembersPage() {
           {members.map((m) => (
             <li
               key={m.id}
-              className="flex items-center gap-3 px-4 py-3"
+              className="flex flex-wrap items-center gap-3 px-4 py-3"
             >
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-200 text-base font-semibold text-slate-700">
                 {m.nickname.slice(0, 1).toUpperCase()}
@@ -209,15 +209,25 @@ export default function MembersPage() {
                   })}
                 </span>
               </div>
-              {session?.is_admin && session.member_id !== m.id ? (
-                <button
-                  type="button"
-                  className="btn-ghost h-9 px-3 text-sm text-rose-600 hover:bg-rose-50"
-                  disabled={busyId === m.id}
-                  onClick={() => handleRemove(m)}
-                >
-                  {busyId === m.id ? t("membersRemoving") : t("membersRemove")}
-                </button>
+              {session?.member_id !== m.id ? (
+                <div className="flex shrink-0 items-center gap-2">
+                  <Link
+                    href={`/chat?whisper=${encodeURIComponent(m.id)}`}
+                    className="rounded-xl bg-violet-50 px-3 py-2 text-sm font-semibold text-violet-700 ring-1 ring-violet-100 transition hover:bg-violet-100"
+                  >
+                    {t("membersSendWhisper")}
+                  </Link>
+                  {session?.is_admin ? (
+                    <button
+                      type="button"
+                      className="btn-ghost h-9 px-3 text-sm text-rose-600 hover:bg-rose-50"
+                      disabled={busyId === m.id}
+                      onClick={() => handleRemove(m)}
+                    >
+                      {busyId === m.id ? t("membersRemoving") : t("membersRemove")}
+                    </button>
+                  ) : null}
+                </div>
               ) : null}
             </li>
           ))}

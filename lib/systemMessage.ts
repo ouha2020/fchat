@@ -54,6 +54,9 @@ const EVENT_MAP: Record<
     varName: "nickname",
     tone: "left",
   },
+  admin_password_changed: {
+    key: "systemAdminPasswordChanged",
+  },
 };
 
 const LEGACY_PATTERNS: Array<{
@@ -101,6 +104,10 @@ const LEGACY_PATTERNS: Array<{
     key: "systemMemberLeft",
     varName: "nickname",
     tone: "left",
+  },
+  {
+    pattern: /^管理员已修改管理密码/,
+    key: "systemAdminPasswordChanged",
   },
 ];
 

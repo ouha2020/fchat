@@ -10,6 +10,8 @@ import EffectOverlay from "@/components/EffectOverlay";
 import EnvWarning from "@/components/EnvWarning";
 import ImportantNoticeBar from "@/components/ImportantNoticeBar";
 import { useLanguage } from "@/components/LanguageProvider";
+import { useDialog } from "@/components/Dialog";
+import { useToast } from "@/components/Toast";
 import { clearSession, loadSession, saveSession, type LocalSession } from "@/lib/authLocal";
 import {
   CHAT_BACKGROUND_CHANGED,
@@ -94,6 +96,8 @@ interface PushReceivedMessage {
 export default function ChatPage() {
   const router = useRouter();
   const { language, t } = useLanguage();
+  const dialog = useDialog();
+  const toast = useToast();
   const [session, setSession] = useState<LocalSession | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [members, setMembers] = useState<FamilyMember[]>([]);
@@ -501,16 +505,16 @@ export default function ChatPage() {
     }
 
     if (push.support?.reason === "ios_not_standalone") {
-      alert(t("settingsPushIosGuideTitle"));
+      toast.info(t("settingsPushIosGuideTitle"));
       router.push("/settings");
       return;
     }
 
     try {
       await push.enable();
-      alert(t("settingsPushEnabledAlert"));
+      toast.success(t("settingsPushEnabledAlert"));
     } catch (err) {
-      alert(pushNotificationErrorMessage(err, t));
+      toast.error(pushNotificationErrorMessage(err, t));
     }
   }
 
@@ -676,7 +680,7 @@ export default function ChatPage() {
             newRow.status === "removed"
           ) {
             clearSession();
-            alert(t("chatRemoved"));
+            toast.info(t("chatRemoved"));
             router.replace("/");
           }
         },
@@ -747,6 +751,7 @@ export default function ChatPage() {
     router,
     session,
     t,
+    toast,
   ]);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
@@ -896,7 +901,10 @@ export default function ChatPage() {
 
   async function handleDeleteMessage(messageId: string) {
     if (!session) return;
-    const ok = window.confirm(t("chatDeleteConfirm"));
+    const ok = await dialog.confirm({
+      title: t("importantRecallMessage"),
+      message: t("chatDeleteConfirm"),
+    });
     if (!ok) return;
     try {
       await deleteMessage(session, messageId);
@@ -922,7 +930,7 @@ export default function ChatPage() {
           .catch(() => undefined);
       }
     } catch (err) {
-      alert(humanizeError(err, language));
+      toast.error(humanizeError(err, language));
     }
   }
 
@@ -944,13 +952,16 @@ export default function ChatPage() {
     setMessageActionMenu({ messageId: message.id, x, y });
   }
 
-  function handleSetMessageImageBackground(message: Message) {
+  async function handleSetMessageImageBackground(message: Message) {
     if (!session || !message.image_url) return;
     setMessageActionMenu(null);
-    const ok = window.confirm(t("previewSetBackgroundConfirm"));
+    const ok = await dialog.confirm({
+      title: t("previewSetBackground"),
+      message: t("previewSetBackgroundConfirm"),
+    });
     if (!ok) return;
     setChatBackground(session.family_id, message.image_url);
-    alert(t("previewBackgroundSet"));
+    toast.success(t("previewBackgroundSet"));
   }
 
   async function handleAddImportant(messageId: string) {
@@ -967,7 +978,7 @@ export default function ChatPage() {
       });
       await refreshImportantNotifications(session);
     } catch (err) {
-      alert(
+      toast.error(
         t("importantSetFailed", {
           message: humanizeError(err, language),
         }),
@@ -988,7 +999,7 @@ export default function ChatPage() {
         return next;
       });
     } catch (err) {
-      alert(
+      toast.error(
         t("importantRemoveFailed", {
           message: humanizeError(err, language),
         }),
@@ -1063,7 +1074,7 @@ export default function ChatPage() {
       requestMessagePush(session, id);
       tryTriggerEffect(id, eff);
     } catch (err) {
-      alert(humanizeError(err, language));
+      toast.error(humanizeError(err, language));
     } finally {
       setSending(false);
     }
@@ -1072,7 +1083,7 @@ export default function ChatPage() {
   async function handlePickImage(file: File) {
     if (!session) return;
     if (file.size > 2 * 1024 * 1024) {
-      alert(t("chatImageTooLarge"));
+      toast.error(t("chatImageTooLarge"));
       return;
     }
     setSending(true);
@@ -1091,7 +1102,7 @@ export default function ChatPage() {
       });
       requestMessagePush(session, id);
     } catch (err) {
-      alert(humanizeError(err, language));
+      toast.error(humanizeError(err, language));
     } finally {
       setSending(false);
     }
@@ -1151,7 +1162,7 @@ export default function ChatPage() {
       });
       requestMessagePush(session, id);
     } catch (err) {
-      alert(humanizeError(err, language) || t("chatLocationError"));
+      toast.error(humanizeError(err, language) || t("chatLocationError"));
     } finally {
       setSending(false);
     }

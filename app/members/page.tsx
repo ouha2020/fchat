@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
+import { useDialog } from "@/components/Dialog";
+import { useToast } from "@/components/Toast";
 import RoleBadge from "@/components/RoleBadge";
 import { clearSession, loadSession, saveSession, type LocalSession } from "@/lib/authLocal";
 import { humanizeError } from "@/lib/errors";
@@ -17,6 +19,8 @@ import type { FamilyMember } from "@/types/member";
 export default function MembersPage() {
   const router = useRouter();
   const { language, t } = useLanguage();
+  const dialog = useDialog();
+  const toast = useToast();
   const [session, setSession] = useState<LocalSession | null>(null);
   const [members, setMembers] = useState<FamilyMember[]>([]);
   const [loading, setLoading] = useState(true);
@@ -113,19 +117,21 @@ export default function MembersPage() {
   async function handleRemove(target: FamilyMember) {
     if (!session) return;
     if (target.id === session.member_id) {
-      alert(t("membersCannotRemoveSelf"));
+      toast.info(t("membersCannotRemoveSelf"));
       return;
     }
-    const ok = window.confirm(
-      t("membersRemoveConfirm", { nickname: target.nickname }),
-    );
+    const ok = await dialog.confirm({
+      title: t("membersRemove"),
+      message: t("membersRemoveConfirm", { nickname: target.nickname }),
+      danger: true,
+    });
     if (!ok) return;
     setBusyId(target.id);
     try {
       await removeMember(session, target.id);
       setMembers((prev) => prev.filter((m) => m.id !== target.id));
     } catch (err) {
-      alert(humanizeError(err, language));
+      toast.error(humanizeError(err, language));
     } finally {
       setBusyId(null);
     }

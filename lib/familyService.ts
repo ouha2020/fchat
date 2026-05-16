@@ -239,6 +239,21 @@ export async function resetFamilyCode(
   return data as string;
 }
 
+export async function updateAdminPassword(
+  session: LocalSession,
+  currentPassword: string,
+  newPassword: string,
+): Promise<void> {
+  const sb = getSupabase();
+  const { error } = await sb.rpc("update_admin_password", {
+    p_member_id: session.member_id,
+    p_member_token: session.member_token,
+    p_current_password: currentPassword,
+    p_new_password: newPassword,
+  });
+  if (error) throw error;
+}
+
 export async function setJoinEnabled(
   session: LocalSession,
   adminPassword: string,

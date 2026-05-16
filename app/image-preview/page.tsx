@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useRef, useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
+import { useDialog } from "@/components/Dialog";
 import { loadSession } from "@/lib/authLocal";
 import { setChatBackground } from "@/lib/chatBackground";
 import { safeHttpUrl } from "@/lib/security";
@@ -24,6 +25,7 @@ export default function ImagePreviewPage() {
 function ImagePreviewContent() {
   const router = useRouter();
   const { t } = useLanguage();
+  const dialog = useDialog();
   const searchParams = useSearchParams();
   const src = safeHttpUrl(searchParams.get("src")?.trim() ?? "");
   const lastTouchAtRef = useRef(0);
@@ -37,14 +39,17 @@ function ImagePreviewContent() {
     router.push("/chat");
   }
 
-  function handleSetBackground() {
+  async function handleSetBackground() {
     if (!src) return;
     const session = loadSession();
     if (!session) {
       setNotice(t("previewNeedSession"));
       return;
     }
-    const ok = window.confirm(t("previewSetBackgroundConfirm"));
+    const ok = await dialog.confirm({
+      title: t("previewSetBackground"),
+      message: t("previewSetBackgroundConfirm"),
+    });
     if (!ok) return;
     setChatBackground(session.family_id, src);
     setNotice(t("previewBackgroundSet"));

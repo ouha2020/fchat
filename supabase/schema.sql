@@ -1167,7 +1167,8 @@ create extension if not exists "pgcrypto";
 
 alter table families
   add column if not exists code_updated_at timestamptz not null default now(),
-  add column if not exists code_expires_at timestamptz;
+  add column if not exists code_expires_at timestamptz,
+  add column if not exists admin_password_updated_at timestamptz;
 
 alter table family_members
   add column if not exists access_token_hash text,
@@ -2328,7 +2329,8 @@ begin
           'join_enabled',
           'join_disabled',
           'member_removed',
-          'member_left'
+          'member_left',
+          'admin_password_changed'
         )
       );
   end if;
@@ -2771,6 +2773,45 @@ begin
 end;
 $$;
 
+create or replace function update_admin_password(
+  p_member_id uuid,
+  p_member_token text,
+  p_current_password text,
+  p_new_password text
+)
+returns void
+security definer
+set search_path = public, extensions
+language plpgsql
+as $$
+declare
+  v_family_id uuid;
+begin
+  if p_new_password is null or length(p_new_password) < 4 or length(p_new_password) > 128 then
+    raise exception 'admin_password_too_short';
+  end if;
+
+  v_family_id := require_admin(p_member_id, p_member_token, p_current_password);
+
+  update families
+     set admin_password_hash = hash_secret(p_new_password),
+         admin_password_updated_at = now(),
+         updated_at = now()
+   where id = v_family_id;
+
+  insert into messages (
+    family_id, message_type, content, system_event_type, system_event_payload
+  )
+  values (
+    v_family_id,
+    'system',
+    U&'\7BA1\7406\5458\5DF2\4FEE\6539\7BA1\7406\5BC6\7801',
+    'admin_password_changed',
+    '{}'::jsonb
+  );
+end;
+$$;
+
 create or replace function remove_member(
   p_member_id uuid,
   p_member_token text,
@@ -3062,6 +3103,7 @@ grant execute on function join_family(text, text, text, text) to anon, authentic
 grant execute on function update_family_name(uuid, text, text, text) to anon, authenticated;
 grant execute on function reset_family_code(uuid, text, text) to anon, authenticated;
 grant execute on function set_join_enabled(uuid, text, text, boolean) to anon, authenticated;
+grant execute on function update_admin_password(uuid, text, text, text) to anon, authenticated;
 grant execute on function remove_member(uuid, text, uuid) to anon, authenticated;
 grant execute on function leave_family(uuid, text) to anon, authenticated;
 grant execute on function list_messages_for_member(uuid, text, int) to anon, authenticated;

@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
+import { useDialog } from "@/components/Dialog";
+import { useToast } from "@/components/Toast";
 import { humanizeError } from "@/lib/errors";
 import {
   formatDuration,
@@ -57,6 +59,8 @@ export default function ChatInput({
   onSendAudio,
 }: Props) {
   const { language, t } = useLanguage();
+  const dialog = useDialog();
+  const toast = useToast();
   const [text, setText] = useState("");
   const [recordingState, setRecordingState] = useState<RecordingState>({
     status: "idle",
@@ -253,7 +257,10 @@ export default function ChatInput({
     setPrivacyNotice(null);
 
     if (!hasRecordingConsent()) {
-      const ok = window.confirm(t("inputRecordingConsent"));
+      const ok = await dialog.confirm({
+        title: t("inputRecordVoice"),
+        message: t("inputRecordingConsent"),
+      });
       if (!ok) {
         removeDocPointerListeners();
         return;
@@ -275,7 +282,7 @@ export default function ChatInput({
       });
     } catch (err) {
       removeDocPointerListeners();
-      alert(recordingStartErrorMessage(err));
+      toast.error(recordingStartErrorMessage(err));
     }
   }
 
@@ -288,7 +295,7 @@ export default function ChatInput({
     try {
       const result = await current.handle.stop();
       if (result.durationMs < MIN_RECORD_MS) {
-        alert(t("inputRecordingTooShort"));
+        toast.info(t("inputRecordingTooShort"));
         setRecordingState({ status: "idle" });
         return;
       }
@@ -313,7 +320,7 @@ export default function ChatInput({
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (!msg.includes("recording_cancelled")) {
-        alert(t("inputRecordStartError", { message: humanizeError(err, language) }));
+        toast.error(t("inputRecordStartError", { message: humanizeError(err, language) }));
       }
       setRecordingState({ status: "idle" });
     }

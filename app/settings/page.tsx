@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
+import { useDialog } from "@/components/Dialog";
+import { useToast } from "@/components/Toast";
 import { clearSession, loadSession, saveSession, updateSession, type LocalSession } from "@/lib/authLocal";
 import { humanizeError } from "@/lib/errors";
 import {
@@ -12,6 +14,7 @@ import {
   leaveFamily,
   resetFamilyCode,
   setJoinEnabled,
+  updateAdminPassword,
   updateFamilyName,
   validateMember,
 } from "@/lib/familyService";
@@ -28,6 +31,8 @@ import { usePushNotificationControls } from "@/lib/usePushNotificationControls";
 export default function SettingsPage() {
   const router = useRouter();
   const { language, setLanguage, t } = useLanguage();
+  const dialog = useDialog();
+  const toast = useToast();
   const [session, setSession] = useState<LocalSession | null>(null);
   const [joinOn, setJoinOn] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -75,9 +80,9 @@ export default function SettingsPage() {
           tag: "family-chat-test",
         });
       }
-      alert(t("settingsPushDiagnosticsTestSuccess"));
+      toast.success(t("settingsPushDiagnosticsTestSuccess"));
     } catch {
-      alert(t("settingsPushDiagnosticsTestFailed"));
+      toast.error(t("settingsPushDiagnosticsTestFailed"));
     } finally {
       setBusy(null);
     }
@@ -155,16 +160,20 @@ export default function SettingsPage() {
 
   async function withAdmin(action: string, fn: (password: string) => Promise<void>) {
     if (!session?.is_admin) {
-      alert(t("settingsAdminOnly"));
+      toast.info(t("settingsAdminOnly"));
       return;
     }
-    const password = window.prompt(t("settingsAdminPasswordPrompt", { action }));
+    const password = await dialog.prompt({
+      title: t("settingsAdminPasswordPrompt", { action }),
+      placeholder: "输入管理员密码",
+      validate: (v) => (!v ? "请输入密码" : null),
+    });
     if (!password) return;
     setBusy(action);
     try {
       await fn(password);
     } catch (err) {
-      alert(humanizeError(err, language));
+      toast.error(humanizeError(err, language));
     } finally {
       setBusy(null);
     }
@@ -172,7 +181,12 @@ export default function SettingsPage() {
 
   async function handleRename() {
     if (!session) return;
-    const newName = window.prompt(t("settingsRenamePrompt"), session.family_name);
+    const newName = await dialog.prompt({
+      title: t("settingsRenameFamily"),
+      message: t("settingsRenamePrompt"),
+      defaultValue: session.family_name,
+      validate: (v) => (!v.trim() ? "名称不能为空" : null),
+    });
     if (!newName || !newName.trim()) return;
     await withAdmin(t("settingsRenameFamily"), async (password) => {
       await updateFamilyName(session, password, newName.trim());
@@ -183,7 +197,11 @@ export default function SettingsPage() {
 
   async function handleResetCode() {
     if (!session) return;
-    const ok = window.confirm(t("settingsResetCodeConfirm"));
+    const ok = await dialog.confirm({
+      title: t("settingsResetCode"),
+      message: t("settingsResetCodeConfirm"),
+      danger: true,
+    });
     if (!ok) return;
     await withAdmin(t("settingsResetCode"), async (password) => {
       const newCode = await resetFamilyCode(session, password);
@@ -200,9 +218,28 @@ export default function SettingsPage() {
     });
   }
 
+  async function handleChangeAdminPassword() {
+    if (!session) return;
+    const result = await dialog.adminPassword();
+    if (!result) return;
+    setBusy("changePassword");
+    try {
+      await updateAdminPassword(session, result.currentPassword, result.newPassword);
+      toast.success(t("settingsAdminPasswordChanged"));
+    } catch (err) {
+      toast.error(humanizeError(err, language));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function handleLeave() {
     if (!session) return;
-    const ok = window.confirm(t("settingsLeaveConfirm"));
+    const ok = await dialog.confirm({
+      title: t("settingsLeaveFamily"),
+      message: t("settingsLeaveConfirm"),
+      danger: true,
+    });
     if (!ok) return;
     setBusy("leave");
     try {
@@ -210,14 +247,17 @@ export default function SettingsPage() {
       clearSession();
       router.replace("/");
     } catch (err) {
-      alert(humanizeError(err, language));
+      toast.error(humanizeError(err, language));
     } finally {
       setBusy(null);
     }
   }
 
-  function handleSwitch() {
-    const ok = window.confirm(t("settingsSwitchConfirm"));
+  async function handleSwitch() {
+    const ok = await dialog.confirm({
+      title: t("settingsSwitchFamily"),
+      message: t("settingsSwitchConfirm"),
+    });
     if (!ok) return;
     clearSession();
     router.replace("/");
@@ -228,9 +268,9 @@ export default function SettingsPage() {
     setBusy("push");
     try {
       await push.enable();
-      alert(t("settingsPushEnabledAlert"));
+      toast.success(t("settingsPushEnabledAlert"));
     } catch (err) {
-      alert(pushNotificationErrorMessage(err, t));
+      toast.error(pushNotificationErrorMessage(err, t));
     } finally {
       setBusy(null);
     }
@@ -241,9 +281,9 @@ export default function SettingsPage() {
     setBusy("push");
     try {
       await push.disable();
-      alert(t("settingsPushDisabledAlert"));
+      toast.success(t("settingsPushDisabledAlert"));
     } catch {
-      alert(t("settingsPushDisableFailed"));
+      toast.error(t("settingsPushDisableFailed"));
     } finally {
       setBusy(null);
     }
@@ -541,6 +581,16 @@ export default function SettingsPage() {
             onClick={handleResetCode}
           >
             {t("settingsResetCode")}
+          </button>
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={!!busy}
+            onClick={handleChangeAdminPassword}
+          >
+            {busy === "changePassword"
+              ? t("commonLoading")
+              : t("settingsChangeAdminPassword")}
           </button>
           <label className="flex items-center justify-between rounded-xl px-1 py-2">
             <span className="text-sm text-slate-700">{t("settingsAllowJoin")}</span>

@@ -6,7 +6,7 @@ import { useEffect } from "react";
 import { loadSession } from "@/lib/authLocal";
 import { updatePushPresence } from "@/lib/pushNotificationService";
 
-const HEARTBEAT_MS = 30_000;
+const HEARTBEAT_MS = 120_000;
 
 export default function AppPresenceTracker() {
   const pathname = usePathname();

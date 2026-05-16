@@ -17,7 +17,10 @@ import {
 } from "@/lib/familyService";
 import { LANGUAGE_OPTIONS } from "@/lib/i18n";
 import {
+  fetchPushDiagnostics,
   pushNotificationErrorMessage,
+  type PushDiagnostics,
+  type ServerSubscriptionInfo,
 } from "@/lib/pushNotificationService";
 import { isSupabaseConfigured } from "@/lib/supabaseClient";
 import { usePushNotificationControls } from "@/lib/usePushNotificationControls";
@@ -32,6 +35,53 @@ export default function SettingsPage() {
   const [retryNonce, setRetryNonce] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
   const push = usePushNotificationControls(session);
+  const [diagnostics, setDiagnostics] = useState<PushDiagnostics | null>(null);
+  const [diagLoading, setDiagLoading] = useState(false);
+
+  async function loadDiagnostics() {
+    if (!session) return;
+    setDiagLoading(true);
+    try {
+      setDiagnostics(await fetchPushDiagnostics(session));
+    } catch {
+      // ignore
+    } finally {
+      setDiagLoading(false);
+    }
+  }
+
+  async function handleTestNotification() {
+    if (!session) return;
+    setBusy("test");
+    try {
+      let shown = false;
+      if ("serviceWorker" in navigator) {
+        const reg = await navigator.serviceWorker.getRegistration("/");
+        if (reg?.showNotification) {
+          await reg.showNotification(t("settingsPushTitle"), {
+            body: t("settingsPushDiagnosticsTestSuccess"),
+            icon: "/icon.png",
+            badge: "/icon.png",
+            tag: "family-chat-test",
+          });
+          shown = true;
+        }
+      }
+      if (!shown) {
+        // eslint-disable-next-line no-new
+        new Notification(t("settingsPushTitle"), {
+          body: t("settingsPushDiagnosticsTestSuccess"),
+          icon: "/icon.png",
+          tag: "family-chat-test",
+        });
+      }
+      alert(t("settingsPushDiagnosticsTestSuccess"));
+    } catch {
+      alert(t("settingsPushDiagnosticsTestFailed"));
+    } finally {
+      setBusy(null);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -95,6 +145,13 @@ export default function SettingsPage() {
       cancelled = true;
     };
   }, [language, retryNonce, router, t]);
+
+  useEffect(() => {
+    if (session && push.support?.supported) {
+      void loadDiagnostics();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, push.enabled, push.support?.supported]);
 
   async function withAdmin(action: string, fn: (password: string) => Promise<void>) {
     if (!session?.is_admin) {
@@ -357,6 +414,115 @@ export default function SettingsPage() {
         )}
       </section>
 
+      {push.support?.supported && diagnostics ? (
+        <section className="card mt-4 flex flex-col gap-3">
+          <h2 className="text-base font-semibold">{t("settingsPushDiagnostics")}</h2>
+
+          <DiagRow
+            label={t("settingsPushDiagnosticsPermission")}
+            value={
+              diagnostics.permission === "granted"
+                ? t("settingsPushDiagnosticsPermissionGranted")
+                : diagnostics.permission === "denied"
+                  ? t("settingsPushDiagnosticsPermissionDenied")
+                  : t("settingsPushDiagnosticsPermissionDefault")
+            }
+            ok={diagnostics.permission === "granted"}
+          />
+          <DiagRow
+            label={t("settingsPushDiagnosticsSW")}
+            value={
+              diagnostics.swRegistered
+                ? t("settingsPushDiagnosticsSWRegistered")
+                : t("settingsPushDiagnosticsSWNotRegistered")
+            }
+            ok={diagnostics.swRegistered}
+          />
+          <DiagRow
+            label={t("settingsPushDiagnosticsSubscription")}
+            value={
+              diagnostics.subscriptionExists
+                ? t("settingsPushDiagnosticsSubscriptionActive")
+                : t("settingsPushDiagnosticsSubscriptionNone")
+            }
+            ok={diagnostics.subscriptionExists}
+          />
+          <DiagRow
+            label={t("settingsPushDiagnosticsEndpoint")}
+            value={
+              diagnostics.serverSubscriptions.some(
+                (s) => s.endpoint === diagnostics.subscriptionEndpoint,
+              )
+                ? t("settingsPushDiagnosticsEndpointSaved")
+                : diagnostics.subscriptionEndpoint
+                  ? t("settingsPushDiagnosticsEndpointNotSaved")
+                  : "—"
+            }
+            ok={diagnostics.serverSubscriptions.some(
+              (s) => s.endpoint === diagnostics.subscriptionEndpoint,
+            )}
+          />
+          <DiagRow
+            label={t("settingsPushDiagnosticsPlatform")}
+            value={diagnostics.platform}
+            ok={true}
+          />
+          <DiagRow
+            label={t("settingsPushDiagnosticsLastNotified")}
+            value={
+              diagnostics.serverSubscriptions[0]?.last_notified_at
+                ? new Date(
+                    diagnostics.serverSubscriptions[0].last_notified_at,
+                  ).toLocaleString()
+                : t("settingsPushDiagnosticsNever")
+            }
+            ok={true}
+          />
+          {diagnostics.presence ? (
+            <DiagRow
+              label={t("settingsPushDiagnosticsPresence")}
+              value={
+                diagnostics.presence.is_active
+                  ? t("commonYes")
+                  : t("commonNo")
+              }
+              ok={diagnostics.presence.is_active}
+            />
+          ) : null}
+
+          <button
+            type="button"
+            className="btn-secondary mt-1"
+            disabled={!!busy || diagLoading}
+            onClick={handleTestNotification}
+          >
+            {busy === "test"
+              ? t("commonLoading")
+              : t("settingsPushDiagnosticsTestButton")}
+          </button>
+
+          {diagnostics.platform === "android" ? (
+            <div className="rounded-xl bg-brand-50 p-3 text-sm leading-6 text-slate-700">
+              <p className="font-medium text-slate-900">
+                {t("settingsPushDiagnosticsAndroidTip")}
+              </p>
+              <p className="mt-1 text-slate-600">
+                {t("settingsPushDiagnosticsAndroidTipText")}
+              </p>
+            </div>
+          ) : null}
+
+          <button
+            type="button"
+            className="text-sm text-brand-600 hover:underline self-start"
+            onClick={loadDiagnostics}
+            disabled={diagLoading}
+          >
+            {diagLoading ? t("commonLoading") : "↻ " + t("chatRetry")}
+          </button>
+        </section>
+      ) : null}
+
       {session.is_admin ? (
         <section className="card mt-4 flex flex-col gap-3">
           <h2 className="text-base font-semibold">{t("settingsAdminActions")}</h2>
@@ -417,6 +583,29 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
     <div className="flex items-center justify-between gap-3">
       <span className="text-sm text-slate-500">{label}</span>
       <span className="text-sm font-medium text-slate-800">{value}</span>
+    </div>
+  );
+}
+
+function DiagRow({
+  label,
+  value,
+  ok,
+}: {
+  label: string;
+  value: string;
+  ok: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-sm text-slate-500">{label}</span>
+      <span
+        className={`text-sm font-medium ${
+          ok ? "text-emerald-700" : "text-rose-600"
+        }`}
+      >
+        {value}
+      </span>
     </div>
   );
 }

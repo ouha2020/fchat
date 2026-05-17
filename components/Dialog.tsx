@@ -4,8 +4,10 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useRef,
   useState,
+  type CSSProperties,
   type FormEvent,
   type ReactNode,
 } from "react";
@@ -173,9 +175,39 @@ function Backdrop({
   children: ReactNode;
   onClose: () => void;
 }) {
+  const [viewportStyle, setViewportStyle] = useState<CSSProperties>({
+    height: "100dvh",
+  });
+
+  useEffect(() => {
+    const visualViewport = window.visualViewport;
+
+    function updateViewport() {
+      if (!visualViewport) {
+        setViewportStyle({ height: "100dvh" });
+        return;
+      }
+      setViewportStyle({
+        height: `${visualViewport.height}px`,
+        transform: `translateY(${visualViewport.offsetTop}px)`,
+      });
+    }
+
+    updateViewport();
+    visualViewport?.addEventListener("resize", updateViewport);
+    visualViewport?.addEventListener("scroll", updateViewport);
+    window.addEventListener("orientationchange", updateViewport);
+    return () => {
+      visualViewport?.removeEventListener("resize", updateViewport);
+      visualViewport?.removeEventListener("scroll", updateViewport);
+      window.removeEventListener("orientationchange", updateViewport);
+    };
+  }, []);
+
   return (
     <div
-      className="fixed inset-0 z-[9998] flex items-end justify-center bg-black/40 backdrop-blur-[2px] sm:items-center"
+      className="fixed inset-x-0 top-0 z-[9998] flex items-end justify-center overflow-y-auto bg-black/40 px-0 py-3 backdrop-blur-[2px] sm:items-center sm:py-6"
+      style={viewportStyle}
       onClick={onClose}
     >
       {/* Stop propagation so clicking inside the dialog doesn't close it */}

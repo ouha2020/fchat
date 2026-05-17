@@ -26,6 +26,7 @@ const ROLE_KEYS: Record<FamilyRole, TranslationKey> = {
 interface Props {
   message: Message;
   sender: FamilyMember | null;
+  recipient?: FamilyMember | null;
   isMine: boolean;
   highlighted?: boolean;
   onRequestActions?: (
@@ -38,6 +39,7 @@ interface Props {
 export default function ChatMessage({
   message,
   sender,
+  recipient,
   isMine,
   highlighted,
   onRequestActions,
@@ -58,6 +60,12 @@ export default function ChatMessage({
     ? "important-message-highlight"
     : "";
   const isPrivate = !!message.recipient_member_id;
+  const whisperRecipientLabel =
+    isPrivate && isMine
+      ? t("messageWhisperTo", {
+          nickname: recipient?.nickname ?? t("commonUnknownMember"),
+        })
+      : null;
 
   if (message.message_type === "system") {
     const tone = getSystemMessageTone(message);
@@ -103,8 +111,12 @@ export default function ChatMessage({
           isMine ? "items-end" : "items-start"
         }`}
       >
-        <div className="flex items-center gap-1.5 text-xs text-slate-500">
-          {isPrivate ? <WhisperBadge /> : null}
+        <div className="flex max-w-full flex-wrap items-center gap-1.5 text-xs text-slate-500">
+          {whisperRecipientLabel ? (
+            <span className="max-w-36 truncate font-medium text-violet-700">
+              {whisperRecipientLabel}
+            </span>
+          ) : null}
           <span className="font-medium text-slate-700">
             {sender?.nickname ?? t("commonUnknownMember")}
           </span>
@@ -274,10 +286,7 @@ function Bubble({
         className={`${isPrivate ? "rounded-2xl bg-violet-50 p-1 ring-1 ring-violet-200" : ""} ${actionClass}`}
       >
         {isPrivate ? (
-          <div className="mb-1 flex items-center gap-1 px-2 pt-1 text-[11px] font-semibold text-violet-700">
-            <WhisperIcon />
-            <span>{t("messageWhisperLabel")}</span>
-          </div>
+          <WhisperInlineLabel className="mb-1 px-2 pt-1 text-violet-700" />
         ) : null}
         <AudioBubble
           messageId={message.id}
@@ -291,11 +300,7 @@ function Bubble({
   }
 
   if (message.message_type === "location") {
-    const coords =
-      message.latitude != null && message.longitude != null
-        ? `${message.latitude.toFixed(5)}, ${message.longitude.toFixed(5)}`
-        : "";
-    const detail = message.address || coords || t("messageLocationFallback");
+    const detail = message.address || t("messageLocationShared");
     const mapUrl =
       safeGoogleMapsUrl(message.map_url) ??
       (message.latitude != null && message.longitude != null
@@ -314,10 +319,7 @@ function Bubble({
         className={`${base} flex min-w-40 max-w-56 flex-col gap-1 no-underline ${actionClass} ${highlightClass}`}
       >
         {isPrivate ? (
-          <span className="mb-0.5 flex items-center gap-1 text-[11px] font-semibold opacity-90">
-            <WhisperIcon />
-            <span>{t("messageWhisperLabel")}</span>
-          </span>
+          <WhisperInlineLabel className="mb-0.5 opacity-90" />
         ) : null}
         <span className="flex items-center gap-1.5 text-sm font-semibold">
           <span aria-hidden className="text-xs">
@@ -347,9 +349,13 @@ function Bubble({
       {...actionHandlers}
       onClick={isEffect ? onReplayEffect : undefined}
       title={isEffect ? t("messageReplayEffect") : undefined}
-      className={`${base} flex items-center gap-1.5 whitespace-pre-wrap break-words ${actionClass} ${effectClass} ${highlightClass}`}
+      className={`${base} flex flex-col gap-1 whitespace-pre-wrap break-words ${actionClass} ${effectClass} ${highlightClass}`}
     >
-      {isPrivate ? <WhisperIcon /> : null}
+      {isPrivate ? (
+        <WhisperInlineLabel
+          className={isMine ? "text-violet-50/90" : "text-violet-700"}
+        />
+      ) : null}
       <span>{message.content}</span>
       {isEffect ? (
         <span aria-hidden className="text-xs opacity-70">
@@ -360,10 +366,10 @@ function Bubble({
   );
 }
 
-function WhisperBadge() {
+function WhisperInlineLabel({ className = "" }: { className?: string }) {
   const { t } = useLanguage();
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-violet-50 px-1.5 py-0.5 text-[11px] font-semibold text-violet-700 ring-1 ring-violet-100">
+    <span className={`inline-flex items-center gap-1 text-[11px] font-semibold ${className}`}>
       <WhisperIcon />
       <span>{t("messageWhisperLabel")}</span>
     </span>

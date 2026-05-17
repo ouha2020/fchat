@@ -39,6 +39,7 @@ export default function SettingsPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
+  const [showFamilyCode, setShowFamilyCode] = useState(false);
   const push = usePushNotificationControls(session);
   const [diagnostics, setDiagnostics] = useState<PushDiagnostics | null>(null);
   const [diagLoading, setDiagLoading] = useState(false);
@@ -347,8 +348,28 @@ export default function SettingsPage() {
         <Row
           label={t("settingsFamilyCode")}
           value={
-            <span className="select-all font-mono text-base tracking-widest">
-              {session.family_code}
+            <span className="inline-flex items-center justify-end gap-2">
+              <span className="select-all font-mono text-base tracking-widest">
+                {showFamilyCode ? session.family_code : maskFamilyCode(session.family_code)}
+              </span>
+              <button
+                type="button"
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+                aria-label={
+                  showFamilyCode
+                    ? t("settingsHideFamilyCode")
+                    : t("settingsShowFamilyCode")
+                }
+                title={
+                  showFamilyCode
+                    ? t("settingsHideFamilyCode")
+                    : t("settingsShowFamilyCode")
+                }
+                aria-pressed={showFamilyCode}
+                onClick={() => setShowFamilyCode((visible) => !visible)}
+              >
+                {showFamilyCode ? <EyeOffIcon /> : <EyeIcon />}
+              </button>
             </span>
           }
         />
@@ -625,6 +646,48 @@ export default function SettingsPage() {
         </button>
       </section>
     </div>
+  );
+}
+
+function maskFamilyCode(code: string): string {
+  return "•".repeat(Math.max(code.length, 6));
+}
+
+function EyeIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-[18px] w-[18px]"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+function EyeOffIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-[18px] w-[18px]"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M3 3l18 18" />
+      <path d="M10.6 10.6A2 2 0 0 0 12 14a2 2 0 0 0 1.4-.6" />
+      <path d="M9.9 5.2A10.8 10.8 0 0 1 12 5c6.5 0 10 7 10 7a18.6 18.6 0 0 1-3.1 4.2" />
+      <path d="M6.6 6.6C3.6 8.7 2 12 2 12s3.5 7 10 7a10.8 10.8 0 0 0 4.1-.8" />
+    </svg>
   );
 }
 

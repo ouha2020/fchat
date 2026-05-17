@@ -36,7 +36,12 @@ export default function ImportantNoticeBar({
 
   return (
     <section className="border-b border-amber-100/70 bg-white/80 px-5 py-1.5 backdrop-blur sm:px-6">
-      <div className="flex items-start justify-between gap-3 text-[13px] leading-4 text-amber-700">
+      <button
+        type="button"
+        className="flex w-full items-start justify-between gap-3 rounded-lg text-left text-[13px] leading-4 text-amber-700 transition hover:bg-amber-50/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((value) => !value)}
+      >
         <div className="min-w-0">
           <div className="truncate font-semibold">
             {t("importantTitle")}{" "}
@@ -50,14 +55,10 @@ export default function ImportantNoticeBar({
             </div>
           ) : null}
         </div>
-        <button
-          type="button"
-          className="shrink-0 rounded-full px-2 py-0.5 text-[12px] font-medium leading-4 text-amber-700 transition hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200"
-          onClick={() => setExpanded((value) => !value)}
-        >
+        <span className="shrink-0 rounded-full px-2 py-0.5 text-[12px] font-medium leading-4 text-amber-700">
           {expanded ? t("importantCollapse") : t("importantExpand")}
-        </button>
-      </div>
+        </span>
+      </button>
       {expanded ? (
         <div className="mt-2 max-h-[120px] space-y-1 overflow-y-auto pr-1">
           {notifications.map((notification) => {

@@ -1446,10 +1446,7 @@ export default function ChatPage() {
           <Link
             href="/settings"
             className="inline-flex h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-cover bg-center bg-no-repeat shadow-sm ring-1 ring-slate-200/70 transition hover:brightness-95 active:brightness-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
-            style={{
-              backgroundImage: "url(/ui-icons/settings.png)",
-              backgroundSize: "118%",
-            }}
+            style={{ backgroundImage: "url(/ui-icons/settings.png)" }}
             aria-label={t("chatSettings")}
             title={t("chatSettings")}
           />
@@ -1511,6 +1508,11 @@ export default function ChatPage() {
                     sender={
                       m.sender_member_id
                         ? memberMap.get(m.sender_member_id) ?? null
+                        : null
+                    }
+                    recipient={
+                      m.recipient_member_id
+                        ? memberMap.get(m.recipient_member_id) ?? null
                         : null
                     }
                     isMine={isMine}

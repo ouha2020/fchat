@@ -39,11 +39,21 @@ export interface AdminPasswordResult {
   newPassword: string;
 }
 
+export interface ResetAdminPasswordResult {
+  newPassword: string;
+}
+
+export interface AccountPasswordResult {
+  newPassword: string;
+}
+
 interface DialogContextValue {
   confirm: (opts: ConfirmOptions) => Promise<boolean>;
   alert: (opts: { title: string; message: string }) => Promise<void>;
   prompt: (opts: PromptOptions) => Promise<string | null>;
   adminPassword: () => Promise<AdminPasswordResult | null>;
+  resetAdminPassword: () => Promise<ResetAdminPasswordResult | null>;
+  accountPassword: () => Promise<AccountPasswordResult | null>;
 }
 
 /* ------------------------------------------------------------------ */
@@ -64,6 +74,14 @@ type ModalState =
   | {
       type: "adminPassword";
       resolve: (v: AdminPasswordResult | null) => void;
+    }
+  | {
+      type: "resetAdminPassword";
+      resolve: (v: ResetAdminPasswordResult | null) => void;
+    }
+  | {
+      type: "accountPassword";
+      resolve: (v: AccountPasswordResult | null) => void;
     };
 
 export default function DialogProvider({ children }: { children: ReactNode }) {
@@ -106,9 +124,32 @@ export default function DialogProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  const resetAdminPassword = useCallback(
+    () =>
+      new Promise<ResetAdminPasswordResult | null>((resolve) =>
+        setModal({ type: "resetAdminPassword", resolve }),
+      ),
+    [],
+  );
+
+  const accountPassword = useCallback(
+    () =>
+      new Promise<AccountPasswordResult | null>((resolve) =>
+        setModal({ type: "accountPassword", resolve }),
+      ),
+    [],
+  );
+
   const close = useCallback(() => setModal({ type: "none" }), []);
 
-  const value: DialogContextValue = { confirm, alert, prompt, adminPassword };
+  const value: DialogContextValue = {
+    confirm,
+    alert,
+    prompt,
+    adminPassword,
+    resetAdminPassword,
+    accountPassword,
+  };
 
   return (
     <DialogContext.Provider value={value}>
@@ -145,6 +186,22 @@ export default function DialogProvider({ children }: { children: ReactNode }) {
           )}
           {modal.type === "adminPassword" && (
             <AdminPasswordDialogBody
+              onResolve={(v) => {
+                modal.resolve(v);
+                close();
+              }}
+            />
+          )}
+          {modal.type === "resetAdminPassword" && (
+            <ResetAdminPasswordDialogBody
+              onResolve={(v) => {
+                modal.resolve(v);
+                close();
+              }}
+            />
+          )}
+          {modal.type === "accountPassword" && (
+            <AccountPasswordDialogBody
               onResolve={(v) => {
                 modal.resolve(v);
                 close();
@@ -516,6 +573,228 @@ function AdminPasswordDialogBody({
           disabled={busy}
         >
           {busy ? "修改中…" : "确认修改"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function ResetAdminPasswordDialogBody({
+  onResolve,
+}: {
+  onResolve: (v: ResetAdminPasswordResult | null) => void;
+}) {
+  const [newPw, setNewPw] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [showNew, setShowNew] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [touched, setTouched] = useState(false);
+
+  const newErr =
+    touched && (!newPw || newPw.length < 6)
+      ? "新管理密码至少 6 位"
+      : null;
+  const confirmErr =
+    touched && newPw !== confirm ? "两次输入的密码不一致" : null;
+
+  function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setTouched(true);
+    if (newErr || confirmErr) return;
+    setBusy(true);
+    try {
+      onResolve({ newPassword: newPw });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      className="mx-4 rounded-2xl bg-white p-6 shadow-2xl ring-1 ring-slate-200 sm:mx-0"
+    >
+      <h2 className="text-lg font-bold text-slate-900">重置管理密码</h2>
+      <p className="mt-1 text-sm leading-relaxed text-slate-500">
+        将通过创建家庭的邮箱账号确认身份。新密码不会通过邮件发送。
+      </p>
+
+      <div className="mt-4">
+        <span className="label">新管理密码</span>
+        <div className="relative">
+          <input
+            type={showNew ? "text" : "password"}
+            value={newPw}
+            onChange={(e) => setNewPw(e.target.value)}
+            className="field pr-10"
+            placeholder="至少 6 位"
+            autoFocus
+          />
+          <button
+            type="button"
+            tabIndex={-1}
+            onClick={() => setShowNew((v) => !v)}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-400 hover:text-slate-600"
+          >
+            {showNew ? "隐藏" : "显示"}
+          </button>
+        </div>
+        {newErr ? (
+          <p className="mt-1 text-xs text-rose-600" role="alert">
+            {newErr}
+          </p>
+        ) : null}
+      </div>
+
+      <div className="mt-3">
+        <span className="label">确认新管理密码</span>
+        <div className="relative">
+          <input
+            type={showConfirm ? "text" : "password"}
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+            className="field pr-10"
+            placeholder="再次输入新管理密码"
+          />
+          <button
+            type="button"
+            tabIndex={-1}
+            onClick={() => setShowConfirm((v) => !v)}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-400 hover:text-slate-600"
+          >
+            {showConfirm ? "隐藏" : "显示"}
+          </button>
+        </div>
+        {confirmErr ? (
+          <p className="mt-1 text-xs text-rose-600" role="alert">
+            {confirmErr}
+          </p>
+        ) : null}
+      </div>
+
+      <div className="mt-5 flex gap-3">
+        <button
+          type="button"
+          className="btn-secondary flex-1"
+          disabled={busy}
+          onClick={() => onResolve(null)}
+        >
+          取消
+        </button>
+        <button type="submit" className="btn-primary flex-1" disabled={busy}>
+          {busy ? "重置中..." : "确认重置"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function AccountPasswordDialogBody({
+  onResolve,
+}: {
+  onResolve: (v: AccountPasswordResult | null) => void;
+}) {
+  const [newPw, setNewPw] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [showNew, setShowNew] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [touched, setTouched] = useState(false);
+
+  const newErr =
+    touched && (!newPw || newPw.length < 8)
+      ? "新密码至少 8 位"
+      : null;
+  const confirmErr =
+    touched && newPw !== confirm ? "两次输入的密码不一致" : null;
+
+  function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setTouched(true);
+    if (newErr || confirmErr) return;
+    setBusy(true);
+    try {
+      onResolve({ newPassword: newPw });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      className="mx-4 rounded-2xl bg-white p-6 shadow-2xl ring-1 ring-slate-200 sm:mx-0"
+    >
+      <h2 className="text-lg font-bold text-slate-900">修改登录密码</h2>
+      <p className="mt-1 text-sm leading-relaxed text-slate-500">
+        修改创建家庭邮箱账号的登录密码。修改成功后需要重新登录。
+      </p>
+
+      <div className="mt-4">
+        <span className="label">新密码</span>
+        <div className="relative">
+          <input
+            type={showNew ? "text" : "password"}
+            value={newPw}
+            onChange={(e) => setNewPw(e.target.value)}
+            className="field pr-10"
+            placeholder="至少 8 位"
+            autoFocus
+          />
+          <button
+            type="button"
+            tabIndex={-1}
+            onClick={() => setShowNew((v) => !v)}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-400 hover:text-slate-600"
+          >
+            {showNew ? "隐藏" : "显示"}
+          </button>
+        </div>
+        {newErr ? (
+          <p className="mt-1 text-xs text-rose-600" role="alert">
+            {newErr}
+          </p>
+        ) : null}
+      </div>
+
+      <div className="mt-3">
+        <span className="label">确认新密码</span>
+        <div className="relative">
+          <input
+            type={showConfirm ? "text" : "password"}
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+            className="field pr-10"
+            placeholder="再次输入新密码"
+          />
+          <button
+            type="button"
+            tabIndex={-1}
+            onClick={() => setShowConfirm((v) => !v)}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-400 hover:text-slate-600"
+          >
+            {showConfirm ? "隐藏" : "显示"}
+          </button>
+        </div>
+        {confirmErr ? (
+          <p className="mt-1 text-xs text-rose-600" role="alert">
+            {confirmErr}
+          </p>
+        ) : null}
+      </div>
+
+      <div className="mt-5 flex gap-3">
+        <button
+          type="button"
+          className="btn-secondary flex-1"
+          disabled={busy}
+          onClick={() => onResolve(null)}
+        >
+          取消
+        </button>
+        <button type="submit" className="btn-primary flex-1" disabled={busy}>
+          {busy ? "修改中..." : "确认修改"}
         </button>
       </div>
     </form>

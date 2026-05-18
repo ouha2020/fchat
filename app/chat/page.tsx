@@ -66,6 +66,9 @@ import type { Message } from "@/types/message";
 const MESSAGE_FALLBACK_POLL_MS = 30_000;
 const IMPORTANT_FALLBACK_POLL_MS = 30_000;
 const METADATA_FALLBACK_POLL_MS = 120_000;
+const INITIAL_CACHED_MESSAGE_LIMIT = 100;
+const CACHED_MESSAGE_PAGE_SIZE = 100;
+const PUSH_MESSAGE_DEDUPE_MS = 5_000;
 
 interface MessageRealtimeEvent {
   id: string;
@@ -113,6 +116,20 @@ function filterVisibleMessages(
   );
 }
 
+function sortMessagesByCreatedAt(rows: Message[]): Message[] {
+  return [...rows].sort(
+    (a, b) =>
+      new Date(a.created_at).getTime() - new Date(b.created_at).getTime() ||
+      a.id.localeCompare(b.id),
+  );
+}
+
+function mergeMessagesById(existing: Message[], incoming: Message[]): Message[] {
+  const byId = new Map(existing.map((message) => [message.id, message]));
+  incoming.forEach((message) => byId.set(message.id, message));
+  return sortMessagesByCreatedAt([...byId.values()]);
+}
+
 function removeWhisperParamFromUrl(): void {
   if (typeof window === "undefined") return;
   const url = new URL(window.location.href);
@@ -151,6 +168,7 @@ export default function ChatPage() {
     y: number;
   } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -164,17 +182,24 @@ export default function ChatPage() {
   const pullStartYRef = useRef<number | null>(null);
   const didInitialScrollRef = useRef(false);
   const forceImmediateBottomScrollRef = useRef(false);
+  const cachedMessageLimitRef = useRef(INITIAL_CACHED_MESSAGE_LIMIT);
+  const loadingOlderMessagesRef = useRef(false);
+  const preserveScrollRef = useRef<{ scrollTop: number; scrollHeight: number } | null>(null);
+  const suppressBottomScrollUntilRef = useRef(0);
   const bottomScrollTimeoutsRef = useRef<number[]>([]);
   const isIOSRef = useRef(false);
   const membersRef = useRef<FamilyMember[]>([]);
   useEffect(() => {
     membersRef.current = members;
   }, [members]);
+  const messagesRef = useRef<Message[]>([]);
   const knownMessageIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
+    messagesRef.current = messages;
     knownMessageIdsRef.current = new Set(messages.map((message) => message.id));
   }, [messages]);
   const realtimeEventTimersRef = useRef<Map<string, number>>(new Map());
+  const pendingPushMessageIdsRef = useRef<Map<string, number>>(new Map());
   const [effectShow, setEffectShow] = useState<{
     effect: Effect;
     key: string;
@@ -335,23 +360,57 @@ export default function ChatPage() {
         : next;
       const knownIds = knownMessageIdsRef.current;
       const unseenMessages = visible.filter((message) => !knownIds.has(message.id));
-      setMessages(visible);
+      setMessages((prev) => mergeMessagesById(prev, visible));
       unseenMessages.forEach(handleIncomingMessageSideEffects);
     },
     [handleIncomingMessageSideEffects],
   );
 
   const fetchRealtimeMessage = useCallback(
-    async (messageId: string) => {
+    async (messageId: string): Promise<boolean> => {
       const activeSession = sessionRef.current;
-      if (!activeSession) return;
+      if (!activeSession) return false;
       const incoming = await getMessageById(activeSession, messageId);
-      if (!incoming) return;
-      if (!isMessageVisibleToSession(incoming, activeSession)) return;
+      if (!incoming) return false;
+      if (!isMessageVisibleToSession(incoming, activeSession)) return false;
       const next = await mergeRealtimeMessage(activeSession, incoming);
       handleSyncedMessages(next);
+      return true;
     },
     [handleSyncedMessages],
+  );
+
+  const fetchPushMessageNow = useCallback(
+    async (messageId: string, scrollAfterFetch = false) => {
+      const activeSession = sessionRef.current;
+      if (!activeSession) return;
+
+      const now = Date.now();
+      const pending = pendingPushMessageIdsRef.current;
+      pending.forEach((expiresAt, id) => {
+        if (expiresAt <= now) pending.delete(id);
+      });
+
+      const existing = pending.get(messageId);
+      if (existing && existing > now) return;
+      pending.set(messageId, now + PUSH_MESSAGE_DEDUPE_MS);
+
+      try {
+        const fetched = await fetchRealtimeMessage(messageId);
+        if (!fetched) {
+          await syncMessages(activeSession, { onMessages: handleSyncedMessages });
+        }
+        if (scrollAfterFetch) {
+          window.setTimeout(() => scrollToMessage(messageId), 120);
+        }
+      } finally {
+        window.setTimeout(() => {
+          const expiresAt = pending.get(messageId);
+          if (expiresAt && expiresAt <= Date.now()) pending.delete(messageId);
+        }, PUSH_MESSAGE_DEDUPE_MS);
+      }
+    },
+    [fetchRealtimeMessage, handleSyncedMessages, scrollToMessage],
   );
 
   useEffect(() => {
@@ -382,7 +441,7 @@ export default function ChatPage() {
       if (window.location.pathname !== "/chat") return;
 
       if (data.messageId) {
-        fetchRealtimeMessage(data.messageId).catch(syncVisibleMessages);
+        fetchPushMessageNow(data.messageId).catch(syncVisibleMessages);
         return;
       }
 
@@ -399,7 +458,7 @@ export default function ChatPage() {
         handleServiceWorkerMessage,
       );
     };
-  }, [fetchRealtimeMessage, handleSyncedMessages, session]);
+  }, [fetchPushMessageNow, handleSyncedMessages, session]);
 
   useEffect(() => {
     if (!session) return;
@@ -506,6 +565,39 @@ export default function ChatPage() {
     }
   }, [handleSyncedMessages, language, session]);
 
+  const loadOlderCachedMessages = useCallback(async () => {
+    const activeSession = sessionRef.current;
+    const scroller = scrollRef.current;
+    if (!activeSession || !scroller || loadingOlderMessagesRef.current) return;
+
+    const nextLimit = cachedMessageLimitRef.current + CACHED_MESSAGE_PAGE_SIZE;
+    loadingOlderMessagesRef.current = true;
+    setLoadingOlderMessages(true);
+    preserveScrollRef.current = {
+      scrollTop: scroller.scrollTop,
+      scrollHeight: scroller.scrollHeight,
+    };
+    suppressBottomScrollUntilRef.current = Date.now() + 1200;
+
+    try {
+      const cached = await loadCachedMessagesForSession(activeSession, nextLimit);
+      const visible = filterVisibleMessages(cached, activeSession);
+      const currentMessages = messagesRef.current;
+      const merged = mergeMessagesById(visible, currentMessages);
+      if (merged.length <= currentMessages.length) {
+        preserveScrollRef.current = null;
+        return;
+      }
+      cachedMessageLimitRef.current = nextLimit;
+      setMessages(merged);
+    } catch {
+      preserveScrollRef.current = null;
+    } finally {
+      loadingOlderMessagesRef.current = false;
+      setLoadingOlderMessages(false);
+    }
+  }, []);
+
   function isHeaderActionTarget(target: EventTarget | null): boolean {
     return target instanceof Element && !!target.closest("a,button");
   }
@@ -587,6 +679,7 @@ export default function ChatPage() {
         }
         saveSession(fresh);
         setSession(fresh);
+        cachedMessageLimitRef.current = INITIAL_CACHED_MESSAGE_LIMIT;
         noteMessageCacheOpen(fresh).catch(() => undefined);
       } catch (err) {
         if (!cancelled) {
@@ -825,6 +918,17 @@ export default function ChatPage() {
   // Auto scroll to bottom on new messages.
   useLayoutEffect(() => {
     if (loading || messages.length === 0) return;
+    const preserve = preserveScrollRef.current;
+    if (preserve) {
+      preserveScrollRef.current = null;
+      const scroller = scrollRef.current;
+      if (scroller) {
+        scroller.scrollTop =
+          scroller.scrollHeight - preserve.scrollHeight + preserve.scrollTop;
+      }
+      didInitialScrollRef.current = true;
+      return;
+    }
     const shouldScrollImmediately =
       !didInitialScrollRef.current ||
       forceImmediateBottomScrollRef.current ||
@@ -842,7 +946,10 @@ export default function ChatPage() {
     let frame = 0;
     const observer = new ResizeObserver(() => {
       window.cancelAnimationFrame(frame);
-      frame = window.requestAnimationFrame(() => scrollToBottom("auto"));
+      frame = window.requestAnimationFrame(() => {
+        if (Date.now() < suppressBottomScrollUntilRef.current) return;
+        scrollToBottom("auto");
+      });
     });
 
     observer.observe(content);
@@ -862,8 +969,10 @@ export default function ChatPage() {
     if (messages.some((m) => m.id === mid)) {
       hasScrolledToNotifiedRef.current = true;
       window.setTimeout(() => scrollToMessage(mid), 300);
+      return;
     }
-  }, [messages, scrollToMessage]);
+    fetchPushMessageNow(mid, true).catch(() => undefined);
+  }, [fetchPushMessageNow, messages, scrollToMessage]);
 
   const memberMap = useMemo(() => {
     const m = new Map<string, FamilyMember>();
@@ -1129,6 +1238,12 @@ export default function ChatPage() {
     if (endY - startY > 72) {
       void refreshChatData(true);
     }
+  }
+
+  function handleMessagesScroll() {
+    const scroller = scrollRef.current;
+    if (!scroller || scroller.scrollTop > 32) return;
+    void loadOlderCachedMessages();
   }
 
   function handleSelectImportant(notification: ImportantNotification) {
@@ -1467,6 +1582,7 @@ export default function ChatPage() {
 
       <div
         ref={scrollRef}
+        onScroll={handleMessagesScroll}
         onTouchStart={handleMessagesTouchStart}
         onTouchEnd={handleMessagesTouchEnd}
         className="no-scrollbar flex-1 min-h-0 overflow-y-auto overscroll-contain bg-slate-50 bg-cover bg-center bg-no-repeat px-3 pt-4 sm:px-5"
@@ -1479,6 +1595,11 @@ export default function ChatPage() {
         }}
       >
         <div ref={messagesContentRef} className="space-y-4">
+          {loadingOlderMessages ? (
+            <div className="flex justify-center pb-1">
+              <span className="h-1.5 w-10 rounded-full bg-slate-300/80" />
+            </div>
+          ) : null}
           {messages.length === 0 ? (
             <div className="py-10 text-center text-sm text-slate-400">
               {t("chatEmpty")}

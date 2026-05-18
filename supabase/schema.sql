@@ -1,4 +1,4 @@
--- Family Chat MVP schema for Supabase / PostgreSQL
+﻿-- Family Chat MVP schema for Supabase / PostgreSQL
 -- Run this in the Supabase SQL editor in order from top to bottom.
 
 create extension if not exists "pgcrypto";
@@ -352,7 +352,7 @@ begin
   values (
     v_family_id,
     'system',
-    '瀹跺涵宸插垱寤猴紝娆㈣繋鏉ュ埌銆? || trim(p_family_name) || '�?
+    '鐎硅泛娑靛鎻掑灡瀵ょ尨绱濆▎銏ｇ箣閺夈儱鍩岄妴? || trim(p_family_name) || '閵?
   );
 
   return query
@@ -436,7 +436,7 @@ begin
   values (
     v_family.id,
     'system',
-    v_clean_nickname || ' 鍔犲叆浜嗗�?
+    v_clean_nickname || ' 閸旂姴鍙嗘禍鍡楊啀鎼?
   );
 
   return query
@@ -695,7 +695,7 @@ begin
    where id = v_family_id;
 
   insert into messages (family_id, message_type, content)
-  values (v_family_id, 'system', '瀹跺涵鍚嶇О宸叉洿鏂颁负銆? || trim(p_new_name) || '�?);
+  values (v_family_id, 'system', '鐎硅泛娑甸崥宥囆炲鍙夋纯閺傞璐熼妴? || trim(p_new_name) || '閵?);
 end;
 $$;
 
@@ -722,7 +722,7 @@ begin
    where id = v_family_id;
 
   insert into messages (family_id, message_type, content)
-  values (v_family_id, 'system', '瀹跺涵浠ｇ爜宸查噸缃?);
+  values (v_family_id, 'system', '鐎硅泛娑垫禒锝囩垳瀹告煡鍣哥純?);
 
   return v_new_code;
 end;
@@ -753,8 +753,8 @@ begin
   values (
     v_family_id,
     'system',
-    case when p_join_enabled then '绠＄悊鍛樺紑鍚簡鏂版垚鍛樺姞鍏?
-         else '绠＄悊鍛樺叧闂簡鏂版垚鍛樺姞鍏? end
+    case when p_join_enabled then '缁狅紕鎮婇崨妯虹磻閸氼垯绨￠弬鐗堝灇閸涙ê濮為崗?
+         else '缁狅紕鎮婇崨妯哄彠闂傤厺绨￠弬鐗堝灇閸涙ê濮為崗? end
   );
 end;
 $$;
@@ -806,7 +806,7 @@ begin
   values (
     v_caller.family_id,
     'system',
-    v_target.nickname || ' 宸茶绉诲嚭瀹跺�?
+    v_target.nickname || ' 瀹歌尪顫︾粔璇插毉鐎硅泛娑?
   );
 end;
 $$;
@@ -855,7 +855,7 @@ begin
   values (
     v_member.family_id,
     'system',
-    v_member.nickname || ' 绂诲紑浜嗗�?
+    v_member.nickname || ' 缁傝绱戞禍鍡楊啀鎼?
   );
 end;
 $$;
@@ -1516,7 +1516,7 @@ begin
    where id = v_family_id;
 
   insert into messages (family_id, message_type, content)
-  values (v_family_id, 'system', '瀹跺涵宸插垱寤猴紝娆㈣繋鏉ュ埌銆? || trim(p_family_name) || '�?);
+  values (v_family_id, 'system', '鐎硅泛娑靛鎻掑灡瀵ょ尨绱濆▎銏ｇ箣閺夈儱鍩岄妴? || trim(p_family_name) || '閵?);
 
   return query
   select v_family_id, v_code, v_member_id, v_token, true;
@@ -1608,7 +1608,7 @@ begin
   perform record_join_attempt(v_ip_hash, v_clean_code, true);
 
   insert into messages (family_id, message_type, content)
-  values (v_family.id, 'system', v_clean_nickname || ' 鍔犲叆浜嗗�?);
+  values (v_family.id, 'system', v_clean_nickname || ' 閸旂姴鍙嗘禍鍡楊啀鎼?);
 
   return query
   select v_family.id, v_family.name, v_family.family_code, v_member_id, v_token, false;
@@ -2212,7 +2212,7 @@ begin
    where id = v_family_id;
 
   insert into messages (family_id, message_type, content)
-  values (v_family_id, 'system', '瀹跺涵浠ｇ爜宸查噸缃?);
+  values (v_family_id, 'system', '鐎硅泛娑垫禒锝囩垳瀹告煡鍣哥純?);
 
   return v_new_code;
 end;
@@ -3824,3 +3824,1005 @@ grant execute on function get_message_for_member(uuid, text, uuid) to anon, auth
 grant execute on function delete_message(uuid, text, uuid) to anon, authenticated;
 grant execute on function add_important_notification(uuid, text, uuid) to anon, authenticated;
 grant execute on function list_important_notifications_for_member(uuid, text) to anon, authenticated;
+
+-- =====================================================================
+-- Auth owner + pending family code flow
+-- =====================================================================
+
+alter table families
+  add column if not exists owner_user_id uuid references auth.users(id) on delete set null,
+  add column if not exists family_code_email_sent_at timestamptz;
+
+alter table family_members
+  add column if not exists user_id uuid references auth.users(id) on delete set null;
+
+create index if not exists families_owner_user_id_idx
+  on families (owner_user_id)
+  where owner_user_id is not null;
+
+create index if not exists family_members_user_id_idx
+  on family_members (user_id)
+  where user_id is not null;
+
+create table if not exists pending_family_codes (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  email text not null,
+  family_code text unique not null,
+  status text not null default 'pending' check (status in ('pending', 'verified', 'used', 'expired')),
+  verified_at timestamptz,
+  used_at timestamptz,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists pending_family_codes_user_status_idx
+  on pending_family_codes (user_id, status, expires_at desc);
+
+create index if not exists pending_family_codes_active_code_idx
+  on pending_family_codes (family_code)
+  where status in ('pending', 'verified');
+
+alter table pending_family_codes enable row level security;
+
+revoke all on pending_family_codes from anon, authenticated;
+
+create or replace function gen_family_code()
+returns text
+language plpgsql
+set search_path = public, extensions
+as $$
+declare
+  alphabet text := 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  code text;
+  attempt int := 0;
+  v_byte int;
+begin
+  loop
+    code := '';
+    for i in 1..6 loop
+      v_byte := get_byte(gen_random_bytes(1), 0);
+      code := code || substr(alphabet, (v_byte % length(alphabet)) + 1, 1);
+    end loop;
+
+    exit when not exists (select 1 from families where family_code = code)
+      and not exists (
+        select 1
+          from pending_family_codes p
+         where p.family_code = code
+           and p.status in ('pending', 'verified')
+           and p.expires_at > now()
+      );
+
+    attempt := attempt + 1;
+    if attempt > 50 then
+      raise exception 'family_code_generation_failed';
+    end if;
+  end loop;
+
+  return code;
+end;
+$$;
+
+create or replace function hash_admin_password(secret text)
+returns text
+language sql
+set search_path = public, extensions
+as $$
+  select crypt(secret, gen_salt('bf', 10));
+$$;
+
+create or replace function verify_admin_password_hash(secret text, stored_hash text)
+returns boolean
+language plpgsql
+set search_path = public, extensions
+as $$
+begin
+  if secret is null or stored_hash is null then
+    return false;
+  end if;
+
+  if stored_hash ~ '^[0-9a-f]{64}$' then
+    return stored_hash = hash_secret(secret);
+  end if;
+
+  return stored_hash = crypt(secret, stored_hash);
+end;
+$$;
+
+create or replace function require_admin(
+  p_member_id uuid,
+  p_member_token text,
+  p_admin_password text
+)
+returns uuid
+security definer
+set search_path = public, extensions
+language plpgsql
+as $$
+declare
+  v_family_id uuid;
+  v_is_admin boolean;
+  v_password_hash text;
+begin
+  select fm.family_id, fm.is_admin, f.admin_password_hash
+    into v_family_id, v_is_admin, v_password_hash
+    from family_members fm
+    join families f on f.id = fm.family_id
+   where fm.id = p_member_id
+     and fm.status = 'active'
+     and (
+       fm.access_token_hash = hash_secret(p_member_token)
+       or fm.member_token_hash = hash_secret(p_member_token)
+     );
+
+  if v_family_id is null then
+    raise exception 'unauthorized';
+  end if;
+  if not v_is_admin then
+    raise exception 'not_admin';
+  end if;
+  if not verify_admin_password_hash(p_admin_password, v_password_hash) then
+    raise exception 'invalid_admin_password';
+  end if;
+
+  return v_family_id;
+end;
+$$;
+
+create or replace function create_family_with_verified_code(
+  p_user_id uuid,
+  p_email text,
+  p_family_code text,
+  p_family_name text,
+  p_admin_password text,
+  p_nickname text,
+  p_role text,
+  p_device_id text default null
+)
+returns table (
+  family_id uuid,
+  family_name text,
+  family_code text,
+  member_id uuid,
+  member_token text,
+  is_admin boolean
+)
+security definer
+set search_path = public, extensions
+language plpgsql
+as $$
+#variable_conflict use_column
+declare
+  v_pending pending_family_codes%rowtype;
+  v_family_id uuid;
+  v_member_id uuid;
+  v_token text;
+  v_family_name text;
+  v_code text;
+begin
+  v_family_name := trim(coalesce(p_family_name, ''));
+  v_code := upper(trim(coalesce(p_family_code, '')));
+
+  if p_user_id is null then
+    raise exception 'unauthorized';
+  end if;
+  if exists (
+    select 1
+      from family_members fm
+     where fm.user_id = p_user_id
+       and fm.status = 'active'
+     limit 1
+  ) then
+    raise exception 'account_already_has_family';
+  end if;
+  if length(v_family_name) = 0 or length(v_family_name) > 30 then
+    raise exception 'family_name_required';
+  end if;
+  if p_admin_password is null or length(p_admin_password) < 6 or length(p_admin_password) > 128 then
+    raise exception 'admin_password_too_short';
+  end if;
+  if p_nickname is null or length(trim(p_nickname)) = 0 or length(trim(p_nickname)) > 20 then
+    raise exception 'nickname_required';
+  end if;
+  if p_role not in ('father', 'mother', 'child') then
+    raise exception 'invalid_role';
+  end if;
+
+  select * into v_pending
+    from pending_family_codes p
+   where p.user_id = p_user_id
+     and p.family_code = v_code
+   order by p.created_at desc
+   limit 1
+   for update;
+
+  if not found then
+    raise exception 'invalid_family_code';
+  end if;
+  if v_pending.status = 'used' then
+    raise exception 'family_code_used';
+  end if;
+  if v_pending.expires_at <= now() or v_pending.status = 'expired' then
+    update pending_family_codes
+       set status = 'expired', updated_at = now()
+     where id = v_pending.id and status <> 'expired';
+    raise exception 'family_code_expired';
+  end if;
+  if v_pending.status <> 'verified' then
+    raise exception 'family_code_not_verified';
+  end if;
+  if exists (select 1 from families f where f.family_code = v_code) then
+    raise exception 'family_code_used';
+  end if;
+
+  v_token := gen_random_uuid()::text;
+
+  insert into families (
+    owner_user_id, name, family_code, admin_password_hash,
+    family_code_email_sent_at, code_updated_at
+  )
+  values (
+    p_user_id, v_family_name, v_code, hash_admin_password(p_admin_password),
+    now(), now()
+  )
+  returning id into v_family_id;
+
+  insert into family_members (
+    family_id, user_id, nickname, role, member_token_hash, access_token_hash,
+    device_id, is_admin, last_active_at, last_seen_at
+  )
+  values (
+    v_family_id, p_user_id, trim(p_nickname), p_role, hash_secret(v_token),
+    hash_secret(v_token), nullif(trim(coalesce(p_device_id, '')), ''),
+    true, now(), now()
+  )
+  returning id into v_member_id;
+
+  update families
+     set created_by_member_id = v_member_id
+   where id = v_family_id;
+
+  update pending_family_codes
+     set status = 'used', used_at = now(), updated_at = now()
+   where id = v_pending.id;
+
+  insert into messages (
+    family_id, message_type, content, system_event_type, system_event_payload
+  )
+  values (
+    v_family_id,
+    'system',
+    trim(p_nickname) || U&'\521B\5EFA\4E86\5BB6\5EAD',
+    'family_created',
+    jsonb_build_object('family_name', v_family_name, 'nickname', trim(p_nickname))
+  );
+
+  return query
+  select v_family_id, v_family_name, v_code, v_member_id, v_token, true;
+end;
+$$;
+
+create or replace function issue_member_session_for_user(
+  p_user_id uuid,
+  p_device_id text default null
+)
+returns table (
+  family_id uuid,
+  family_name text,
+  family_code text,
+  member_id uuid,
+  member_token text,
+  device_id text,
+  nickname text,
+  role text,
+  is_admin boolean
+)
+security definer
+set search_path = public, extensions
+language plpgsql
+as $$
+#variable_conflict use_column
+declare
+  v_member family_members%rowtype;
+  v_family families%rowtype;
+  v_token text;
+  v_device text;
+begin
+  if p_user_id is null then
+    raise exception 'unauthorized';
+  end if;
+
+  select * into v_member
+    from family_members fm
+   where fm.user_id = p_user_id
+     and fm.status = 'active'
+   order by fm.created_at asc
+   limit 1;
+
+  if not found then
+    return;
+  end if;
+
+  select * into v_family from families where id = v_member.family_id;
+  if not found then
+    return;
+  end if;
+
+  v_token := gen_random_uuid()::text;
+  v_device := nullif(trim(coalesce(p_device_id, '')), '');
+
+  update family_members
+     set member_token_hash = hash_secret(v_token),
+         access_token_hash = hash_secret(v_token),
+         device_id = coalesce(v_device, device_id),
+         last_active_at = now(),
+         last_seen_at = now(),
+         updated_at = now()
+   where id = v_member.id;
+
+  return query
+  select v_family.id, v_family.name, v_family.family_code,
+         v_member.id, v_token, coalesce(v_device, v_member.device_id),
+         v_member.nickname, v_member.role, v_member.is_admin;
+end;
+$$;
+
+revoke execute on function create_family(text, text, text, text, text) from anon, authenticated;
+grant execute on function create_family_with_verified_code(uuid, text, text, text, text, text, text, text) to service_role;
+grant execute on function issue_member_session_for_user(uuid, text) to service_role;
+
+create or replace function update_admin_password(
+  p_member_id uuid,
+  p_member_token text,
+  p_current_password text,
+  p_new_password text
+)
+returns void
+security definer
+set search_path = public, extensions
+language plpgsql
+as $$
+declare
+  v_family_id uuid;
+begin
+  if p_new_password is null or length(p_new_password) < 6 or length(p_new_password) > 128 then
+    raise exception 'admin_password_too_short';
+  end if;
+
+  v_family_id := require_admin(p_member_id, p_member_token, p_current_password);
+
+  update families
+     set admin_password_hash = hash_admin_password(p_new_password),
+         admin_password_updated_at = now(),
+         updated_at = now()
+   where id = v_family_id;
+
+  insert into messages (
+    family_id, message_type, content, system_event_type, system_event_payload
+  )
+  values (
+    v_family_id,
+    'system',
+    U&'\7BA1\7406\5458\5DF2\4FEE\6539\7BA1\7406\5BC6\7801',
+    'admin_password_changed',
+    '{}'::jsonb
+  );
+end;
+$$;
+
+grant execute on function update_admin_password(uuid, text, text, text) to anon, authenticated;
+
+create or replace function resolve_join_family_state(
+  p_family_code text,
+  p_nickname text
+)
+returns table (status text)
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+#variable_conflict use_column
+declare
+  v_family families%rowtype;
+  v_clean_code text;
+  v_clean_nickname text;
+  v_ip_hash text;
+begin
+  begin
+    v_ip_hash := assert_join_rate_limit();
+  exception when others then
+    if sqlerrm like '%rate_limited%' then
+      return query select 'rate_limited'::text;
+      return;
+    end if;
+    raise;
+  end;
+
+  v_clean_code := upper(trim(coalesce(p_family_code, '')));
+  v_clean_nickname := trim(coalesce(p_nickname, ''));
+
+  if v_clean_code !~ '^[A-Z0-9]{6,12}$' then
+    perform record_join_attempt(v_ip_hash, v_clean_code, false);
+    return query select 'invalid_family_code'::text;
+    return;
+  end if;
+
+  if length(v_clean_nickname) = 0 or length(v_clean_nickname) > 20 then
+    perform record_join_attempt(v_ip_hash, v_clean_code, false);
+    return query select 'nickname_required'::text;
+    return;
+  end if;
+
+  select * into v_family
+    from families
+   where families.family_code = v_clean_code
+     and (families.code_expires_at is null or families.code_expires_at > now())
+   limit 1;
+
+  if not found then
+    perform record_join_attempt(v_ip_hash, v_clean_code, false);
+    return query select 'invalid_family_code'::text;
+    return;
+  end if;
+
+  if not v_family.join_enabled then
+    perform record_join_attempt(v_ip_hash, v_clean_code, false);
+    return query select 'join_disabled'::text;
+    return;
+  end if;
+
+  if exists (
+    select 1
+      from family_members fm
+     where fm.family_id = v_family.id
+       and fm.nickname = v_clean_nickname
+       and fm.status in ('active', 'removed')
+  ) then
+    return query select 'rejoin_required'::text;
+    return;
+  end if;
+
+  return query select 'can_join'::text;
+end;
+$$;
+
+create or replace function join_family(
+  p_family_code text,
+  p_nickname text,
+  p_role text,
+  p_device_id text default null
+)
+returns table (
+  family_id uuid,
+  family_name text,
+  family_code text,
+  member_id uuid,
+  member_token text,
+  is_admin boolean
+)
+security definer
+set search_path = public, extensions
+language plpgsql
+as $$
+#variable_conflict use_column
+declare
+  v_family families%rowtype;
+  v_member_id uuid;
+  v_token text;
+  v_clean_code text;
+  v_clean_nickname text;
+  v_ip_hash text;
+begin
+  v_ip_hash := assert_join_rate_limit();
+  v_clean_code := upper(trim(coalesce(p_family_code, '')));
+  v_clean_nickname := trim(coalesce(p_nickname, ''));
+
+  if v_clean_code !~ '^[A-Z0-9]{6,12}$' then
+    perform record_join_attempt(v_ip_hash, v_clean_code, false);
+    raise exception 'invalid_family_code';
+  end if;
+  if length(v_clean_nickname) = 0 or length(v_clean_nickname) > 20 then
+    perform record_join_attempt(v_ip_hash, v_clean_code, false);
+    raise exception 'nickname_required';
+  end if;
+  if p_role not in ('father', 'mother', 'child') then
+    perform record_join_attempt(v_ip_hash, v_clean_code, false);
+    raise exception 'invalid_role';
+  end if;
+
+  select * into v_family
+    from families
+   where families.family_code = v_clean_code
+     and (families.code_expires_at is null or families.code_expires_at > now())
+   limit 1;
+
+  if not found then
+    perform record_join_attempt(v_ip_hash, v_clean_code, false);
+    raise exception 'invalid_family_code';
+  end if;
+
+  if not v_family.join_enabled then
+    perform record_join_attempt(v_ip_hash, v_clean_code, false);
+    raise exception 'join_disabled';
+  end if;
+
+  if exists (
+    select 1
+      from family_members fm
+     where fm.family_id = v_family.id
+       and fm.nickname = v_clean_nickname
+       and fm.status in ('active', 'removed')
+  ) then
+    perform record_join_attempt(v_ip_hash, v_clean_code, false);
+    raise exception 'nickname_taken';
+  end if;
+
+  v_token := gen_random_uuid()::text;
+
+  insert into family_members (
+    family_id, nickname, role, member_token_hash, access_token_hash,
+    device_id, is_admin, last_active_at, last_seen_at
+  )
+  values (
+    v_family.id, v_clean_nickname, p_role, hash_secret(v_token),
+    hash_secret(v_token), nullif(trim(coalesce(p_device_id, '')), ''),
+    false, now(), now()
+  )
+  returning id into v_member_id;
+
+  perform record_join_attempt(v_ip_hash, v_clean_code, true);
+
+  insert into messages (
+    family_id, message_type, content, system_event_type, system_event_payload
+  )
+  values (
+    v_family.id,
+    'system',
+    v_clean_nickname || U&' \52A0\5165\4E86\5BB6\5EAD',
+    'member_joined',
+    jsonb_build_object('nickname', v_clean_nickname)
+  );
+
+  return query
+  select v_family.id, v_family.name, v_family.family_code, v_member_id, v_token, false;
+end;
+$$;
+
+grant execute on function resolve_join_family_state(text, text) to anon, authenticated;
+grant execute on function join_family(text, text, text, text) to anon, authenticated;
+
+-- Tighten newly added auth-family RPC grants.
+revoke execute on function create_family(text, text, text, text, text) from public, anon, authenticated;
+revoke execute on function create_family_with_verified_code(uuid, text, text, text, text, text, text, text) from public, anon, authenticated;
+revoke execute on function issue_member_session_for_user(uuid, text) from public, anon, authenticated;
+revoke execute on function require_admin(uuid, text, text) from public, anon, authenticated;
+
+grant execute on function create_family_with_verified_code(uuid, text, text, text, text, text, text, text) to service_role;
+grant execute on function issue_member_session_for_user(uuid, text) to service_role;
+
+-- 20260518_rejoin_uses_admin_password_hash_verify
+-- Rejoin-by-nickname must accept both legacy sha256 admin password hashes
+-- and newer salted hashes created by create_family_with_verified_code.
+
+create or replace function rejoin_family_member(
+  p_family_code text,
+  p_nickname text,
+  p_admin_password text,
+  p_device_id text default null
+)
+returns table (
+  family_id uuid,
+  family_name text,
+  family_code text,
+  member_id uuid,
+  member_token text,
+  nickname text,
+  role text,
+  is_admin boolean
+)
+security definer
+set search_path = public, extensions
+language plpgsql
+as $$
+#variable_conflict use_column
+declare
+  v_family families%rowtype;
+  v_member family_members%rowtype;
+  v_clean_code text;
+  v_clean_nickname text;
+  v_token text;
+  v_ip_hash text;
+begin
+  v_ip_hash := assert_join_rate_limit();
+  v_clean_code := upper(trim(coalesce(p_family_code, '')));
+  v_clean_nickname := trim(coalesce(p_nickname, ''));
+
+  if v_clean_code !~ '^[A-Z0-9]{6,12}$' then
+    perform record_join_attempt(v_ip_hash, v_clean_code, false);
+    raise exception 'invalid_family_code';
+  end if;
+  if length(v_clean_nickname) = 0 or length(v_clean_nickname) > 20 then
+    perform record_join_attempt(v_ip_hash, v_clean_code, false);
+    raise exception 'nickname_required';
+  end if;
+  if p_admin_password is null or length(p_admin_password) = 0 or length(p_admin_password) > 128 then
+    perform record_join_attempt(v_ip_hash, v_clean_code, false);
+    raise exception 'invalid_admin_password';
+  end if;
+
+  select * into v_family
+    from families
+   where families.family_code = v_clean_code
+     and (families.code_expires_at is null or families.code_expires_at > now())
+   limit 1;
+
+  if not found then
+    perform record_join_attempt(v_ip_hash, v_clean_code, false);
+    raise exception 'invalid_family_code';
+  end if;
+
+  if not verify_admin_password_hash(p_admin_password, v_family.admin_password_hash) then
+    perform record_join_attempt(v_ip_hash, v_clean_code, false);
+    raise exception 'invalid_admin_password';
+  end if;
+
+  select * into v_member
+    from family_members fm
+   where fm.family_id = v_family.id
+     and fm.nickname = v_clean_nickname
+     and fm.status in ('active', 'removed')
+   order by fm.is_admin desc, fm.created_at
+   limit 1;
+
+  if not found then
+    perform record_join_attempt(v_ip_hash, v_clean_code, false);
+    raise exception 'member_not_found';
+  end if;
+
+  v_token := gen_random_uuid()::text;
+
+  update messages
+     set sender_member_id = v_member.id
+   where sender_member_id in (
+     select id from family_members fm
+      where fm.family_id = v_family.id
+        and fm.nickname = v_clean_nickname
+        and fm.id <> v_member.id
+   );
+
+  update messages
+     set deleted_by_member_id = v_member.id
+   where deleted_by_member_id in (
+     select id from family_members fm
+      where fm.family_id = v_family.id
+        and fm.nickname = v_clean_nickname
+        and fm.id <> v_member.id
+   );
+
+  update important_notifications
+     set created_by_member_id = v_member.id
+   where created_by_member_id in (
+     select id from family_members fm
+      where fm.family_id = v_family.id
+        and fm.nickname = v_clean_nickname
+        and fm.id <> v_member.id
+   );
+
+  update important_notifications
+     set removed_by_member_id = v_member.id
+   where removed_by_member_id in (
+     select id from family_members fm
+      where fm.family_id = v_family.id
+        and fm.nickname = v_clean_nickname
+        and fm.id <> v_member.id
+   );
+
+  update family_members
+     set status = 'removed',
+         updated_at = now()
+   where family_id = v_family.id
+     and nickname = v_clean_nickname
+     and id <> v_member.id
+     and status = 'active';
+
+  update family_members
+     set status = 'active',
+         member_token_hash = hash_secret(v_token),
+         access_token_hash = hash_secret(v_token),
+         device_id = nullif(trim(coalesce(p_device_id, '')), ''),
+         last_active_at = now(),
+         last_seen_at = now(),
+         updated_at = now()
+   where id = v_member.id;
+
+  perform record_join_attempt(v_ip_hash, v_clean_code, true);
+
+  return query
+  select v_family.id, v_family.name, v_family.family_code,
+         v_member.id, v_token, v_member.nickname, v_member.role, v_member.is_admin;
+end;
+$$;
+
+grant execute on function rejoin_family_member(text, text, text, text) to anon, authenticated;
+
+
+-- 20260518_reset_admin_password_by_owner
+-- Allow the family owner account to reset the family admin password
+-- without knowing the current admin password.
+
+create or replace function reset_admin_password_by_owner(
+  p_user_id uuid,
+  p_member_id uuid,
+  p_member_token text,
+  p_new_password text
+)
+returns void
+security definer
+set search_path = public, extensions
+language plpgsql
+as $$
+declare
+  v_family_id uuid;
+  v_owner_user_id uuid;
+  v_is_admin boolean;
+begin
+  if p_user_id is null then
+    raise exception 'unauthorized';
+  end if;
+  if p_new_password is null or length(p_new_password) < 6 or length(p_new_password) > 128 then
+    raise exception 'admin_password_too_short';
+  end if;
+
+  select fm.family_id, fm.is_admin, f.owner_user_id
+    into v_family_id, v_is_admin, v_owner_user_id
+    from family_members fm
+    join families f on f.id = fm.family_id
+   where fm.id = p_member_id
+     and fm.status = 'active'
+     and (
+       fm.access_token_hash = hash_secret(p_member_token)
+       or fm.member_token_hash = hash_secret(p_member_token)
+     );
+
+  if v_family_id is null then
+    raise exception 'member_not_found';
+  end if;
+  if not v_is_admin then
+    raise exception 'not_admin';
+  end if;
+  if v_owner_user_id is null or v_owner_user_id <> p_user_id then
+    raise exception 'owner_required';
+  end if;
+
+  update families
+     set admin_password_hash = hash_admin_password(p_new_password),
+         admin_password_updated_at = now(),
+         updated_at = now()
+   where id = v_family_id;
+
+  insert into messages (
+    family_id, message_type, content, system_event_type, system_event_payload
+  )
+  values (
+    v_family_id,
+    'system',
+    U&'\7BA1\7406\5BC6\7801\5DF2\91CD\7F6E',
+    'admin_password_changed',
+    jsonb_build_object('by_owner_user_id', p_user_id)
+  );
+end;
+$$;
+
+revoke execute on function reset_admin_password_by_owner(uuid, uuid, text, text)
+  from public, anon, authenticated;
+grant execute on function reset_admin_password_by_owner(uuid, uuid, text, text)
+  to service_role;
+
+-- 20260518_email_login_replaces_admin_password
+-- Admin-sensitive flows now use the family owner's Supabase Auth session.
+-- Keep legacy functions defined for old deployments, but stop exposing them
+-- to browser clients where a separate admin password could be used directly.
+
+revoke execute on function update_family_name(uuid, text, text, text) from public, anon, authenticated;
+revoke execute on function reset_family_code(uuid, text, text) from public, anon, authenticated;
+revoke execute on function set_join_enabled(uuid, text, text, boolean) from public, anon, authenticated;
+revoke execute on function update_admin_password(uuid, text, text, text) from public, anon, authenticated;
+revoke execute on function rejoin_family_member(text, text, text, text) from public, anon, authenticated;
+revoke execute on function remove_member(uuid, text, uuid) from public, anon, authenticated;
+
+grant execute on function update_family_name(uuid, text, text, text) to service_role;
+grant execute on function reset_family_code(uuid, text, text) to service_role;
+grant execute on function set_join_enabled(uuid, text, text, boolean) to service_role;
+grant execute on function update_admin_password(uuid, text, text, text) to service_role;
+grant execute on function rejoin_family_member(text, text, text, text) to service_role;
+grant execute on function remove_member(uuid, text, uuid) to service_role;
+
+-- 20260518_resend_existing_family_code
+-- Store the creator email for already-created families so the current
+-- official family code can be resent to that mailbox without exposing it.
+
+alter table families
+  add column if not exists owner_email text;
+
+create index if not exists families_owner_email_lower_idx
+  on families (lower(owner_email))
+  where owner_email is not null;
+
+with used_codes as (
+  select distinct on (p.user_id)
+         p.user_id,
+         lower(trim(p.email)) as email
+    from pending_family_codes p
+   where p.status = 'used'
+     and p.email is not null
+     and length(trim(p.email)) > 0
+   order by p.user_id, p.used_at desc nulls last, p.created_at desc
+)
+update families f
+   set owner_email = used_codes.email,
+       updated_at = f.updated_at
+  from used_codes
+ where f.owner_user_id = used_codes.user_id
+   and f.owner_email is null;
+
+create table if not exists family_code_recovery_attempts (
+  id uuid primary key default gen_random_uuid(),
+  email_hash text not null,
+  ip_hash text not null,
+  sent boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists family_code_recovery_attempts_email_created_idx
+  on family_code_recovery_attempts (email_hash, created_at desc);
+
+create index if not exists family_code_recovery_attempts_ip_created_idx
+  on family_code_recovery_attempts (ip_hash, created_at desc);
+
+alter table family_code_recovery_attempts enable row level security;
+revoke all on family_code_recovery_attempts from anon, authenticated;
+
+create or replace function create_family_with_verified_code(
+  p_user_id uuid,
+  p_email text,
+  p_family_code text,
+  p_family_name text,
+  p_admin_password text,
+  p_nickname text,
+  p_role text,
+  p_device_id text default null
+)
+returns table (
+  family_id uuid,
+  family_name text,
+  family_code text,
+  member_id uuid,
+  member_token text,
+  is_admin boolean
+)
+security definer
+set search_path = public, extensions
+language plpgsql
+as $$
+#variable_conflict use_column
+declare
+  v_pending pending_family_codes%rowtype;
+  v_family_id uuid;
+  v_member_id uuid;
+  v_token text;
+  v_family_name text;
+  v_code text;
+  v_owner_email text;
+begin
+  v_family_name := trim(coalesce(p_family_name, ''));
+  v_code := upper(trim(coalesce(p_family_code, '')));
+  v_owner_email := lower(trim(coalesce(p_email, '')));
+
+  if p_user_id is null then
+    raise exception 'unauthorized';
+  end if;
+  if length(v_owner_email) = 0 then
+    raise exception 'email_required';
+  end if;
+  if exists (
+    select 1
+      from family_members fm
+     where fm.user_id = p_user_id
+       and fm.status = 'active'
+     limit 1
+  ) then
+    raise exception 'account_already_has_family';
+  end if;
+  if length(v_family_name) = 0 or length(v_family_name) > 30 then
+    raise exception 'family_name_required';
+  end if;
+  if p_admin_password is null or length(p_admin_password) < 6 or length(p_admin_password) > 128 then
+    raise exception 'admin_password_too_short';
+  end if;
+  if p_nickname is null or length(trim(p_nickname)) = 0 or length(trim(p_nickname)) > 20 then
+    raise exception 'nickname_required';
+  end if;
+  if p_role not in ('father', 'mother', 'child') then
+    raise exception 'invalid_role';
+  end if;
+
+  select * into v_pending
+    from pending_family_codes p
+   where p.user_id = p_user_id
+     and p.family_code = v_code
+   order by p.created_at desc
+   limit 1
+   for update;
+
+  if not found then
+    raise exception 'invalid_family_code';
+  end if;
+  if v_pending.status = 'used' then
+    raise exception 'family_code_used';
+  end if;
+  if v_pending.expires_at <= now() or v_pending.status = 'expired' then
+    update pending_family_codes
+       set status = 'expired', updated_at = now()
+     where id = v_pending.id and status <> 'expired';
+    raise exception 'family_code_expired';
+  end if;
+  if v_pending.status <> 'verified' then
+    raise exception 'family_code_not_verified';
+  end if;
+  if exists (select 1 from families f where f.family_code = v_code) then
+    raise exception 'family_code_used';
+  end if;
+
+  v_token := gen_random_uuid()::text;
+
+  insert into families (
+    owner_user_id, owner_email, name, family_code, admin_password_hash,
+    family_code_email_sent_at, code_updated_at
+  )
+  values (
+    p_user_id, v_owner_email, v_family_name, v_code, hash_admin_password(p_admin_password),
+    now(), now()
+  )
+  returning id into v_family_id;
+
+  insert into family_members (
+    family_id, user_id, nickname, role, member_token_hash, access_token_hash,
+    device_id, is_admin, last_active_at, last_seen_at
+  )
+  values (
+    v_family_id, p_user_id, trim(p_nickname), p_role, hash_secret(v_token),
+    hash_secret(v_token), nullif(trim(coalesce(p_device_id, '')), ''),
+    true, now(), now()
+  )
+  returning id into v_member_id;
+
+  update families
+     set created_by_member_id = v_member_id
+   where id = v_family_id;
+
+  update pending_family_codes
+     set status = 'used', used_at = now(), updated_at = now()
+   where id = v_pending.id;
+
+  insert into messages (
+    family_id, message_type, content, system_event_type, system_event_payload
+  )
+  values (
+    v_family_id,
+    'system',
+    trim(p_nickname) || U&'\521B\5EFA\4E86\5BB6\5EAD',
+    'family_created',
+    jsonb_build_object('family_name', v_family_name, 'nickname', trim(p_nickname))
+  );
+
+  return query
+  select v_family_id, v_family_name, v_code, v_member_id, v_token, true;
+end;
+$$;
+
+revoke execute on function create_family_with_verified_code(uuid, text, text, text, text, text, text, text)
+  from public, anon, authenticated;
+grant execute on function create_family_with_verified_code(uuid, text, text, text, text, text, text, text)
+  to service_role;

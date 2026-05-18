@@ -9,8 +9,7 @@ const DB_VERSION = 1;
 const MESSAGE_STORE = "messages";
 const SYNC_STORE = "sync_state";
 const MIN_RETAINED_MESSAGES = 100;
-const MAX_RETAINED_MESSAGES = 300;
-const OLD_MESSAGE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_RETAINED_MESSAGES = 1000;
 
 export interface MessageSyncState {
   ownerKey: string;
@@ -246,15 +245,10 @@ function queuePruneOwnerMessages(
     const records = request.result as CachedMessageRecord[];
     if (records.length <= MAX_RETAINED_MESSAGES) return;
 
-    const cutoff = Date.now() - OLD_MESSAGE_MAX_AGE_MS;
     records
       .sort((a, b) => -compareCreatedAtAsc(a, b))
       .forEach((record, index) => {
-        const createdAt = new Date(record.created_at).getTime();
-        const keep =
-          index < MIN_RETAINED_MESSAGES ||
-          (index < MAX_RETAINED_MESSAGES && createdAt >= cutoff);
-        if (!keep) store.delete(record.cacheKey);
+        if (index >= MAX_RETAINED_MESSAGES) store.delete(record.cacheKey);
       });
   };
 }

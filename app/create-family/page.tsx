@@ -2,142 +2,159 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import EnvWarning from "@/components/EnvWarning";
-import { useLanguage } from "@/components/LanguageProvider";
 import RoleSelect from "@/components/RoleSelect";
-import { saveSession, type LocalSession } from "@/lib/authLocal";
-import { humanizeError } from "@/lib/errors";
-import { createFamily } from "@/lib/familyService";
+import { createFamilyWithVerifiedCode, ensureFamilyCode } from "@/lib/accountClient";
+import { saveSession } from "@/lib/authLocal";
+import { getSupabaseAuth } from "@/lib/supabaseAuthClient";
 import type { FamilyRole } from "@/types/family";
 
 export default function CreateFamilyPage() {
   const router = useRouter();
-  const { language, t } = useLanguage();
+  const [familyCode, setFamilyCode] = useState("");
   const [familyName, setFamilyName] = useState("");
   const [nickname, setNickname] = useState("");
   const [role, setRole] = useState<FamilyRole | null>(null);
-  const [adminPassword, setAdminPassword] = useState("");
+  const [checking, setChecking] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [created, setCreated] = useState<LocalSession | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function run() {
+      try {
+        const { data } = await getSupabaseAuth().auth.getSession();
+        if (!data.session) {
+          router.replace("/login");
+          return;
+        }
+
+        const status = await ensureFamilyCode(false);
+        if (cancelled) return;
+
+        if (status.status === "has_family" && status.session) {
+          saveSession(status.session);
+          router.replace("/chat");
+          return;
+        }
+
+        if (status.status !== "verified") {
+          router.replace(`/verify-family-code?status=${status.status}`);
+          return;
+        }
+      } catch {
+        router.replace("/login");
+      } finally {
+        if (!cancelled) setChecking(false);
+      }
+    }
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    if (!familyName.trim() || !nickname.trim() || !role || !adminPassword) {
-      setError(t("createMissingFields"));
-      return;
-    }
-    if (adminPassword.length < 4) {
-      setError(t("createPasswordShort"));
-      return;
-    }
+
+    if (!familyCode.trim()) return setError("请输入邮箱中的家庭代码");
+    if (!familyName.trim()) return setError("请输入家庭名称");
+    if (!nickname.trim()) return setError("请输入昵称");
+    if (!role) return setError("请选择角色");
+
     setLoading(true);
     try {
-      const session = await createFamily({
+      const session = await createFamilyWithVerifiedCode({
+        familyCode: familyCode.trim().toUpperCase(),
         familyName: familyName.trim(),
         nickname: nickname.trim(),
         role,
-        adminPassword,
       });
       saveSession(session);
-      setCreated(session);
+      router.replace("/chat");
     } catch (err) {
-      setError(humanizeError(err, language));
+      setError(err instanceof Error ? err.message : "创建家庭失败，请稍后重试");
     } finally {
       setLoading(false);
     }
   }
 
-  if (created) {
-    return (
-      <div className="flex flex-1 flex-col px-5 py-8 sm:px-8">
-        <h1 className="text-2xl font-bold text-slate-900">{t("createSuccessTitle")}</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          {t("createSuccessSubtitle")}
-        </p>
-
-        <div className="card mt-6 text-center">
-          <div className="text-sm text-slate-500">{t("createFamilyCode")}</div>
-          <div className="mt-2 select-all text-4xl font-bold tracking-[0.4em] text-brand-600">
-            {created.family_code}
-          </div>
-          <div className="mt-2 text-sm text-slate-600">
-            {t("createFamilyNameLine", { name: created.family_name })}
-          </div>
-        </div>
-
-        <button
-          type="button"
-          className="btn-primary mt-6"
-          onClick={() => router.replace("/chat")}
-        >
-          {t("createEnterChat")}
-        </button>
-      </div>
-    );
-  }
-
   return (
     <div className="flex flex-1 flex-col px-5 py-8 sm:px-8">
       <header className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">{t("createTitle")}</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          {t("createSubtitle")}
+        <Link href="/verify-family-code" className="text-sm text-brand-600 hover:underline">
+          返回验证
+        </Link>
+        <h1 className="mt-2 text-2xl font-bold text-slate-900">创建新家庭</h1>
+        <p className="mt-1 text-sm leading-relaxed text-slate-500">
+          请使用邮箱中已验证的家庭代码继续创建家庭。
         </p>
       </header>
 
       <EnvWarning />
 
       <form onSubmit={onSubmit} className="card flex flex-col gap-4">
+        {checking ? (
+          <div className="text-sm text-slate-500">正在检查创建资格...</div>
+        ) : null}
+
+        <div>
+          <label className="label" htmlFor="family-code">
+            家庭代码
+          </label>
+          <input
+            id="family-code"
+            className="field tracking-widest uppercase"
+            maxLength={12}
+            value={familyCode}
+            onChange={(e) => setFamilyCode(e.target.value.toUpperCase())}
+            disabled={loading || checking}
+            autoComplete="one-time-code"
+          />
+        </div>
+
         <div>
           <label className="label" htmlFor="family-name">
-            {t("createFamilyName")}
+            家庭名称
           </label>
           <input
             id="family-name"
             className="field"
-            placeholder={t("createFamilyNamePlaceholder")}
+            placeholder="比如：小明的家"
             maxLength={30}
             value={familyName}
             onChange={(e) => setFamilyName(e.target.value)}
+            disabled={loading || checking}
           />
         </div>
 
         <div>
           <label className="label" htmlFor="nickname">
-            {t("homeNickname")}
+            创建者昵称
           </label>
           <input
             id="nickname"
             className="field"
-            placeholder={t("createNicknamePlaceholder")}
+            placeholder="比如：爸爸"
             maxLength={20}
             value={nickname}
             onChange={(e) => setNickname(e.target.value)}
+            disabled={loading || checking}
           />
         </div>
 
         <div>
-          <span className="label">{t("createRole")}</span>
+          <span className="label">创建者角色</span>
           <RoleSelect value={role} onChange={setRole} />
         </div>
 
-        <div>
-          <label className="label" htmlFor="admin-password">
-            {t("createAdminPassword")}
-          </label>
-          <input
-            id="admin-password"
-            type="password"
-            className="field"
-            placeholder={t("createAdminPasswordPlaceholder")}
-            value={adminPassword}
-            onChange={(e) => setAdminPassword(e.target.value)}
-            autoComplete="new-password"
-          />
+        <div className="rounded-xl bg-sky-50 px-3 py-2 text-sm leading-6 text-sky-700">
+          管理操作将使用创建者邮箱账号验证，不再单独设置管理员密码。
         </div>
 
         {error ? (
@@ -146,17 +163,10 @@ export default function CreateFamilyPage() {
           </div>
         ) : null}
 
-        <button type="submit" className="btn-primary mt-1" disabled={loading}>
-          {loading ? t("createSubmitting") : t("createSubmit")}
+        <button type="submit" className="btn-primary" disabled={loading || checking}>
+          {loading ? "创建中..." : "创建家庭"}
         </button>
       </form>
-
-      <div className="mt-6 text-center text-sm text-slate-500">
-        {t("createHaveCode")}
-        <Link className="ml-1 text-brand-600 hover:underline" href="/">
-          {t("createBackJoin")}
-        </Link>
-      </div>
     </div>
   );
 }

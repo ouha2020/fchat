@@ -34,8 +34,9 @@ export interface MessageSyncResult {
 
 export async function loadCachedMessagesForSession(
   session: LocalSession,
+  limit = FULL_REFRESH_LIMIT,
 ): Promise<Message[]> {
-  return loadCachedMessages(session, FULL_REFRESH_LIMIT);
+  return loadCachedMessages(session, limit);
 }
 
 export async function syncMessages(

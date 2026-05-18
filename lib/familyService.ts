@@ -41,6 +41,7 @@ export type JoinFamilyState =
   | "rejoin_required"
   | "invalid_family_code"
   | "nickname_required"
+  | "join_disabled"
   | "rate_limited";
 
 export async function createFamily(

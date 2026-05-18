@@ -8,9 +8,11 @@ import { useLanguage } from "@/components/LanguageProvider";
 import { useDialog } from "@/components/Dialog";
 import { useToast } from "@/components/Toast";
 import RoleBadge from "@/components/RoleBadge";
+import { removeMemberWithAccount } from "@/lib/accountClient";
 import { clearSession, loadSession, saveSession, type LocalSession } from "@/lib/authLocal";
 import { humanizeError } from "@/lib/errors";
-import { removeMember, validateMember } from "@/lib/familyService";
+import { validateMember } from "@/lib/familyService";
+import { getSupabaseAuth } from "@/lib/supabaseAuthClient";
 import { formatRelative } from "@/lib/format";
 import { listMembers } from "@/lib/memberService";
 import { getSupabase, isSupabaseConfigured } from "@/lib/supabaseClient";
@@ -128,7 +130,13 @@ export default function MembersPage() {
     if (!ok) return;
     setBusyId(target.id);
     try {
-      await removeMember(session, target.id);
+      const { data } = await getSupabaseAuth().auth.getSession();
+      if (!data.session) {
+        toast.info("请先用创建家庭的邮箱账号登录");
+        router.push("/login");
+        return;
+      }
+      await removeMemberWithAccount(session, target.id);
       setMembers((prev) => prev.filter((m) => m.id !== target.id));
     } catch (err) {
       toast.error(humanizeError(err, language));
@@ -213,9 +221,16 @@ export default function MembersPage() {
                 <div className="flex shrink-0 items-center gap-2">
                   <Link
                     href={`/chat?whisper=${encodeURIComponent(m.id)}`}
-                    className="rounded-xl bg-violet-50 px-3 py-2 text-sm font-semibold text-violet-700 ring-1 ring-violet-100 transition hover:bg-violet-100"
+                    className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-50 p-2 shadow-sm ring-1 ring-violet-100 transition hover:bg-violet-100 active:bg-violet-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-200"
+                    aria-label={`${t("membersSendWhisper")} ${m.nickname}`}
+                    title={`${t("membersSendWhisper")} ${m.nickname}`}
                   >
-                    {t("membersSendWhisper")}
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src="/ui-icons/whisper-lock.png"
+                      alt=""
+                      className="h-full w-full rounded-md object-contain"
+                    />
                   </Link>
                   {session?.is_admin ? (
                     <button

@@ -7,15 +7,18 @@ import { useEffect, useState } from "react";
 import { useLanguage } from "@/components/LanguageProvider";
 import { useDialog } from "@/components/Dialog";
 import { useToast } from "@/components/Toast";
+import {
+  getOwnerAccountStatus,
+  resetFamilyCodeWithAccount,
+  setJoinEnabledWithAccount,
+  updateAccountPassword,
+  updateFamilyNameWithAccount,
+} from "@/lib/accountClient";
 import { clearSession, loadSession, saveSession, updateSession, type LocalSession } from "@/lib/authLocal";
 import { humanizeError } from "@/lib/errors";
 import {
   fetchFamilySettings,
   leaveFamily,
-  resetFamilyCode,
-  setJoinEnabled,
-  updateAdminPassword,
-  updateFamilyName,
   validateMember,
 } from "@/lib/familyService";
 import { LANGUAGE_OPTIONS } from "@/lib/i18n";
@@ -26,6 +29,7 @@ import {
   type ServerSubscriptionInfo,
 } from "@/lib/pushNotificationService";
 import { isSupabaseConfigured } from "@/lib/supabaseClient";
+import { getSupabaseAuth } from "@/lib/supabaseAuthClient";
 import { usePushNotificationControls } from "@/lib/usePushNotificationControls";
 
 export default function SettingsPage() {
@@ -39,6 +43,7 @@ export default function SettingsPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
+  const [isOwnerAccount, setIsOwnerAccount] = useState(false);
   const [showFamilyCode, setShowFamilyCode] = useState(false);
   const push = usePushNotificationControls(session);
   const [diagnostics, setDiagnostics] = useState<PushDiagnostics | null>(null);
@@ -124,6 +129,7 @@ export default function SettingsPage() {
         }
         saveSession(fresh);
         setSession(fresh);
+        setIsOwnerAccount(await getOwnerAccountStatus(fresh));
         const row = await fetchFamilySettings(fresh);
         if (cancelled) return;
         if (row) {
@@ -159,22 +165,50 @@ export default function SettingsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, push.enabled, push.support?.supported]);
 
-  async function withAdmin(action: string, fn: (password: string) => Promise<void>) {
+  async function withOwnerAccount(action: string, fn: () => Promise<void>) {
     if (!session?.is_admin) {
       toast.info(t("settingsAdminOnly"));
       return;
     }
-    const password = await dialog.prompt({
-      title: t("settingsAdminPasswordPrompt", { action }),
-      placeholder: "输入管理员密码",
-      validate: (v) => (!v ? "请输入密码" : null),
-    });
-    if (!password) return;
+    const { data } = await getSupabaseAuth().auth.getSession();
+    if (!data.session) {
+      toast.info("请先用创建家庭的邮箱账号登录");
+      router.push("/login");
+      return;
+    }
     setBusy(action);
     try {
-      await fn(password);
+      await fn();
     } catch (err) {
       toast.error(humanizeError(err, language));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleChangeAccountPassword() {
+    if (!session?.is_admin) {
+      toast.info(t("settingsAdminOnly"));
+      return;
+    }
+    const { data } = await getSupabaseAuth().auth.getSession();
+    if (!data.session) {
+      toast.info("请先用创建家庭的邮箱账号登录");
+      router.push("/login");
+      return;
+    }
+    const result = await dialog.accountPassword();
+    if (!result) return;
+
+    setBusy("changeAccountPassword");
+    try {
+      await updateAccountPassword(result.newPassword);
+      toast.success("密码已修改，请重新登录");
+      await getSupabaseAuth().auth.signOut();
+      setIsOwnerAccount(false);
+      router.replace("/login?reset=1");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : humanizeError(err, language));
     } finally {
       setBusy(null);
     }
@@ -189,8 +223,8 @@ export default function SettingsPage() {
       validate: (v) => (!v.trim() ? "名称不能为空" : null),
     });
     if (!newName || !newName.trim()) return;
-    await withAdmin(t("settingsRenameFamily"), async (password) => {
-      await updateFamilyName(session, password, newName.trim());
+    await withOwnerAccount(t("settingsRenameFamily"), async () => {
+      await updateFamilyNameWithAccount(session, newName.trim());
       const next = updateSession({ family_name: newName.trim() });
       if (next) setSession(next);
     });
@@ -204,34 +238,32 @@ export default function SettingsPage() {
       danger: true,
     });
     if (!ok) return;
-    await withAdmin(t("settingsResetCode"), async (password) => {
-      const newCode = await resetFamilyCode(session, password);
+    await withOwnerAccount(t("settingsResetCode"), async () => {
+      const newCode = await resetFamilyCodeWithAccount(session);
       const next = updateSession({ family_code: newCode });
       if (next) setSession(next);
     });
   }
 
-  async function handleToggleJoin(next: boolean) {
+  function handleCopyFamilyCode() {
     if (!session) return;
-    await withAdmin(next ? t("settingsEnableJoin") : t("settingsDisableJoin"), async (password) => {
-      await setJoinEnabled(session, password, next);
-      setJoinOn(next);
-    });
+    navigator.clipboard?.writeText(session.family_code).catch(() => undefined);
+    toast.success("家庭代码已复制");
   }
 
-  async function handleChangeAdminPassword() {
+  function handleCopyInviteText() {
     if (!session) return;
-    const result = await dialog.adminPassword();
-    if (!result) return;
-    setBusy("changePassword");
-    try {
-      await updateAdminPassword(session, result.currentPassword, result.newPassword);
-      toast.success(t("settingsAdminPasswordChanged"));
-    } catch (err) {
-      toast.error(humanizeError(err, language));
-    } finally {
-      setBusy(null);
-    }
+    const text = `加入「${session.family_name}」家庭聊天室，家庭代码：${session.family_code}`;
+    navigator.clipboard?.writeText(text).catch(() => undefined);
+    toast.success("邀请文案已复制");
+  }
+
+  async function handleToggleJoin(next: boolean) {
+    if (!session) return;
+    await withOwnerAccount(next ? t("settingsEnableJoin") : t("settingsDisableJoin"), async () => {
+      await setJoinEnabledWithAccount(session, next);
+      setJoinOn(next);
+    });
   }
 
   async function handleLeave() {
@@ -246,6 +278,8 @@ export default function SettingsPage() {
     try {
       await leaveFamily(session);
       clearSession();
+      await getSupabaseAuth().auth.signOut();
+      setIsOwnerAccount(false);
       router.replace("/");
     } catch (err) {
       toast.error(humanizeError(err, language));
@@ -261,6 +295,8 @@ export default function SettingsPage() {
     });
     if (!ok) return;
     clearSession();
+    await getSupabaseAuth().auth.signOut();
+    setIsOwnerAccount(false);
     router.replace("/");
   }
 
@@ -333,6 +369,7 @@ export default function SettingsPage() {
   }
 
   if (!session) return null;
+  const canManageFamily = session.is_admin;
 
   return (
     <div className="flex flex-1 flex-col px-5 py-6 sm:px-8">
@@ -345,39 +382,55 @@ export default function SettingsPage() {
 
       <section className="card flex flex-col gap-3">
         <Row label={t("settingsFamilyName")} value={session.family_name} />
-        <Row
-          label={t("settingsFamilyCode")}
-          value={
-            <span className="inline-flex items-center justify-end gap-2">
-              <span className="select-all font-mono text-base tracking-widest">
-                {showFamilyCode ? session.family_code : maskFamilyCode(session.family_code)}
+        {canManageFamily ? (
+          <Row
+            label={t("settingsFamilyCode")}
+            value={
+              <span className="inline-flex items-center justify-end gap-2">
+                <span className="select-all font-mono text-base tracking-widest">
+                  {showFamilyCode ? session.family_code : maskFamilyCode(session.family_code)}
+                </span>
+                <button
+                  type="button"
+                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+                  aria-label={
+                    showFamilyCode
+                      ? t("settingsHideFamilyCode")
+                      : t("settingsShowFamilyCode")
+                  }
+                  title={
+                    showFamilyCode
+                      ? t("settingsHideFamilyCode")
+                      : t("settingsShowFamilyCode")
+                  }
+                  aria-pressed={showFamilyCode}
+                  onClick={() => setShowFamilyCode((visible) => !visible)}
+                >
+                  {showFamilyCode ? <EyeOffIcon /> : <EyeIcon />}
+                </button>
               </span>
-              <button
-                type="button"
-                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
-                aria-label={
-                  showFamilyCode
-                    ? t("settingsHideFamilyCode")
-                    : t("settingsShowFamilyCode")
-                }
-                title={
-                  showFamilyCode
-                    ? t("settingsHideFamilyCode")
-                    : t("settingsShowFamilyCode")
-                }
-                aria-pressed={showFamilyCode}
-                onClick={() => setShowFamilyCode((visible) => !visible)}
-              >
-                {showFamilyCode ? <EyeOffIcon /> : <EyeIcon />}
-              </button>
-            </span>
-          }
-        />
+            }
+          />
+        ) : null}
         <Row label={t("settingsMyNickname")} value={session.nickname} />
         <Row label={t("settingsMyRole")} value={
           { father: t("roleFather"), mother: t("roleMother"), child: t("roleChild") }[session.role]
         } />
         <Row label={t("settingsIsAdmin")} value={session.is_admin ? t("commonYes") : t("commonNo")} />
+        {canManageFamily ? (
+          <div className="grid grid-cols-2 gap-2 pt-2">
+            <button type="button" className="btn-secondary" onClick={handleCopyFamilyCode}>
+              复制家庭代码
+            </button>
+            <button type="button" className="btn-secondary" onClick={handleCopyInviteText}>
+              复制邀请文案
+            </button>
+          </div>
+        ) : (
+          <p className="rounded-xl bg-slate-50 p-3 text-sm leading-6 text-slate-500">
+            当前身份保存在此浏览器中。如果更换手机或清除浏览器数据，可能需要重新输入家庭代码加入。
+          </p>
+        )}
       </section>
 
       <section className="card mt-4 flex flex-col gap-3">
@@ -584,7 +637,7 @@ export default function SettingsPage() {
         </section>
       ) : null}
 
-      {session.is_admin ? (
+      {canManageFamily ? (
         <section className="card mt-4 flex flex-col gap-3">
           <h2 className="text-base font-semibold">{t("settingsAdminActions")}</h2>
           <button
@@ -607,12 +660,13 @@ export default function SettingsPage() {
             type="button"
             className="btn-secondary"
             disabled={!!busy}
-            onClick={handleChangeAdminPassword}
+            onClick={handleChangeAccountPassword}
           >
-            {busy === "changePassword"
-              ? t("commonLoading")
-              : t("settingsChangeAdminPassword")}
+            {busy === "changeAccountPassword" ? t("commonLoading") : "修改密码"}
           </button>
+          <p className="rounded-xl bg-sky-50 px-3 py-2 text-sm leading-6 text-sky-700">
+            管理操作使用创建者邮箱账号验证，不再单独使用管理员密码。
+          </p>
           <label className="flex items-center justify-between rounded-xl px-1 py-2">
             <span className="text-sm text-slate-700">{t("settingsAllowJoin")}</span>
             <input

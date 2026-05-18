@@ -5,30 +5,17 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import EnvWarning from "@/components/EnvWarning";
-import { useLanguage } from "@/components/LanguageProvider";
-import RoleSelect from "@/components/RoleSelect";
+import { useToast } from "@/components/Toast";
 import { clearSession, loadSession, saveSession } from "@/lib/authLocal";
-import { humanizeError } from "@/lib/errors";
-import {
-  joinFamily,
-  rejoinFamilyMember,
-  resolveJoinFamilyState,
-  validateMember,
-} from "@/lib/familyService";
+import { ensureFamilyCode } from "@/lib/accountClient";
+import { validateMember } from "@/lib/familyService";
+import { getSupabaseAuth } from "@/lib/supabaseAuthClient";
 import { isSupabaseConfigured } from "@/lib/supabaseClient";
-import type { FamilyRole } from "@/types/family";
 
 export default function HomePage() {
   const router = useRouter();
-  const { language, t } = useLanguage();
-  const [familyCode, setFamilyCode] = useState("");
-  const [nickname, setNickname] = useState("");
-  const [role, setRole] = useState<FamilyRole | null>(null);
-  const [adminPassword, setAdminPassword] = useState("");
-  const [needsAdminPassword, setNeedsAdminPassword] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -45,8 +32,11 @@ export default function HomePage() {
           router.replace("/chat");
           return;
         }
+        clearSession();
       } catch {
         clearSession();
+      } finally {
+        // Home stays usable while session restore runs in the background.
       }
     }
     void run();
@@ -55,179 +45,85 @@ export default function HomePage() {
     };
   }, [router]);
 
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
-    setNotice(null);
-    if (
-      !familyCode.trim() ||
-      !nickname.trim()
-    ) {
-      setError(t("homeMissingFields"));
-      return;
-    }
-    if (needsAdminPassword && !adminPassword) {
-      setError(t("homeRejoinMissingPassword"));
-      return;
-    }
-    setLoading(true);
+  async function handleCreateFamily() {
+    if (busy) return;
+    setBusy(true);
     try {
-      const code = familyCode.trim().toUpperCase();
-      const name = nickname.trim();
-      let session;
-      if (needsAdminPassword) {
-        session = await rejoinFamilyMember({
-          familyCode: code,
-          nickname: name,
-          adminPassword,
-        });
-      } else {
-        const state = await resolveJoinFamilyState({
-          familyCode: code,
-          nickname: name,
-        });
-        if (state === "rejoin_required") {
-          setNeedsAdminPassword(true);
-          setNotice(t("homeRejoinPrompt"));
-          return;
-        }
-        if (state !== "can_join") {
-          throw new Error(state);
-        }
-        if (!role) {
-          setError(t("homeMissingFields"));
-          return;
-        }
-        session = await joinFamily({
-          familyCode: code,
-          nickname: name,
-          role,
-        });
+      const { data } = await getSupabaseAuth().auth.getSession();
+      if (!data.session) {
+        router.push("/register");
+        return;
       }
-      saveSession(session);
-      router.replace("/chat");
-    } catch (err) {
-      const message =
-        err instanceof Error
-          ? err.message
-          : String((err as { message?: string })?.message ?? err);
-      if (!needsAdminPassword && message.includes("nickname_taken")) {
-        setNeedsAdminPassword(true);
-        setNotice(t("homeRejoinPrompt"));
-      } else {
-        setError(humanizeError(err, language));
+      const result = await ensureFamilyCode(false);
+      if (result.status === "has_family" && result.session) {
+        saveSession(result.session);
+        toast.info("你已经创建过家庭，正在进入家庭聊天室。");
+        router.replace("/chat");
+        return;
       }
+      if (result.status === "verified") {
+        router.push("/create-family");
+        return;
+      }
+      router.push(`/verify-family-code?status=${result.status}`);
+    } catch {
+      router.push("/login");
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   }
 
   return (
     <div className="flex flex-1 flex-col px-5 py-8 sm:px-8">
       <header className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">{t("appTitle")}</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          {t("homeSubtitle")}
+        <h1 className="text-2xl font-bold text-slate-900">家人聊天室</h1>
+        <p className="mt-2 text-sm leading-relaxed text-slate-500">
+          创建家庭需要邮箱注册。家人加入家庭只需要家庭代码。
         </p>
       </header>
 
       <EnvWarning />
 
-      <form onSubmit={onSubmit} className="card flex flex-col gap-4">
-        <div>
-          <label className="label" htmlFor="code">
-            {t("homeFamilyCode")}
-          </label>
-          <input
-            id="code"
-            className="field tracking-widest uppercase"
-            placeholder={t("homeCodePlaceholder")}
-            maxLength={12}
-            value={familyCode}
-            onChange={(e) => {
-              setFamilyCode(e.target.value.toUpperCase());
-              setNeedsAdminPassword(false);
-              setAdminPassword("");
-              setNotice(null);
-            }}
-            autoComplete="off"
-          />
-        </div>
-
-        <div>
-          <label className="label" htmlFor="nickname">
-            {t("homeNickname")}
-          </label>
-          <input
-            id="nickname"
-            className="field"
-            placeholder={t("homeNicknamePlaceholder")}
-            maxLength={20}
-            value={nickname}
-            onChange={(e) => {
-              setNickname(e.target.value);
-              setNeedsAdminPassword(false);
-              setAdminPassword("");
-              setNotice(null);
-            }}
-            autoComplete="off"
-          />
-        </div>
-
-        {needsAdminPassword ? (
-          <div>
-            <label className="label" htmlFor="admin-password">
-              {t("homeAdminPassword")}
-            </label>
-            <input
-              id="admin-password"
-              className="field"
-              type="password"
-              placeholder={t("homeAdminPasswordPlaceholder")}
-              value={adminPassword}
-              onChange={(e) => setAdminPassword(e.target.value)}
-              autoComplete="current-password"
-            />
-            <p className="mt-2 text-xs text-slate-500">
-              {t("homeRejoinHelp")}
-            </p>
-          </div>
-        ) : (
-          <div>
-            <span className="label">{t("homeSelectRole")}</span>
-            <RoleSelect value={role} onChange={setRole} />
-          </div>
-        )}
-
-        {notice ? (
-          <div className="rounded-xl bg-sky-50 px-3 py-2 text-sm text-sky-700">
-            {notice}
-          </div>
-        ) : null}
-
-        {error ? (
-          <div className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">
-            {error}
-          </div>
-        ) : null}
-
+      <div className="grid gap-4">
         <button
-          type="submit"
-          className="btn-primary mt-1"
-          disabled={loading}
+          type="button"
+          className="card flex items-center justify-between text-left transition hover:bg-white/80 active:scale-[0.99]"
+          disabled={busy}
+          onClick={handleCreateFamily}
         >
-          {loading
-            ? t("homeJoining")
-            : needsAdminPassword
-              ? t("homeRejoin")
-              : t("homeJoin")}
+          <span>
+            <span className="block text-lg font-bold text-slate-900">
+              创建家庭
+            </span>
+            <span className="mt-1 block text-sm leading-relaxed text-slate-500">
+              注册或登录邮箱，获取家庭代码后创建家庭。
+            </span>
+          </span>
+          <span className="text-2xl text-brand-500">＋</span>
         </button>
-      </form>
 
-      <div className="mt-6 text-center text-sm text-slate-500">
-        {t("homeNoFamily")}
-        <Link className="ml-1 text-brand-600 hover:underline" href="/create-family">
-          {t("homeCreateFamily")}
+        <Link
+          href="/join"
+          className="card flex items-center justify-between text-left transition hover:bg-white/80 active:scale-[0.99]"
+        >
+          <span>
+            <span className="block text-lg font-bold text-slate-900">
+              加入家庭
+            </span>
+            <span className="mt-1 block text-sm leading-relaxed text-slate-500">
+              输入家人分享的家庭代码、昵称和角色即可加入。
+            </span>
+          </span>
+          <span className="text-2xl text-brand-500">→</span>
+        </Link>
+      </div>
+
+      <div className="mt-6 flex justify-center gap-4 text-sm">
+        <Link className="text-brand-600 hover:underline" href="/login">
+          已注册？登录
+        </Link>
+        <Link className="text-slate-500 hover:text-brand-600" href="/forgot-password">
+          忘记密码
         </Link>
       </div>
     </div>

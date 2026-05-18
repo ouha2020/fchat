@@ -1,5 +1,5 @@
-const PRECACHE = "family-chat-precache-v7";
-const RUNTIME = "family-chat-runtime-v7";
+const PRECACHE = "family-chat-precache-v8";
+const RUNTIME = "family-chat-runtime-v8";
 
 const PUSH_RECEIVED = "family-chat:push-received";
 
@@ -117,6 +117,7 @@ self.addEventListener("notificationclick", (event) => {
   const data = event.notification.data || {};
   const baseUrl = data.url || "/chat";
   const messageId = data.messageId || null;
+  const familyId = data.familyId || null;
   const targetUrl = messageId
     ? `${baseUrl}?mid=${encodeURIComponent(messageId)}`
     : baseUrl;
@@ -126,7 +127,7 @@ self.addEventListener("notificationclick", (event) => {
   event.waitUntil(
     clients
       .matchAll({ type: "window", includeUncontrolled: true })
-      .then((clientList) => {
+      .then(async (clientList) => {
         for (const client of clientList) {
           try {
             const clientUrl = new URL(client.url);
@@ -135,7 +136,19 @@ self.addEventListener("notificationclick", (event) => {
               clientUrl.pathname === targetPath &&
               "focus" in client
             ) {
-              return client.focus();
+              let targetClient = client;
+              if ("navigate" in client && client.url !== absoluteUrl) {
+                targetClient =
+                  (await client.navigate(absoluteUrl).catch(() => client)) ||
+                  client;
+              }
+              const focusedClient = await targetClient.focus();
+              focusedClient.postMessage({
+                type: PUSH_RECEIVED,
+                familyId,
+                messageId,
+              });
+              return focusedClient;
             }
           } catch {
             // ignore

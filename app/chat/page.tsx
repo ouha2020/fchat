@@ -69,6 +69,7 @@ const METADATA_FALLBACK_POLL_MS = 120_000;
 const INITIAL_CACHED_MESSAGE_LIMIT = 100;
 const CACHED_MESSAGE_PAGE_SIZE = 100;
 const PUSH_MESSAGE_DEDUPE_MS = 5_000;
+const REALTIME_BACKGROUND_DISCONNECT_MS = 45_000;
 
 interface MessageRealtimeEvent {
   id: string;
@@ -174,6 +175,7 @@ export default function ChatPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
   const [chatBackgroundUrl, setChatBackgroundUrl] = useState<string | null>(null);
+  const [realtimeConnected, setRealtimeConnected] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
   const messagesContentRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -546,6 +548,61 @@ export default function ChatPage() {
     setImportantNotifications(rows);
   }, []);
 
+  useEffect(() => {
+    if (!session) {
+      setRealtimeConnected(true);
+      return;
+    }
+
+    let disconnectTimer = 0;
+    const clearDisconnectTimer = () => {
+      if (!disconnectTimer) return;
+      window.clearTimeout(disconnectTimer);
+      disconnectTimer = 0;
+    };
+
+    const syncVisibleChatData = () => {
+      if (document.visibilityState !== "visible") return;
+      syncMessages(session, { onMessages: handleSyncedMessages }).catch(
+        () => undefined,
+      );
+      refreshImportantNotifications(session).catch(() => undefined);
+    };
+
+    const activateRealtime = () => {
+      clearDisconnectTimer();
+      setRealtimeConnected(true);
+      syncVisibleChatData();
+    };
+
+    const scheduleBackgroundDisconnect = () => {
+      clearDisconnectTimer();
+      if (document.visibilityState === "visible") {
+        activateRealtime();
+        return;
+      }
+      disconnectTimer = window.setTimeout(() => {
+        if (document.visibilityState !== "visible") {
+          setRealtimeConnected(false);
+        }
+      }, REALTIME_BACKGROUND_DISCONNECT_MS);
+    };
+
+    scheduleBackgroundDisconnect();
+    document.addEventListener("visibilitychange", scheduleBackgroundDisconnect);
+    window.addEventListener("focus", activateRealtime);
+    window.addEventListener("online", activateRealtime);
+    return () => {
+      clearDisconnectTimer();
+      document.removeEventListener(
+        "visibilitychange",
+        scheduleBackgroundDisconnect,
+      );
+      window.removeEventListener("focus", activateRealtime);
+      window.removeEventListener("online", activateRealtime);
+    };
+  }, [handleSyncedMessages, refreshImportantNotifications, session]);
+
   const refreshChatData = useCallback(async (forceFullRefresh = false) => {
     if (!session) return;
     try {
@@ -739,7 +796,7 @@ export default function ChatPage() {
 
   // Realtime subscription for lightweight message events.
   useEffect(() => {
-    if (!session) return;
+    if (!session || !realtimeConnected) return;
     const sb = getSupabase();
     const realtimeTimers = realtimeEventTimersRef.current;
 
@@ -748,8 +805,18 @@ export default function ChatPage() {
       if (existingTimer) window.clearTimeout(existingTimer);
       const timer = window.setTimeout(() => {
         realtimeTimers.delete(event.message_id);
-        fetchRealtimeMessage(event.message_id).catch(() => undefined);
-      }, 80);
+        fetchRealtimeMessage(event.message_id)
+          .then((fetched) => {
+            if (fetched || document.visibilityState !== "visible") return;
+            return syncMessages(session, { onMessages: handleSyncedMessages });
+          })
+          .catch(() => {
+            if (document.visibilityState !== "visible") return undefined;
+            return syncMessages(session, { onMessages: handleSyncedMessages }).catch(
+              () => undefined,
+            );
+          });
+      }, 0);
       realtimeTimers.set(event.message_id, timer);
     };
 
@@ -832,10 +899,6 @@ export default function ChatPage() {
       if (document.visibilityState !== "visible") return;
       refreshImportantNotifications(session).catch(() => undefined);
     };
-    const refreshVisibleChatData = () => {
-      syncVisibleMessages();
-      refreshVisibleImportantNotifications();
-    };
 
     const messagePoll = window.setInterval(
       syncVisibleMessages,
@@ -855,16 +918,6 @@ export default function ChatPage() {
         .catch(() => undefined);
     }, METADATA_FALLBACK_POLL_MS);
 
-    let visibilityTimer = 0;
-    const debouncedVisibilityRefresh = () => {
-      window.clearTimeout(visibilityTimer);
-      visibilityTimer = window.setTimeout(refreshVisibleChatData, 500);
-    };
-
-    window.addEventListener("focus", refreshVisibleChatData);
-    window.addEventListener("online", refreshVisibleChatData);
-    document.addEventListener("visibilitychange", debouncedVisibilityRefresh);
-
     return () => {
       sb.removeChannel(messageEventsChannel);
       sb.removeChannel(importantEventsChannel);
@@ -872,10 +925,6 @@ export default function ChatPage() {
       window.clearInterval(messagePoll);
       window.clearInterval(importantPoll);
       window.clearInterval(metadataPoll);
-      window.removeEventListener("focus", refreshVisibleChatData);
-      window.removeEventListener("online", refreshVisibleChatData);
-      document.removeEventListener("visibilitychange", debouncedVisibilityRefresh);
-      window.clearTimeout(visibilityTimer);
       realtimeTimers.forEach((timer) => window.clearTimeout(timer));
       realtimeTimers.clear();
     };
@@ -883,6 +932,7 @@ export default function ChatPage() {
     fetchRealtimeMessage,
     handleSyncedMessages,
     refreshImportantNotifications,
+    realtimeConnected,
     router,
     session,
     t,

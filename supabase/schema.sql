@@ -46,6 +46,7 @@ alter table family_members replica identity full;
 create table if not exists messages (
   id uuid primary key default gen_random_uuid(),
   family_id uuid not null references families(id) on delete cascade,
+  family_seq bigint,
   sender_member_id uuid references family_members(id) on delete set null,
   message_type text not null check (
     message_type in ('text', 'image', 'audio', 'location', 'system')
@@ -204,7 +205,10 @@ create table if not exists push_delivery_logs (
   status text not null check (status in ('sent', 'failed', 'gone', 'skipped')),
   error_code text,
   error_message text,
+  error_status int,
   retry_count int not null default 0,
+  next_retry_at timestamptz,
+  last_attempt_at timestamptz,
   created_at timestamptz not null default now()
 );
 
@@ -214,15 +218,23 @@ create index if not exists push_delivery_logs_family_created_idx
 create index if not exists push_delivery_logs_created_idx
   on push_delivery_logs (created_at);
 
+create index if not exists push_delivery_logs_retry_idx
+  on push_delivery_logs (status, next_retry_at)
+  where status = 'failed';
+
+create index if not exists push_delivery_logs_message_member_idx
+  on push_delivery_logs (message_id, member_id, created_at desc);
+
 alter table push_delivery_logs enable row level security;
 
 drop policy if exists "push delivery logs are readable by anon" on push_delivery_logs;
-create policy "push delivery logs are readable by anon"
+drop policy if exists "push delivery logs are rpc only" on push_delivery_logs;
+create policy "push delivery logs are rpc only"
   on push_delivery_logs for select
   to anon, authenticated
-  using (true);
+  using (false);
 
-grant select on push_delivery_logs to anon, authenticated;
+revoke select on push_delivery_logs from anon, authenticated;
 
 create or replace function cleanup_push_delivery_logs()
 returns void
@@ -3128,6 +3140,12 @@ create index if not exists message_realtime_events_family_created_idx
 create index if not exists message_realtime_events_created_idx
   on message_realtime_events (created_at);
 
+alter table message_realtime_events
+  add column if not exists recipient_member_id uuid references family_members(id) on delete cascade;
+
+create index if not exists message_realtime_events_recipient_created_idx
+  on message_realtime_events (recipient_member_id, created_at desc);
+
 alter table message_realtime_events enable row level security;
 
 revoke all on message_realtime_events from anon, authenticated;
@@ -3196,8 +3214,15 @@ begin
     v_event_type := 'insert';
   end if;
 
-  insert into message_realtime_events (family_id, message_id, event_type)
-  values (new.family_id, new.id, v_event_type);
+  insert into message_realtime_events (
+    family_id, message_id, recipient_member_id, event_type
+  )
+  select new.family_id, new.id, mr.member_id, v_event_type
+    from message_recipients mr
+   where mr.message_id = new.id
+     and mr.family_id = new.family_id
+     and mr.member_id is not null
+  on conflict do nothing;
 
   delete from message_realtime_events
    where created_at < now() - interval '1 day';
@@ -3207,8 +3232,9 @@ end;
 $$;
 
 drop trigger if exists trg_enqueue_message_realtime_event on messages;
+drop trigger if exists trg_20_enqueue_message_realtime_event on messages;
 
-create trigger trg_enqueue_message_realtime_event
+create trigger trg_20_enqueue_message_realtime_event
 after insert or update on messages
 for each row
 execute function enqueue_message_realtime_event();
@@ -3627,6 +3653,83 @@ begin
 end;
 $$;
 
+drop function if exists get_messages_by_ids_for_member(uuid, text, uuid[]);
+
+create or replace function get_messages_by_ids_for_member(
+  p_member_id uuid,
+  p_member_token text,
+  p_message_ids uuid[]
+)
+returns table (
+  id uuid,
+  family_id uuid,
+  sender_member_id uuid,
+  recipient_member_id uuid,
+  message_type text,
+  content text,
+  image_url text,
+  audio_url text,
+  audio_duration_ms int,
+  latitude double precision,
+  longitude double precision,
+  address text,
+  map_url text,
+  effect_id text,
+  effect_caption text,
+  system_event_type text,
+  system_event_payload jsonb,
+  push_requested_at timestamptz,
+  deleted_at timestamptz,
+  deleted_by_member_id uuid,
+  updated_at timestamptz,
+  created_at timestamptz
+)
+security definer
+set search_path = public, extensions
+language plpgsql
+as $$
+#variable_conflict use_column
+declare
+  v_member record;
+  v_count int;
+begin
+  if p_message_ids is null or cardinality(p_message_ids) = 0 then
+    return;
+  end if;
+
+  v_count := cardinality(p_message_ids);
+  if v_count > 100 then
+    raise exception 'too_many_message_ids';
+  end if;
+
+  select * into v_member from current_member_from_token(p_member_id, p_member_token);
+  if not found then
+    return;
+  end if;
+
+  return query
+  select m.id, m.family_id, m.sender_member_id, m.recipient_member_id,
+         m.message_type, m.content,
+         m.image_url, m.audio_url, m.audio_duration_ms, m.latitude, m.longitude,
+         m.address, m.map_url, m.effect_id, m.effect_caption,
+         m.system_event_type, m.system_event_payload, m.push_requested_at,
+         m.deleted_at, m.deleted_by_member_id, m.updated_at, m.created_at
+    from messages m
+   where m.id in (
+       select distinct requested.message_id
+         from unnest(p_message_ids) as requested(message_id)
+        where requested.message_id is not null
+     )
+     and m.family_id = v_member.family_id
+     and (
+       m.recipient_member_id is null
+       or m.sender_member_id = v_member.id
+       or m.recipient_member_id = v_member.id
+     )
+   order by m.created_at asc, m.id asc;
+end;
+$$;
+
 create or replace function delete_message(
   p_member_id uuid,
   p_member_token text,
@@ -3821,9 +3924,1138 @@ grant execute on function send_message(
 grant execute on function list_messages_for_member(uuid, text, int) to anon, authenticated;
 grant execute on function list_messages_delta(uuid, text, timestamptz, uuid, int) to anon, authenticated;
 grant execute on function get_message_for_member(uuid, text, uuid) to anon, authenticated;
+grant execute on function get_messages_by_ids_for_member(uuid, text, uuid[]) to anon, authenticated;
 grant execute on function delete_message(uuid, text, uuid) to anon, authenticated;
 grant execute on function add_important_notification(uuid, text, uuid) to anon, authenticated;
 grant execute on function list_important_notifications_for_member(uuid, text) to anon, authenticated;
+
+-- =====================================================================
+-- Message recipients inbox
+-- =====================================================================
+
+create table if not exists message_recipients (
+  id uuid primary key default gen_random_uuid(),
+  family_id uuid not null references families(id) on delete cascade,
+  message_id uuid not null references messages(id) on delete cascade,
+  member_id uuid not null references family_members(id) on delete cascade,
+  delivery_state text not null default 'pending',
+  delivered_at timestamptz,
+  read_at timestamptz,
+  notified_at timestamptz,
+  created_at timestamptz not null default now(),
+  unique (message_id, member_id)
+);
+
+do $$
+begin
+  if not exists (
+    select 1
+      from pg_constraint
+     where conname = 'message_recipients_delivery_state_check'
+       and conrelid = 'message_recipients'::regclass
+  ) then
+    alter table message_recipients
+      add constraint message_recipients_delivery_state_check
+      check (delivery_state in ('pending', 'delivered', 'read'));
+  end if;
+end;
+$$;
+
+create index if not exists message_recipients_member_created_idx
+  on message_recipients (member_id, created_at desc);
+
+create index if not exists message_recipients_member_message_idx
+  on message_recipients (member_id, message_id);
+
+create index if not exists message_recipients_family_message_idx
+  on message_recipients (family_id, message_id);
+
+create index if not exists message_recipients_member_read_idx
+  on message_recipients (member_id, read_at);
+
+alter table message_recipients enable row level security;
+
+revoke all on message_recipients from anon, authenticated;
+
+drop policy if exists "message recipients are rpc only" on message_recipients;
+
+create or replace function populate_message_recipients_for_message()
+returns trigger
+security definer
+set search_path = public, extensions
+language plpgsql
+as $$
+begin
+  if new.recipient_member_id is null then
+    insert into message_recipients (family_id, message_id, member_id)
+    select new.family_id, new.id, fm.id
+      from family_members fm
+     where fm.family_id = new.family_id
+       and fm.status = 'active'
+    on conflict (message_id, member_id) do nothing;
+  else
+    insert into message_recipients (family_id, message_id, member_id)
+    select new.family_id, new.id, fm.id
+      from family_members fm
+     where fm.family_id = new.family_id
+       and fm.id in (new.sender_member_id, new.recipient_member_id)
+    on conflict (message_id, member_id) do nothing;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_populate_message_recipients on messages;
+drop trigger if exists trg_10_populate_message_recipients on messages;
+
+create trigger trg_10_populate_message_recipients
+after insert on messages
+for each row
+execute function populate_message_recipients_for_message();
+
+insert into message_recipients (family_id, message_id, member_id)
+select m.family_id, m.id, fm.id
+  from messages m
+  join family_members fm
+    on fm.family_id = m.family_id
+   and fm.status = 'active'
+ where m.recipient_member_id is null
+on conflict (message_id, member_id) do nothing;
+
+insert into message_recipients (family_id, message_id, member_id)
+select m.family_id, m.id, fm.id
+  from messages m
+  join family_members fm
+    on fm.family_id = m.family_id
+   and fm.id in (m.sender_member_id, m.recipient_member_id)
+ where m.recipient_member_id is not null
+on conflict (message_id, member_id) do nothing;
+
+create or replace function list_messages_for_member(
+  p_member_id uuid,
+  p_member_token text,
+  p_limit int default 100
+)
+returns table (
+  id uuid,
+  family_id uuid,
+  sender_member_id uuid,
+  recipient_member_id uuid,
+  message_type text,
+  content text,
+  image_url text,
+  audio_url text,
+  audio_duration_ms int,
+  latitude double precision,
+  longitude double precision,
+  address text,
+  map_url text,
+  effect_id text,
+  effect_caption text,
+  system_event_type text,
+  system_event_payload jsonb,
+  push_requested_at timestamptz,
+  deleted_at timestamptz,
+  deleted_by_member_id uuid,
+  updated_at timestamptz,
+  created_at timestamptz
+)
+security definer
+set search_path = public, extensions
+language plpgsql
+as $$
+#variable_conflict use_column
+declare
+  v_member record;
+  v_limit int;
+begin
+  select * into v_member from current_member_from_token(p_member_id, p_member_token);
+  if not found then
+    raise exception 'unauthorized';
+  end if;
+
+  v_limit := least(greatest(coalesce(p_limit, 100), 1), 300);
+
+  return query
+  select m.id, m.family_id, m.sender_member_id, m.recipient_member_id,
+         m.message_type, m.content,
+         m.image_url, m.audio_url, m.audio_duration_ms, m.latitude, m.longitude,
+         m.address, m.map_url, m.effect_id, m.effect_caption,
+         m.system_event_type, m.system_event_payload, m.push_requested_at,
+         m.deleted_at, m.deleted_by_member_id, m.updated_at, m.created_at
+    from message_recipients mr
+    join messages m on m.id = mr.message_id and m.family_id = mr.family_id
+   where mr.member_id = v_member.id
+   order by m.created_at desc, m.id desc
+   limit v_limit;
+end;
+$$;
+
+create or replace function list_messages_delta(
+  p_member_id uuid,
+  p_member_token text,
+  p_cursor_updated_at timestamptz default null,
+  p_cursor_id uuid default null,
+  p_limit int default 300
+)
+returns table (
+  id uuid,
+  family_id uuid,
+  sender_member_id uuid,
+  recipient_member_id uuid,
+  message_type text,
+  content text,
+  image_url text,
+  audio_url text,
+  audio_duration_ms int,
+  latitude double precision,
+  longitude double precision,
+  address text,
+  map_url text,
+  effect_id text,
+  effect_caption text,
+  system_event_type text,
+  system_event_payload jsonb,
+  push_requested_at timestamptz,
+  deleted_at timestamptz,
+  deleted_by_member_id uuid,
+  updated_at timestamptz,
+  created_at timestamptz
+)
+security definer
+set search_path = public, extensions
+language plpgsql
+as $$
+#variable_conflict use_column
+declare
+  v_member record;
+  v_limit int;
+begin
+  select * into v_member from current_member_from_token(p_member_id, p_member_token);
+  if not found then
+    raise exception 'unauthorized';
+  end if;
+
+  v_limit := least(greatest(coalesce(p_limit, 300), 1), 300);
+
+  return query
+  select m.id, m.family_id, m.sender_member_id, m.recipient_member_id,
+         m.message_type, m.content,
+         m.image_url, m.audio_url, m.audio_duration_ms, m.latitude, m.longitude,
+         m.address, m.map_url, m.effect_id, m.effect_caption,
+         m.system_event_type, m.system_event_payload, m.push_requested_at,
+         m.deleted_at, m.deleted_by_member_id, m.updated_at, m.created_at
+    from message_recipients mr
+    join messages m on m.id = mr.message_id and m.family_id = mr.family_id
+   where mr.member_id = v_member.id
+     and (
+       p_cursor_updated_at is null
+       or p_cursor_id is null
+       or m.updated_at > p_cursor_updated_at
+       or (m.updated_at = p_cursor_updated_at and m.id > p_cursor_id)
+     )
+   order by m.updated_at asc, m.id asc
+   limit v_limit;
+end;
+$$;
+
+create or replace function get_message_for_member(
+  p_member_id uuid,
+  p_member_token text,
+  p_message_id uuid
+)
+returns table (
+  id uuid,
+  family_id uuid,
+  sender_member_id uuid,
+  recipient_member_id uuid,
+  message_type text,
+  content text,
+  image_url text,
+  audio_url text,
+  audio_duration_ms int,
+  latitude double precision,
+  longitude double precision,
+  address text,
+  map_url text,
+  effect_id text,
+  effect_caption text,
+  system_event_type text,
+  system_event_payload jsonb,
+  push_requested_at timestamptz,
+  deleted_at timestamptz,
+  deleted_by_member_id uuid,
+  updated_at timestamptz,
+  created_at timestamptz
+)
+security definer
+set search_path = public, extensions
+language plpgsql
+as $$
+#variable_conflict use_column
+declare
+  v_member record;
+begin
+  select * into v_member from current_member_from_token(p_member_id, p_member_token);
+  if not found then
+    return;
+  end if;
+
+  return query
+  select m.id, m.family_id, m.sender_member_id, m.recipient_member_id,
+         m.message_type, m.content,
+         m.image_url, m.audio_url, m.audio_duration_ms, m.latitude, m.longitude,
+         m.address, m.map_url, m.effect_id, m.effect_caption,
+         m.system_event_type, m.system_event_payload, m.push_requested_at,
+         m.deleted_at, m.deleted_by_member_id, m.updated_at, m.created_at
+    from message_recipients mr
+    join messages m on m.id = mr.message_id and m.family_id = mr.family_id
+   where mr.member_id = v_member.id
+     and m.id = p_message_id
+   limit 1;
+end;
+$$;
+
+create or replace function get_messages_by_ids_for_member(
+  p_member_id uuid,
+  p_member_token text,
+  p_message_ids uuid[]
+)
+returns table (
+  id uuid,
+  family_id uuid,
+  sender_member_id uuid,
+  recipient_member_id uuid,
+  message_type text,
+  content text,
+  image_url text,
+  audio_url text,
+  audio_duration_ms int,
+  latitude double precision,
+  longitude double precision,
+  address text,
+  map_url text,
+  effect_id text,
+  effect_caption text,
+  system_event_type text,
+  system_event_payload jsonb,
+  push_requested_at timestamptz,
+  deleted_at timestamptz,
+  deleted_by_member_id uuid,
+  updated_at timestamptz,
+  created_at timestamptz
+)
+security definer
+set search_path = public, extensions
+language plpgsql
+as $$
+#variable_conflict use_column
+declare
+  v_member record;
+  v_count int;
+begin
+  if p_message_ids is null or cardinality(p_message_ids) = 0 then
+    return;
+  end if;
+
+  v_count := cardinality(p_message_ids);
+  if v_count > 100 then
+    raise exception 'too_many_message_ids';
+  end if;
+
+  select * into v_member from current_member_from_token(p_member_id, p_member_token);
+  if not found then
+    return;
+  end if;
+
+  return query
+  select m.id, m.family_id, m.sender_member_id, m.recipient_member_id,
+         m.message_type, m.content,
+         m.image_url, m.audio_url, m.audio_duration_ms, m.latitude, m.longitude,
+         m.address, m.map_url, m.effect_id, m.effect_caption,
+         m.system_event_type, m.system_event_payload, m.push_requested_at,
+         m.deleted_at, m.deleted_by_member_id, m.updated_at, m.created_at
+    from message_recipients mr
+    join messages m on m.id = mr.message_id and m.family_id = mr.family_id
+   where mr.member_id = v_member.id
+     and m.id in (
+       select distinct requested.message_id
+         from unnest(p_message_ids) as requested(message_id)
+        where requested.message_id is not null
+     )
+   order by m.created_at asc, m.id asc;
+end;
+$$;
+
+create or replace function add_important_notification(
+  p_member_id uuid,
+  p_member_token text,
+  p_message_id uuid
+)
+returns uuid
+security definer
+set search_path = public, extensions
+language plpgsql
+as $$
+#variable_conflict use_column
+declare
+  v_member record;
+  v_message messages%rowtype;
+  v_notification_id uuid;
+begin
+  select * into v_member from current_member_from_token(p_member_id, p_member_token);
+  if not found then
+    raise exception 'unauthorized';
+  end if;
+
+  select m.* into v_message
+    from message_recipients mr
+    join messages m on m.id = mr.message_id and m.family_id = mr.family_id
+   where mr.member_id = v_member.id
+     and m.id = p_message_id
+     and m.family_id = v_member.family_id;
+  if not found then
+    raise exception 'message_not_found';
+  end if;
+  if v_message.recipient_member_id is not null then
+    raise exception 'private_message_not_allowed';
+  end if;
+
+  select id into v_notification_id
+    from important_notifications
+   where family_id = v_member.family_id
+     and message_id = p_message_id
+     and removed_at is null
+   limit 1;
+
+  if v_notification_id is not null then
+    return v_notification_id;
+  end if;
+
+  insert into important_notifications (
+    family_id, message_id, created_by_member_id
+  )
+  values (
+    v_member.family_id, p_message_id, p_member_id
+  )
+  returning id into v_notification_id;
+
+  update family_members
+     set last_active_at = now()
+   where id = p_member_id;
+
+  return v_notification_id;
+end;
+$$;
+
+create or replace function list_important_notifications_for_member(
+  p_member_id uuid,
+  p_member_token text
+)
+returns table (
+  id uuid,
+  family_id uuid,
+  message_id uuid,
+  created_by_member_id uuid,
+  removed_at timestamptz,
+  removed_by_member_id uuid,
+  created_at timestamptz,
+  message_family_id uuid,
+  message_sender_member_id uuid,
+  message_recipient_member_id uuid,
+  message_type text,
+  message_content text,
+  message_image_url text,
+  message_audio_url text,
+  message_audio_duration_ms int,
+  message_latitude double precision,
+  message_longitude double precision,
+  message_address text,
+  message_map_url text,
+  message_effect_id text,
+  message_effect_caption text,
+  message_system_event_type text,
+  message_system_event_payload jsonb,
+  message_deleted_at timestamptz,
+  message_deleted_by_member_id uuid,
+  message_updated_at timestamptz,
+  message_created_at timestamptz
+)
+security definer
+set search_path = public, extensions
+language plpgsql
+as $$
+#variable_conflict use_column
+declare
+  v_member record;
+begin
+  select * into v_member from current_member_from_token(p_member_id, p_member_token);
+  if not found then
+    raise exception 'unauthorized';
+  end if;
+
+  return query
+  select n.id, n.family_id, n.message_id, n.created_by_member_id,
+         n.removed_at, n.removed_by_member_id, n.created_at,
+         m.family_id, m.sender_member_id, m.recipient_member_id,
+         m.message_type, m.content,
+         m.image_url, m.audio_url, m.audio_duration_ms, m.latitude, m.longitude,
+         m.address, m.map_url, m.effect_id, m.effect_caption,
+         m.system_event_type, m.system_event_payload,
+         m.deleted_at, m.deleted_by_member_id, m.updated_at, m.created_at
+    from important_notifications n
+    join messages m on m.id = n.message_id and m.family_id = n.family_id
+    join message_recipients mr
+      on mr.message_id = m.id
+     and mr.family_id = m.family_id
+     and mr.member_id = v_member.id
+   where n.family_id = v_member.family_id
+     and n.removed_at is null
+     and m.recipient_member_id is null
+   order by n.created_at desc;
+end;
+$$;
+
+grant execute on function list_messages_for_member(uuid, text, int) to anon, authenticated;
+grant execute on function list_messages_delta(uuid, text, timestamptz, uuid, int) to anon, authenticated;
+grant execute on function get_message_for_member(uuid, text, uuid) to anon, authenticated;
+grant execute on function get_messages_by_ids_for_member(uuid, text, uuid[]) to anon, authenticated;
+grant execute on function add_important_notification(uuid, text, uuid) to anon, authenticated;
+grant execute on function list_important_notifications_for_member(uuid, text) to anon, authenticated;
+
+-- =====================================================================
+-- Message family seq sync
+-- =====================================================================
+
+alter table messages
+  add column if not exists family_seq bigint;
+
+create table if not exists family_message_sequences (
+  family_id uuid primary key references families(id) on delete cascade,
+  next_seq bigint not null default 1
+);
+
+with ranked as (
+  select m.id,
+         coalesce(existing.max_seq, 0) +
+           row_number() over (
+             partition by m.family_id
+             order by m.created_at asc, m.id asc
+           ) as next_family_seq
+    from messages m
+    left join lateral (
+      select max(family_seq) as max_seq
+        from messages existing
+       where existing.family_id = m.family_id
+         and existing.family_seq is not null
+    ) existing on true
+   where m.family_seq is null
+)
+update messages m
+   set family_seq = ranked.next_family_seq
+  from ranked
+ where ranked.id = m.id;
+
+create unique index if not exists messages_family_seq_uidx
+  on messages (family_id, family_seq)
+  where family_seq is not null;
+
+create index if not exists messages_family_seq_idx
+  on messages (family_id, family_seq asc);
+
+insert into family_message_sequences (family_id, next_seq)
+select f.id, coalesce(max(m.family_seq), 0) + 1
+  from families f
+  left join messages m on m.family_id = f.id
+ group by f.id
+on conflict (family_id) do update
+   set next_seq = excluded.next_seq
+ where family_message_sequences.next_seq < excluded.next_seq;
+
+create or replace function next_family_message_seq(p_family_id uuid)
+returns bigint
+security definer
+set search_path = public, extensions
+language sql
+as $$
+  insert into family_message_sequences (family_id, next_seq)
+  values (p_family_id, 2)
+  on conflict (family_id) do update
+     set next_seq = family_message_sequences.next_seq + 1
+  returning next_seq - 1;
+$$;
+
+revoke all on function next_family_message_seq(uuid) from public;
+revoke all on function next_family_message_seq(uuid) from anon, authenticated;
+
+create or replace function assign_message_family_seq()
+returns trigger
+security definer
+set search_path = public, extensions
+language plpgsql
+as $$
+begin
+  if new.family_seq is null then
+    new.family_seq := next_family_message_seq(new.family_id);
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_assign_message_family_seq on messages;
+
+create trigger trg_assign_message_family_seq
+before insert on messages
+for each row
+execute function assign_message_family_seq();
+
+drop function if exists list_messages_for_member(uuid, text, int);
+drop function if exists list_messages_delta(uuid, text, timestamptz, uuid, int);
+drop function if exists get_message_for_member(uuid, text, uuid);
+drop function if exists get_messages_by_ids_for_member(uuid, text, uuid[]);
+drop function if exists list_messages_after_seq(uuid, text, bigint, int);
+drop function if exists list_important_notifications_for_member(uuid, text);
+
+create or replace function list_messages_for_member(
+  p_member_id uuid,
+  p_member_token text,
+  p_limit int default 100
+)
+returns table (
+  id uuid,
+  family_id uuid,
+  family_seq bigint,
+  sender_member_id uuid,
+  recipient_member_id uuid,
+  message_type text,
+  content text,
+  image_url text,
+  audio_url text,
+  audio_duration_ms int,
+  latitude double precision,
+  longitude double precision,
+  address text,
+  map_url text,
+  effect_id text,
+  effect_caption text,
+  system_event_type text,
+  system_event_payload jsonb,
+  push_requested_at timestamptz,
+  deleted_at timestamptz,
+  deleted_by_member_id uuid,
+  updated_at timestamptz,
+  created_at timestamptz
+)
+security definer
+set search_path = public, extensions
+language plpgsql
+as $$
+#variable_conflict use_column
+declare
+  v_member record;
+  v_limit int;
+begin
+  select * into v_member from current_member_from_token(p_member_id, p_member_token);
+  if not found then
+    raise exception 'unauthorized';
+  end if;
+
+  v_limit := least(greatest(coalesce(p_limit, 100), 1), 300);
+
+  return query
+  select m.id, m.family_id, m.family_seq, m.sender_member_id, m.recipient_member_id,
+         m.message_type, m.content,
+         m.image_url, m.audio_url, m.audio_duration_ms, m.latitude, m.longitude,
+         m.address, m.map_url, m.effect_id, m.effect_caption,
+         m.system_event_type, m.system_event_payload, m.push_requested_at,
+         m.deleted_at, m.deleted_by_member_id, m.updated_at, m.created_at
+    from message_recipients mr
+    join messages m on m.id = mr.message_id and m.family_id = mr.family_id
+   where mr.member_id = v_member.id
+   order by m.created_at desc, m.id desc
+   limit v_limit;
+end;
+$$;
+
+create or replace function list_messages_delta(
+  p_member_id uuid,
+  p_member_token text,
+  p_cursor_updated_at timestamptz default null,
+  p_cursor_id uuid default null,
+  p_limit int default 300
+)
+returns table (
+  id uuid,
+  family_id uuid,
+  family_seq bigint,
+  sender_member_id uuid,
+  recipient_member_id uuid,
+  message_type text,
+  content text,
+  image_url text,
+  audio_url text,
+  audio_duration_ms int,
+  latitude double precision,
+  longitude double precision,
+  address text,
+  map_url text,
+  effect_id text,
+  effect_caption text,
+  system_event_type text,
+  system_event_payload jsonb,
+  push_requested_at timestamptz,
+  deleted_at timestamptz,
+  deleted_by_member_id uuid,
+  updated_at timestamptz,
+  created_at timestamptz
+)
+security definer
+set search_path = public, extensions
+language plpgsql
+as $$
+#variable_conflict use_column
+declare
+  v_member record;
+  v_limit int;
+begin
+  select * into v_member from current_member_from_token(p_member_id, p_member_token);
+  if not found then
+    raise exception 'unauthorized';
+  end if;
+
+  v_limit := least(greatest(coalesce(p_limit, 300), 1), 300);
+
+  return query
+  select m.id, m.family_id, m.family_seq, m.sender_member_id, m.recipient_member_id,
+         m.message_type, m.content,
+         m.image_url, m.audio_url, m.audio_duration_ms, m.latitude, m.longitude,
+         m.address, m.map_url, m.effect_id, m.effect_caption,
+         m.system_event_type, m.system_event_payload, m.push_requested_at,
+         m.deleted_at, m.deleted_by_member_id, m.updated_at, m.created_at
+    from message_recipients mr
+    join messages m on m.id = mr.message_id and m.family_id = mr.family_id
+   where mr.member_id = v_member.id
+     and (
+       p_cursor_updated_at is null
+       or p_cursor_id is null
+       or m.updated_at > p_cursor_updated_at
+       or (m.updated_at = p_cursor_updated_at and m.id > p_cursor_id)
+     )
+   order by m.updated_at asc, m.id asc
+   limit v_limit;
+end;
+$$;
+
+create or replace function list_messages_after_seq(
+  p_member_id uuid,
+  p_member_token text,
+  p_after_seq bigint default 0,
+  p_limit int default 300
+)
+returns table (
+  id uuid,
+  family_id uuid,
+  family_seq bigint,
+  sender_member_id uuid,
+  recipient_member_id uuid,
+  message_type text,
+  content text,
+  image_url text,
+  audio_url text,
+  audio_duration_ms int,
+  latitude double precision,
+  longitude double precision,
+  address text,
+  map_url text,
+  effect_id text,
+  effect_caption text,
+  system_event_type text,
+  system_event_payload jsonb,
+  push_requested_at timestamptz,
+  deleted_at timestamptz,
+  deleted_by_member_id uuid,
+  updated_at timestamptz,
+  created_at timestamptz
+)
+security definer
+set search_path = public, extensions
+language plpgsql
+as $$
+#variable_conflict use_column
+declare
+  v_member record;
+  v_after_seq bigint;
+  v_limit int;
+begin
+  select * into v_member from current_member_from_token(p_member_id, p_member_token);
+  if not found then
+    raise exception 'unauthorized';
+  end if;
+
+  v_after_seq := greatest(coalesce(p_after_seq, 0), 0);
+  v_limit := least(greatest(coalesce(p_limit, 300), 1), 300);
+
+  return query
+  select m.id, m.family_id, m.family_seq, m.sender_member_id, m.recipient_member_id,
+         m.message_type, m.content,
+         m.image_url, m.audio_url, m.audio_duration_ms, m.latitude, m.longitude,
+         m.address, m.map_url, m.effect_id, m.effect_caption,
+         m.system_event_type, m.system_event_payload, m.push_requested_at,
+         m.deleted_at, m.deleted_by_member_id, m.updated_at, m.created_at
+    from message_recipients mr
+    join messages m on m.id = mr.message_id and m.family_id = mr.family_id
+   where mr.member_id = v_member.id
+     and m.family_seq is not null
+     and m.family_seq > v_after_seq
+   order by m.family_seq asc, m.id asc
+   limit v_limit;
+end;
+$$;
+
+create or replace function get_message_for_member(
+  p_member_id uuid,
+  p_member_token text,
+  p_message_id uuid
+)
+returns table (
+  id uuid,
+  family_id uuid,
+  family_seq bigint,
+  sender_member_id uuid,
+  recipient_member_id uuid,
+  message_type text,
+  content text,
+  image_url text,
+  audio_url text,
+  audio_duration_ms int,
+  latitude double precision,
+  longitude double precision,
+  address text,
+  map_url text,
+  effect_id text,
+  effect_caption text,
+  system_event_type text,
+  system_event_payload jsonb,
+  push_requested_at timestamptz,
+  deleted_at timestamptz,
+  deleted_by_member_id uuid,
+  updated_at timestamptz,
+  created_at timestamptz
+)
+security definer
+set search_path = public, extensions
+language plpgsql
+as $$
+#variable_conflict use_column
+declare
+  v_member record;
+begin
+  select * into v_member from current_member_from_token(p_member_id, p_member_token);
+  if not found then
+    return;
+  end if;
+
+  return query
+  select m.id, m.family_id, m.family_seq, m.sender_member_id, m.recipient_member_id,
+         m.message_type, m.content,
+         m.image_url, m.audio_url, m.audio_duration_ms, m.latitude, m.longitude,
+         m.address, m.map_url, m.effect_id, m.effect_caption,
+         m.system_event_type, m.system_event_payload, m.push_requested_at,
+         m.deleted_at, m.deleted_by_member_id, m.updated_at, m.created_at
+    from message_recipients mr
+    join messages m on m.id = mr.message_id and m.family_id = mr.family_id
+   where mr.member_id = v_member.id
+     and m.id = p_message_id
+   limit 1;
+end;
+$$;
+
+create or replace function get_messages_by_ids_for_member(
+  p_member_id uuid,
+  p_member_token text,
+  p_message_ids uuid[]
+)
+returns table (
+  id uuid,
+  family_id uuid,
+  family_seq bigint,
+  sender_member_id uuid,
+  recipient_member_id uuid,
+  message_type text,
+  content text,
+  image_url text,
+  audio_url text,
+  audio_duration_ms int,
+  latitude double precision,
+  longitude double precision,
+  address text,
+  map_url text,
+  effect_id text,
+  effect_caption text,
+  system_event_type text,
+  system_event_payload jsonb,
+  push_requested_at timestamptz,
+  deleted_at timestamptz,
+  deleted_by_member_id uuid,
+  updated_at timestamptz,
+  created_at timestamptz
+)
+security definer
+set search_path = public, extensions
+language plpgsql
+as $$
+#variable_conflict use_column
+declare
+  v_member record;
+  v_count int;
+begin
+  if p_message_ids is null or cardinality(p_message_ids) = 0 then
+    return;
+  end if;
+
+  v_count := cardinality(p_message_ids);
+  if v_count > 100 then
+    raise exception 'too_many_message_ids';
+  end if;
+
+  select * into v_member from current_member_from_token(p_member_id, p_member_token);
+  if not found then
+    return;
+  end if;
+
+  return query
+  select m.id, m.family_id, m.family_seq, m.sender_member_id, m.recipient_member_id,
+         m.message_type, m.content,
+         m.image_url, m.audio_url, m.audio_duration_ms, m.latitude, m.longitude,
+         m.address, m.map_url, m.effect_id, m.effect_caption,
+         m.system_event_type, m.system_event_payload, m.push_requested_at,
+         m.deleted_at, m.deleted_by_member_id, m.updated_at, m.created_at
+    from message_recipients mr
+    join messages m on m.id = mr.message_id and m.family_id = mr.family_id
+   where mr.member_id = v_member.id
+     and m.id in (
+       select distinct requested.message_id
+         from unnest(p_message_ids) as requested(message_id)
+        where requested.message_id is not null
+     )
+   order by m.family_seq asc nulls last, m.created_at asc, m.id asc;
+end;
+$$;
+
+create or replace function list_important_notifications_for_member(
+  p_member_id uuid,
+  p_member_token text
+)
+returns table (
+  id uuid,
+  family_id uuid,
+  message_id uuid,
+  created_by_member_id uuid,
+  removed_at timestamptz,
+  removed_by_member_id uuid,
+  created_at timestamptz,
+  message_family_id uuid,
+  message_family_seq bigint,
+  message_sender_member_id uuid,
+  message_recipient_member_id uuid,
+  message_type text,
+  message_content text,
+  message_image_url text,
+  message_audio_url text,
+  message_audio_duration_ms int,
+  message_latitude double precision,
+  message_longitude double precision,
+  message_address text,
+  message_map_url text,
+  message_effect_id text,
+  message_effect_caption text,
+  message_system_event_type text,
+  message_system_event_payload jsonb,
+  message_deleted_at timestamptz,
+  message_deleted_by_member_id uuid,
+  message_updated_at timestamptz,
+  message_created_at timestamptz
+)
+security definer
+set search_path = public, extensions
+language plpgsql
+as $$
+#variable_conflict use_column
+declare
+  v_member record;
+begin
+  select * into v_member from current_member_from_token(p_member_id, p_member_token);
+  if not found then
+    raise exception 'unauthorized';
+  end if;
+
+  return query
+  select n.id, n.family_id, n.message_id, n.created_by_member_id,
+         n.removed_at, n.removed_by_member_id, n.created_at,
+         m.family_id, m.family_seq, m.sender_member_id, m.recipient_member_id,
+         m.message_type, m.content,
+         m.image_url, m.audio_url, m.audio_duration_ms, m.latitude, m.longitude,
+         m.address, m.map_url, m.effect_id, m.effect_caption,
+         m.system_event_type, m.system_event_payload,
+         m.deleted_at, m.deleted_by_member_id, m.updated_at, m.created_at
+    from important_notifications n
+    join messages m on m.id = n.message_id and m.family_id = n.family_id
+    join message_recipients mr
+      on mr.message_id = m.id
+     and mr.family_id = m.family_id
+     and mr.member_id = v_member.id
+   where n.family_id = v_member.family_id
+     and n.removed_at is null
+     and m.recipient_member_id is null
+   order by n.created_at desc;
+end;
+$$;
+
+grant execute on function list_messages_for_member(uuid, text, int) to anon, authenticated;
+grant execute on function list_messages_delta(uuid, text, timestamptz, uuid, int) to anon, authenticated;
+grant execute on function list_messages_after_seq(uuid, text, bigint, int) to anon, authenticated;
+grant execute on function get_message_for_member(uuid, text, uuid) to anon, authenticated;
+grant execute on function get_messages_by_ids_for_member(uuid, text, uuid[]) to anon, authenticated;
+grant execute on function list_important_notifications_for_member(uuid, text) to anon, authenticated;
+
+-- =====================================================================
+-- Message delivery and read state
+-- =====================================================================
+
+create index if not exists message_recipients_member_delivery_idx
+  on message_recipients (member_id, delivery_state, created_at desc);
+
+create index if not exists message_recipients_pending_notify_idx
+  on message_recipients (family_id, delivery_state, notified_at)
+  where delivery_state = 'pending';
+
+create or replace function mark_messages_delivered(
+  p_member_id uuid,
+  p_member_token text,
+  p_message_ids uuid[]
+)
+returns void
+security definer
+set search_path = public, extensions
+language plpgsql
+as $$
+#variable_conflict use_column
+declare
+  v_member record;
+  v_count int;
+begin
+  select * into v_member from current_member_from_token(p_member_id, p_member_token);
+  if not found then
+    raise exception 'unauthorized';
+  end if;
+
+  if p_message_ids is null or cardinality(p_message_ids) = 0 then
+    return;
+  end if;
+
+  v_count := cardinality(p_message_ids);
+  if v_count > 300 then
+    raise exception 'too_many_message_ids';
+  end if;
+
+  update message_recipients mr
+     set delivery_state = 'delivered',
+         delivered_at = coalesce(mr.delivered_at, now())
+    from (
+      select distinct requested.message_id
+        from unnest(p_message_ids) as requested(message_id)
+       where requested.message_id is not null
+    ) requested
+   where mr.member_id = v_member.id
+     and mr.family_id = v_member.family_id
+     and mr.message_id = requested.message_id
+     and mr.delivery_state = 'pending';
+end;
+$$;
+
+create or replace function mark_messages_read(
+  p_member_id uuid,
+  p_member_token text,
+  p_message_ids uuid[]
+)
+returns void
+security definer
+set search_path = public, extensions
+language plpgsql
+as $$
+#variable_conflict use_column
+declare
+  v_member record;
+  v_count int;
+begin
+  select * into v_member from current_member_from_token(p_member_id, p_member_token);
+  if not found then
+    raise exception 'unauthorized';
+  end if;
+
+  if p_message_ids is null or cardinality(p_message_ids) = 0 then
+    return;
+  end if;
+
+  v_count := cardinality(p_message_ids);
+  if v_count > 300 then
+    raise exception 'too_many_message_ids';
+  end if;
+
+  update message_recipients mr
+     set delivery_state = 'read',
+         delivered_at = coalesce(mr.delivered_at, now()),
+         read_at = coalesce(mr.read_at, now())
+    from (
+      select distinct requested.message_id
+        from unnest(p_message_ids) as requested(message_id)
+       where requested.message_id is not null
+    ) requested
+   where mr.member_id = v_member.id
+     and mr.family_id = v_member.family_id
+     and mr.message_id = requested.message_id
+     and (mr.delivery_state <> 'read' or mr.read_at is null);
+end;
+$$;
+
+create or replace function get_unread_count_for_member(
+  p_member_id uuid,
+  p_member_token text
+)
+returns int
+security definer
+set search_path = public, extensions
+language plpgsql
+as $$
+#variable_conflict use_column
+declare
+  v_member record;
+  v_count int;
+begin
+  select * into v_member from current_member_from_token(p_member_id, p_member_token);
+  if not found then
+    raise exception 'unauthorized';
+  end if;
+
+  select count(*)::int into v_count
+    from message_recipients mr
+    join messages m
+      on m.id = mr.message_id
+     and m.family_id = mr.family_id
+   where mr.member_id = v_member.id
+     and mr.family_id = v_member.family_id
+     and mr.read_at is null
+     and coalesce(m.sender_member_id, '00000000-0000-0000-0000-000000000000'::uuid)
+         <> v_member.id;
+
+  return coalesce(v_count, 0);
+end;
+$$;
+
+grant execute on function mark_messages_delivered(uuid, text, uuid[]) to anon, authenticated;
+grant execute on function mark_messages_read(uuid, text, uuid[]) to anon, authenticated;
+grant execute on function get_unread_count_for_member(uuid, text) to anon, authenticated;
 
 -- =====================================================================
 -- Auth owner + pending family code flow

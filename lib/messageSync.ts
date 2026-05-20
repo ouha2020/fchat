@@ -7,10 +7,14 @@ import {
   getSyncState,
   loadCachedMessages,
   registerCacheOpen,
+  seqFromMessages,
   upsertMessagesAndSyncState,
-  upsertMessagesToCache,
 } from "@/lib/messageCache";
-import { listMessages, listMessagesDelta } from "@/lib/messageService";
+import {
+  listMessages,
+  listMessagesAfterSeq,
+  listMessagesDelta,
+} from "@/lib/messageService";
 import type { Message } from "@/types/message";
 
 const FULL_REFRESH_LIMIT = 100;
@@ -87,7 +91,26 @@ export async function mergeRealtimeMessage(
   session: LocalSession,
   message: Message,
 ): Promise<Message[]> {
-  const messages = await upsertMessagesToCache(session, [message]);
+  const messages = await upsertMessagesAndSyncState(
+    session,
+    [message],
+    syncPatchFromMessages([message]),
+  );
+  return messages.sort(compareCreatedAtAsc);
+}
+
+export async function mergeRealtimeMessages(
+  session: LocalSession,
+  incoming: Message[],
+): Promise<Message[]> {
+  if (incoming.length === 0) {
+    return loadCachedMessagesForSession(session);
+  }
+  const messages = await upsertMessagesAndSyncState(
+    session,
+    incoming,
+    syncPatchFromMessages(incoming),
+  );
   return messages.sort(compareCreatedAtAsc);
 }
 
@@ -98,6 +121,13 @@ async function runDeltaSync(
   let state = await getSyncState(session);
   if (!state?.cursorUpdatedAt || !state.cursorId) {
     return runFullRefresh(session, true, onMessages);
+  }
+  if (typeof state.lastSyncedSeq === "number") {
+    try {
+      return await runSeqSync(session, state.lastSyncedSeq, onMessages);
+    } catch {
+      // Keep the pre-seq cursor path as a deploy-drift fallback.
+    }
   }
 
   let pages = 0;
@@ -115,7 +145,10 @@ async function runDeltaSync(
       if (rows.length === 0) break;
 
       const cursor = cursorFromMessages(rows);
-      latestMessages = await upsertMessagesAndSyncState(session, rows, cursor);
+      latestMessages = await upsertMessagesAndSyncState(session, rows, {
+        ...cursor,
+        lastSyncedSeq: seqFromMessages(rows),
+      });
       latestMessages = latestMessages.sort(compareCreatedAtAsc);
       onMessages?.(latestMessages);
 
@@ -123,6 +156,7 @@ async function runDeltaSync(
         ...state,
         cursorUpdatedAt: cursor.cursorUpdatedAt,
         cursorId: cursor.cursorId,
+        lastSyncedSeq: seqFromMessages(rows) ?? state.lastSyncedSeq,
       };
       pages += 1;
       if (rows.length < DELTA_LIMIT) break;
@@ -142,6 +176,43 @@ async function runDeltaSync(
   return { status: "synced", messages: latestMessages };
 }
 
+async function runSeqSync(
+  session: LocalSession,
+  afterSeq: number,
+  onMessages?: (messages: Message[]) => void,
+): Promise<MessageSyncResult> {
+  let currentSeq = afterSeq;
+  let pages = 0;
+  let didHitPageLimit = false;
+  let latestMessages = await loadCachedMessagesForSession(session);
+
+  while (pages < MAX_DELTA_PAGES) {
+    const rows = await listMessagesAfterSeq(session, currentSeq, DELTA_LIMIT);
+    if (rows.length === 0) break;
+
+    const cursor = cursorFromMessages(rows);
+    const latestSeq = seqFromMessages(rows);
+    latestMessages = await upsertMessagesAndSyncState(session, rows, {
+      ...cursor,
+      lastSyncedSeq: latestSeq,
+    });
+    latestMessages = latestMessages.sort(compareCreatedAtAsc);
+    onMessages?.(latestMessages);
+
+    if (typeof latestSeq === "number") currentSeq = Math.max(currentSeq, latestSeq);
+    pages += 1;
+    if (rows.length < DELTA_LIMIT) break;
+    if (pages >= MAX_DELTA_PAGES) didHitPageLimit = true;
+  }
+
+  if (didHitPageLimit) {
+    return runFullRefresh(session, true, onMessages);
+  }
+
+  if (latestMessages.length > 0) onMessages?.(latestMessages);
+  return { status: "synced", messages: latestMessages };
+}
+
 async function runFullRefresh(
   session: LocalSession,
   isHistoryPartial: boolean,
@@ -149,8 +220,10 @@ async function runFullRefresh(
 ): Promise<MessageSyncResult> {
   const rows = await listMessages(session, FULL_REFRESH_LIMIT);
   const cursor = cursorFromMessages(rows);
+  const latestSeq = seqFromMessages(rows);
   const messages = await upsertMessagesAndSyncState(session, rows, {
     ...cursor,
+    lastSyncedSeq: latestSeq,
     lastFullRefreshAt: new Date().toISOString(),
     openCount: 0,
     isHistoryPartial,
@@ -158,6 +231,17 @@ async function runFullRefresh(
   const sorted = messages.sort(compareCreatedAtAsc);
   onMessages?.(sorted);
   return { status: "synced", messages: sorted, isHistoryPartial };
+}
+
+function syncPatchFromMessages(messages: Message[]) {
+  const latestSeq = seqFromMessages(messages);
+  if (latestSeq === null) {
+    return { lastSyncedSeq: null };
+  }
+  return {
+    ...cursorFromMessages(messages),
+    lastSyncedSeq: latestSeq,
+  };
 }
 
 function syncLockKey(session: LocalSession): string {

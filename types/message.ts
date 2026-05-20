@@ -13,6 +13,7 @@ export type SystemEventType =
 export interface Message {
   id: string;
   family_id: string;
+  family_seq: number | null;
   sender_member_id: string | null;
   recipient_member_id: string | null;
   message_type: MessageType;

@@ -70,6 +70,81 @@ export async function getMessageById(
   return message ? normalizeMessage(message) : null;
 }
 
+export async function getMessagesByIds(
+  session: LocalSession,
+  messageIds: string[],
+): Promise<Message[]> {
+  const uniqueIds = [...new Set(messageIds)].slice(0, 100);
+  if (uniqueIds.length === 0) return [];
+
+  const sb = getSupabase();
+  const { data, error } = await sb.rpc("get_messages_by_ids_for_member", {
+    p_member_id: session.member_id,
+    p_member_token: session.member_token,
+    p_message_ids: uniqueIds,
+  });
+  if (error) throw error;
+  return ((data ?? []) as Message[]).map(normalizeMessage);
+}
+
+export async function listMessagesAfterSeq(
+  session: LocalSession,
+  afterSeq: number,
+  limit = 300,
+): Promise<Message[]> {
+  const sb = getSupabase();
+  const { data, error } = await sb.rpc("list_messages_after_seq", {
+    p_member_id: session.member_id,
+    p_member_token: session.member_token,
+    p_after_seq: Math.max(0, Math.floor(afterSeq)),
+    p_limit: limit,
+  });
+  if (error) throw error;
+  return ((data ?? []) as Message[]).map(normalizeMessage);
+}
+
+export async function markMessagesDelivered(
+  session: LocalSession,
+  messageIds: string[],
+): Promise<void> {
+  const ids = uniqueMessageIds(messageIds);
+  if (ids.length === 0) return;
+
+  const sb = getSupabase();
+  const { error } = await sb.rpc("mark_messages_delivered", {
+    p_member_id: session.member_id,
+    p_member_token: session.member_token,
+    p_message_ids: ids,
+  });
+  if (error) throw error;
+}
+
+export async function markMessagesRead(
+  session: LocalSession,
+  messageIds: string[],
+): Promise<void> {
+  const ids = uniqueMessageIds(messageIds);
+  if (ids.length === 0) return;
+
+  const sb = getSupabase();
+  const { error } = await sb.rpc("mark_messages_read", {
+    p_member_id: session.member_id,
+    p_member_token: session.member_token,
+    p_message_ids: ids,
+  });
+  if (error) throw error;
+}
+
+export async function getUnreadCount(session: LocalSession): Promise<number> {
+  const sb = getSupabase();
+  const { data, error } = await sb.rpc("get_unread_count_for_member", {
+    p_member_id: session.member_id,
+    p_member_token: session.member_token,
+  });
+  if (error) throw error;
+  return typeof data === "number" ? data : Number(data ?? 0);
+}
+
 interface SendMessageInput {
   type: MessageType;
   content?: string | null;
@@ -214,9 +289,14 @@ async function uploadViaApi(path: string, form: FormData): Promise<string> {
   return payload.url;
 }
 
+function uniqueMessageIds(messageIds: string[]): string[] {
+  return [...new Set(messageIds.filter(Boolean))].slice(0, 300);
+}
+
 export function normalizeMessage(message: Message): Message {
   return {
     ...message,
+    family_seq: normalizeFamilySeq(message.family_seq),
     recipient_member_id: message.recipient_member_id ?? null,
     system_event_type: message.system_event_type ?? null,
     system_event_payload: message.system_event_payload ?? null,
@@ -226,4 +306,13 @@ export function normalizeMessage(message: Message): Message {
       message.created_at ??
       new Date(0).toISOString(),
   };
+}
+
+function normalizeFamilySeq(value: Message["family_seq"] | string | undefined): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
 }

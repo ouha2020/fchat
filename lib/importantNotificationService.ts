@@ -15,6 +15,7 @@ interface ImportantNotificationRow {
   removed_by_member_id: string | null;
   created_at: string;
   message_family_id: string;
+  message_family_seq: number | string | null;
   message_sender_member_id: string | null;
   message_recipient_member_id: string | null;
   message_type: MessageType;
@@ -57,6 +58,12 @@ export async function listImportantNotifications(
       ? normalizeMessage({
           id: row.message_id,
           family_id: row.message_family_id,
+          family_seq:
+            typeof row.message_family_seq === "number"
+              ? row.message_family_seq
+              : row.message_family_seq
+                ? Number(row.message_family_seq)
+                : null,
           sender_member_id: row.message_sender_member_id,
           recipient_member_id: row.message_recipient_member_id,
           message_type: row.message_type,

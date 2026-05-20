@@ -36,8 +36,12 @@ import {
   deleteMessage,
   forceRefreshMessages,
   getMessageById,
+  getMessagesByIds,
   loadCachedMessagesForSession,
+  markMessagesDelivered,
+  markMessagesRead,
   mergeRealtimeMessage,
+  mergeRealtimeMessages,
   noteMessageCacheOpen,
   sendMessage,
   syncMessages,
@@ -70,11 +74,15 @@ const INITIAL_CACHED_MESSAGE_LIMIT = 100;
 const CACHED_MESSAGE_PAGE_SIZE = 100;
 const PUSH_MESSAGE_DEDUPE_MS = 5_000;
 const REALTIME_BACKGROUND_DISCONNECT_MS = 45_000;
+const REALTIME_BATCH_FLUSH_MS = 150;
+const MESSAGE_DELIVERED_REPORT_DELAY_MS = 500;
+const MESSAGE_READ_REPORT_DELAY_MS = 700;
 
 interface MessageRealtimeEvent {
   id: string;
   family_id: string;
   message_id: string;
+  recipient_member_id: string | null;
   event_type: "insert" | "update";
   created_at: string;
 }
@@ -200,8 +208,15 @@ export default function ChatPage() {
     messagesRef.current = messages;
     knownMessageIdsRef.current = new Set(messages.map((message) => message.id));
   }, [messages]);
-  const realtimeEventTimersRef = useRef<Map<string, number>>(new Map());
+  const pendingRealtimeMessageIdsRef = useRef<Set<string>>(new Set());
+  const realtimeBatchTimerRef = useRef<number | null>(null);
   const pendingPushMessageIdsRef = useRef<Map<string, number>>(new Map());
+  const pendingDeliveredMessageIdsRef = useRef<Set<string>>(new Set());
+  const pendingReadMessageIdsRef = useRef<Set<string>>(new Set());
+  const reportedDeliveredMessageIdsRef = useRef<Set<string>>(new Set());
+  const reportedReadMessageIdsRef = useRef<Set<string>>(new Set());
+  const deliveredReportTimerRef = useRef<number | null>(null);
+  const readReportTimerRef = useRef<number | null>(null);
   const [effectShow, setEffectShow] = useState<{
     effect: Effect;
     key: string;
@@ -368,6 +383,143 @@ export default function ChatPage() {
     [handleIncomingMessageSideEffects],
   );
 
+  const flushDeliveredReports = useCallback(async () => {
+    const activeSession = sessionRef.current;
+    if (!activeSession) return;
+
+    const ids = [...pendingDeliveredMessageIdsRef.current].slice(0, 300);
+    ids.forEach((id) => pendingDeliveredMessageIdsRef.current.delete(id));
+    if (ids.length === 0) return;
+
+    try {
+      await markMessagesDelivered(activeSession, ids);
+    } catch {
+      ids.forEach((id) => reportedDeliveredMessageIdsRef.current.delete(id));
+    } finally {
+      if (
+        pendingDeliveredMessageIdsRef.current.size > 0 &&
+        !deliveredReportTimerRef.current
+      ) {
+        deliveredReportTimerRef.current = window.setTimeout(() => {
+          deliveredReportTimerRef.current = null;
+          flushDeliveredReports().catch(() => undefined);
+        }, MESSAGE_DELIVERED_REPORT_DELAY_MS);
+      }
+    }
+  }, []);
+
+  const scheduleDeliveredReports = useCallback(
+    (candidates: Message[]) => {
+      const activeSession = sessionRef.current;
+      if (!activeSession) return;
+
+      candidates.forEach((message) => {
+        if (message.sender_member_id === activeSession.member_id) return;
+        if (reportedDeliveredMessageIdsRef.current.has(message.id)) return;
+        if (!isMessageVisibleToSession(message, activeSession)) return;
+        reportedDeliveredMessageIdsRef.current.add(message.id);
+        pendingDeliveredMessageIdsRef.current.add(message.id);
+      });
+
+      if (
+        pendingDeliveredMessageIdsRef.current.size === 0 ||
+        deliveredReportTimerRef.current
+      ) {
+        return;
+      }
+
+      deliveredReportTimerRef.current = window.setTimeout(() => {
+        deliveredReportTimerRef.current = null;
+        flushDeliveredReports().catch(() => undefined);
+      }, MESSAGE_DELIVERED_REPORT_DELAY_MS);
+    },
+    [flushDeliveredReports],
+  );
+
+  const flushReadReports = useCallback(async () => {
+    const activeSession = sessionRef.current;
+    if (!activeSession) return;
+
+    const ids = [...pendingReadMessageIdsRef.current].slice(0, 300);
+    ids.forEach((id) => pendingReadMessageIdsRef.current.delete(id));
+    if (ids.length === 0) return;
+
+    try {
+      await markMessagesRead(activeSession, ids);
+    } catch {
+      ids.forEach((id) => reportedReadMessageIdsRef.current.delete(id));
+    } finally {
+      if (pendingReadMessageIdsRef.current.size > 0 && !readReportTimerRef.current) {
+        readReportTimerRef.current = window.setTimeout(() => {
+          readReportTimerRef.current = null;
+          flushReadReports().catch(() => undefined);
+        }, MESSAGE_READ_REPORT_DELAY_MS);
+      }
+    }
+  }, []);
+
+  const scheduleReadReports = useCallback(
+    (candidates: Message[]) => {
+      const activeSession = sessionRef.current;
+      if (!activeSession) return;
+      if (document.visibilityState !== "visible") return;
+      if (window.location.pathname !== "/chat") return;
+
+      candidates.forEach((message) => {
+        if (message.sender_member_id === activeSession.member_id) return;
+        if (reportedReadMessageIdsRef.current.has(message.id)) return;
+        if (!isMessageVisibleToSession(message, activeSession)) return;
+        reportedReadMessageIdsRef.current.add(message.id);
+        pendingReadMessageIdsRef.current.add(message.id);
+      });
+
+      if (pendingReadMessageIdsRef.current.size === 0 || readReportTimerRef.current) {
+        return;
+      }
+
+      readReportTimerRef.current = window.setTimeout(() => {
+        readReportTimerRef.current = null;
+        flushReadReports().catch(() => undefined);
+      }, MESSAGE_READ_REPORT_DELAY_MS);
+    },
+    [flushReadReports],
+  );
+
+  useEffect(() => {
+    if (!session || messages.length === 0) return;
+    scheduleDeliveredReports(messages);
+    scheduleReadReports(messages);
+  }, [messages, scheduleDeliveredReports, scheduleReadReports, session]);
+
+  useEffect(() => {
+    if (!session) return;
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== "visible") return;
+      scheduleReadReports(messagesRef.current);
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [scheduleReadReports, session]);
+
+  useEffect(() => {
+    const pendingDeliveredMessageIds = pendingDeliveredMessageIdsRef.current;
+    const pendingReadMessageIds = pendingReadMessageIdsRef.current;
+    return () => {
+      if (deliveredReportTimerRef.current) {
+        window.clearTimeout(deliveredReportTimerRef.current);
+        deliveredReportTimerRef.current = null;
+      }
+      if (readReportTimerRef.current) {
+        window.clearTimeout(readReportTimerRef.current);
+        readReportTimerRef.current = null;
+      }
+      pendingDeliveredMessageIds.clear();
+      pendingReadMessageIds.clear();
+    };
+  }, []);
+
   const fetchRealtimeMessage = useCallback(
     async (messageId: string): Promise<boolean> => {
       const activeSession = sessionRef.current;
@@ -380,6 +532,53 @@ export default function ChatPage() {
       return true;
     },
     [handleSyncedMessages],
+  );
+
+  const flushRealtimeMessages = useCallback(async () => {
+    const activeSession = sessionRef.current;
+    if (!activeSession) return;
+
+    const pendingIds = pendingRealtimeMessageIdsRef.current;
+    const messageIds = [...pendingIds].slice(0, 100);
+    messageIds.forEach((id) => pendingIds.delete(id));
+    if (messageIds.length === 0) return;
+
+    try {
+      const incoming = await getMessagesByIds(activeSession, messageIds);
+      const visible = incoming.filter((message) =>
+        isMessageVisibleToSession(message, activeSession),
+      );
+      if (visible.length === 0) return;
+
+      const next = await mergeRealtimeMessages(activeSession, visible);
+      handleSyncedMessages(next);
+    } catch {
+      if (document.visibilityState !== "visible") return;
+      await syncMessages(activeSession, { onMessages: handleSyncedMessages }).catch(
+        () => undefined,
+      );
+    } finally {
+      if (pendingIds.size > 0 && !realtimeBatchTimerRef.current) {
+        realtimeBatchTimerRef.current = window.setTimeout(() => {
+          realtimeBatchTimerRef.current = null;
+          flushRealtimeMessages().catch(() => undefined);
+        }, REALTIME_BATCH_FLUSH_MS);
+      }
+    }
+  }, [handleSyncedMessages]);
+
+  const scheduleRealtimeBatchFetch = useCallback(
+    (messageId: string) => {
+      pendingRealtimeMessageIdsRef.current.add(messageId);
+      if (realtimeBatchTimerRef.current) {
+        window.clearTimeout(realtimeBatchTimerRef.current);
+      }
+      realtimeBatchTimerRef.current = window.setTimeout(() => {
+        realtimeBatchTimerRef.current = null;
+        flushRealtimeMessages().catch(() => undefined);
+      }, REALTIME_BATCH_FLUSH_MS);
+    },
+    [flushRealtimeMessages],
   );
 
   const fetchPushMessageNow = useCallback(
@@ -798,27 +997,6 @@ export default function ChatPage() {
   useEffect(() => {
     if (!session || !realtimeConnected) return;
     const sb = getSupabase();
-    const realtimeTimers = realtimeEventTimersRef.current;
-
-    const scheduleRealtimeFetch = (event: MessageRealtimeEvent) => {
-      const existingTimer = realtimeTimers.get(event.message_id);
-      if (existingTimer) window.clearTimeout(existingTimer);
-      const timer = window.setTimeout(() => {
-        realtimeTimers.delete(event.message_id);
-        fetchRealtimeMessage(event.message_id)
-          .then((fetched) => {
-            if (fetched || document.visibilityState !== "visible") return;
-            return syncMessages(session, { onMessages: handleSyncedMessages });
-          })
-          .catch(() => {
-            if (document.visibilityState !== "visible") return undefined;
-            return syncMessages(session, { onMessages: handleSyncedMessages }).catch(
-              () => undefined,
-            );
-          });
-      }, 0);
-      realtimeTimers.set(event.message_id, timer);
-    };
 
     const messageEventsChannel = sb
       .channel(`message_events:${session.family_id}`)
@@ -828,10 +1006,12 @@ export default function ChatPage() {
           event: "INSERT",
           schema: "public",
           table: "message_realtime_events",
-          filter: `family_id=eq.${session.family_id}`,
+          filter: `recipient_member_id=eq.${session.member_id}`,
         },
         (payload) => {
-          scheduleRealtimeFetch(payload.new as MessageRealtimeEvent);
+          const event = payload.new as MessageRealtimeEvent;
+          if (event.family_id !== session.family_id) return;
+          scheduleRealtimeBatchFetch(event.message_id);
         },
       )
       .subscribe((status) => {
@@ -918,6 +1098,8 @@ export default function ChatPage() {
         .catch(() => undefined);
     }, METADATA_FALLBACK_POLL_MS);
 
+    const pendingRealtimeMessageIds = pendingRealtimeMessageIdsRef.current;
+
     return () => {
       sb.removeChannel(messageEventsChannel);
       sb.removeChannel(importantEventsChannel);
@@ -925,15 +1107,18 @@ export default function ChatPage() {
       window.clearInterval(messagePoll);
       window.clearInterval(importantPoll);
       window.clearInterval(metadataPoll);
-      realtimeTimers.forEach((timer) => window.clearTimeout(timer));
-      realtimeTimers.clear();
+      if (realtimeBatchTimerRef.current) {
+        window.clearTimeout(realtimeBatchTimerRef.current);
+        realtimeBatchTimerRef.current = null;
+      }
+      pendingRealtimeMessageIds.clear();
     };
   }, [
-    fetchRealtimeMessage,
     handleSyncedMessages,
     refreshImportantNotifications,
     realtimeConnected,
     router,
+    scheduleRealtimeBatchFetch,
     session,
     t,
     toast,
@@ -1133,6 +1318,7 @@ export default function ChatPage() {
     const optimistic: Message = {
       id: partial.id,
       family_id: session.family_id,
+      family_seq: partial.family_seq ?? null,
       sender_member_id: session.member_id,
       recipient_member_id: partial.recipient_member_id ?? null,
       message_type: partial.message_type,

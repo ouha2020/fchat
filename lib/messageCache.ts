@@ -17,6 +17,7 @@ export interface MessageSyncState {
   memberId: string;
   cursorUpdatedAt: string | null;
   cursorId: string | null;
+  lastSyncedSeq: number | null;
   lastFullRefreshAt: string | null;
   openCount: number;
   isHistoryPartial: boolean;
@@ -34,6 +35,7 @@ export interface SyncCursor {
 }
 
 export interface SyncStatePatch extends Partial<SyncCursor> {
+  lastSyncedSeq?: number | null;
   lastFullRefreshAt?: string | null;
   openCount?: number;
   isHistoryPartial?: boolean;
@@ -121,10 +123,15 @@ export async function upsertMessagesAndSyncState(
       const stateRequest = stateStore.get(ownerKey);
       stateRequest.onsuccess = () => {
         const existing = stateRequest.result as MessageSyncState | undefined;
+        const patchedLastSyncedSeq =
+          patch.lastSyncedSeq === undefined
+            ? existing?.lastSyncedSeq ?? null
+            : maxSeq(existing?.lastSyncedSeq ?? null, patch.lastSyncedSeq);
         const next: MessageSyncState = {
           ...defaultSyncState(session),
           ...existing,
           ...patch,
+          lastSyncedSeq: patchedLastSyncedSeq,
           updatedAt: new Date().toISOString(),
         };
         stateStore.put(next);
@@ -160,6 +167,13 @@ export function cursorFromMessages(messages: Message[]): SyncCursor {
   };
 }
 
+export function seqFromMessages(messages: Message[]): number | null {
+  return messages.reduce<number | null>((latest, message) => {
+    const normalized = normalizeMessage(message);
+    return maxSeq(latest, normalized.family_seq);
+  }, null);
+}
+
 export function compareCreatedAtAsc(a: Message, b: Message): number {
   const byTime = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
   return byTime || a.id.localeCompare(b.id);
@@ -180,6 +194,7 @@ function defaultSyncState(session: LocalSession): MessageSyncState {
     memberId: session.member_id,
     cursorUpdatedAt: null,
     cursorId: null,
+    lastSyncedSeq: null,
     lastFullRefreshAt: null,
     openCount: 0,
     isHistoryPartial: false,
@@ -251,6 +266,12 @@ function queuePruneOwnerMessages(
         if (index >= MAX_RETAINED_MESSAGES) store.delete(record.cacheKey);
       });
   };
+}
+
+function maxSeq(left: number | null, right: number | null): number | null {
+  if (typeof left !== "number") return typeof right === "number" ? right : null;
+  if (typeof right !== "number") return left;
+  return Math.max(left, right);
 }
 
 function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {

@@ -307,7 +307,7 @@ export default function ChatPage() {
 
   const push = usePushNotificationControls(session);
 
-  // Notifications: in-app sound + title badge, controlled by the PWA push switch.
+  // Notifications: background sound + title badge, controlled by the PWA push switch.
   const [unreadCount, setUnreadCount] = useState(0);
   const pushEnabledRef = useRef(false);
   const notifiedIdsRef = useRef<Set<string>>(new Set());
@@ -359,8 +359,8 @@ export default function ChatPage() {
         !notifiedIdsRef.current.has(incoming.id)
       ) {
         notifiedIdsRef.current.add(incoming.id);
-        playNotificationSound();
         if (typeof document !== "undefined" && document.hidden) {
+          playNotificationSound();
           setUnreadCount((c) => c + 1);
           vibrate(120);
         }

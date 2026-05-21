@@ -1540,10 +1540,6 @@ export default function ChatPage() {
 
   async function handlePickImage(file: File) {
     if (!session) return;
-    if (file.size > 2 * 1024 * 1024) {
-      toast.error(t("chatImageTooLarge"));
-      return;
-    }
     setSending(true);
     try {
       const url = await uploadChatImage(session, file);

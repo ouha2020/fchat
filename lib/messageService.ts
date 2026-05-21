@@ -2,6 +2,7 @@
 
 import { getSupabase } from "./supabaseClient";
 import type { LocalSession } from "./authLocal";
+import { prepareChatImage } from "@/lib/imageCompression";
 import { isSafeHttpUrl, safeGoogleMapsUrl } from "@/lib/security";
 import {
   audioBlobSchema,
@@ -190,15 +191,16 @@ export async function uploadChatImage(
   session: LocalSession,
   file: File,
 ): Promise<string> {
-  imageFileSchema.parse(file);
-  const contentType = normalizeMime(file.type);
+  const preparedFile = await prepareChatImage(file);
+  imageFileSchema.parse(preparedFile);
+  const contentType = normalizeMime(preparedFile.type);
   const ext = IMAGE_EXT_BY_MIME[contentType];
   if (!ext) throw new Error("invalid_image_type");
 
   const form = new FormData();
   form.append("memberId", session.member_id);
   form.append("memberToken", session.member_token);
-  form.append("file", file, `image.${ext}`);
+  form.append("file", preparedFile, `image.${ext}`);
   return uploadViaApi("/api/upload/image", form);
 }
 

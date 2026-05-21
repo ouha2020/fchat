@@ -207,11 +207,9 @@ async function cacheFirst(request) {
 }
 
 async function deliverForegroundOrNotify(title, options) {
-  const visibleChatClients = await getVisibleChatWindowClients(
-    options.data.url || "/chat",
-  );
-  if (visibleChatClients.length > 0) {
-    visibleChatClients.forEach((client) => {
+  const visibleAppClients = await getVisibleAppWindowClients();
+  if (visibleAppClients.length > 0) {
+    visibleAppClients.forEach((client) => {
       client.postMessage({
         type: PUSH_RECEIVED,
         familyId: options.data.familyId,
@@ -224,8 +222,7 @@ async function deliverForegroundOrNotify(title, options) {
   return self.registration.showNotification(title, options);
 }
 
-async function getVisibleChatWindowClients(targetUrl) {
-  const targetPath = new URL(targetUrl || "/chat", self.location.origin).pathname;
+async function getVisibleAppWindowClients() {
   const clientList = await clients.matchAll({
     type: "window",
     includeUncontrolled: true,
@@ -235,10 +232,7 @@ async function getVisibleChatWindowClients(targetUrl) {
     if (client.visibilityState !== "visible") return false;
     try {
       const clientUrl = new URL(client.url);
-      return (
-        clientUrl.origin === self.location.origin &&
-        clientUrl.pathname === targetPath
-      );
+      return clientUrl.origin === self.location.origin;
     } catch {
       return false;
     }

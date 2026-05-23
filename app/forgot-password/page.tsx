@@ -30,20 +30,20 @@ export default function ForgotPasswordPage() {
   }
 
   return (
-    <div className="flex flex-1 flex-col px-5 py-8 sm:px-8">
-      <header className="mb-6">
-        <Link href="/login" className="text-sm text-brand-600 hover:underline">
+    <div className="app-page-narrow">
+      <header className="app-header-stack">
+        <Link href="/login" className="back-link">
           返回登录
         </Link>
-        <h1 className="mt-2 text-2xl font-bold text-slate-900">忘记密码</h1>
-        <p className="mt-1 text-sm text-slate-500">
+        <h1 className="page-title">忘记密码</h1>
+        <p className="page-subtitle">
           输入注册邮箱，我们会发送密码重置邮件。
         </p>
       </header>
 
       <EnvWarning />
 
-      <form onSubmit={onSubmit} className="card flex flex-col gap-4">
+      <form onSubmit={onSubmit} className="section-card flex flex-col gap-4">
         <div>
           <label className="label" htmlFor="email">邮箱</label>
           <input
@@ -57,12 +57,12 @@ export default function ForgotPasswordPage() {
           />
         </div>
         {message ? (
-          <div className="rounded-xl bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+          <div className="success-note">
             {message}
           </div>
         ) : null}
         {error ? (
-          <div className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          <div className="error-note">
             {error}
           </div>
         ) : null}

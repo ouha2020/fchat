@@ -73,7 +73,8 @@ function ImagePreviewContent() {
           <button
             type="button"
             onClick={handleBack}
-            className="rounded-full bg-white/12 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/20 active:bg-white/25"
+            className="min-h-10 rounded-full bg-white/12 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/20 active:bg-white/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50"
+            aria-label={t("previewBack")}
           >
             {t("previewBack")}
           </button>
@@ -82,7 +83,8 @@ function ImagePreviewContent() {
               <button
                 type="button"
                 onClick={handleSetBackground}
-                className="rounded-full bg-white/12 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/20 active:bg-white/25"
+                className="min-h-10 rounded-full bg-white/12 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/20 active:bg-white/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50"
+                aria-label={t("previewSetBackground")}
               >
                 {t("previewSetBackground")}
               </button>
@@ -90,7 +92,8 @@ function ImagePreviewContent() {
                 href={src}
                 target="_blank"
                 rel="noreferrer"
-                className="rounded-full bg-white/12 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/20 active:bg-white/25"
+                className="min-h-10 rounded-full bg-white/12 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/20 active:bg-white/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50"
+                aria-label={t("previewOpenOriginal")}
               >
                 {t("previewOpenOriginal")}
               </a>

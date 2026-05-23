@@ -33,9 +33,15 @@ export async function POST(request: Request) {
     }
 
     const sb = getSupabaseAdmin();
+    const now = new Date().toISOString();
     let query = sb
       .from("push_subscriptions")
-      .update({ enabled: false, updated_at: new Date().toISOString() })
+      .update({
+        enabled: false,
+        disabled_at: now,
+        disabled_reason: "user_unsubscribed",
+        updated_at: now,
+      })
       .eq("family_id", member.family_id)
       .eq("member_id", member.member_id);
 

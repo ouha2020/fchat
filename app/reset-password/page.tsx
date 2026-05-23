@@ -31,20 +31,20 @@ export default function ResetPasswordPage() {
   }
 
   return (
-    <div className="flex flex-1 flex-col px-5 py-8 sm:px-8">
-      <header className="mb-6">
-        <Link href="/login" className="text-sm text-brand-600 hover:underline">
+    <div className="app-page-narrow">
+      <header className="app-header-stack">
+        <Link href="/login" className="back-link">
           返回登录
         </Link>
-        <h1 className="mt-2 text-2xl font-bold text-slate-900">重置密码</h1>
-        <p className="mt-1 text-sm text-slate-500">
+        <h1 className="page-title">重置密码</h1>
+        <p className="page-subtitle">
           设置一个新的登录密码。
         </p>
       </header>
 
       <EnvWarning />
 
-      <form onSubmit={onSubmit} className="card flex flex-col gap-4">
+      <form onSubmit={onSubmit} className="section-card flex flex-col gap-4">
         <div>
           <label className="label" htmlFor="password">新密码</label>
           <input
@@ -70,7 +70,7 @@ export default function ResetPasswordPage() {
           />
         </div>
         {error ? (
-          <div className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          <div className="error-note">
             {error}
           </div>
         ) : null}

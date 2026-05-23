@@ -35,10 +35,10 @@ export default function ImportantNoticeBar({
   const latestPreview = latest ? buildPreview(latest.message, t).text : "";
 
   return (
-    <section className="border-b border-amber-100/70 bg-white/80 px-5 py-1.5 backdrop-blur sm:px-6">
+    <section className="border-b border-amber-100/70 bg-white/85 px-3 py-1.5 backdrop-blur sm:px-5">
       <button
         type="button"
-        className="flex w-full items-start justify-between gap-3 rounded-lg text-left text-[13px] leading-4 text-amber-700 transition hover:bg-amber-50/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200"
+        className="flex min-h-10 w-full items-start justify-between gap-3 rounded-xl px-2 py-1 text-left text-[13px] leading-4 text-amber-700 transition hover:bg-amber-50/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200"
         aria-expanded={expanded}
         onClick={() => setExpanded((value) => !value)}
       >

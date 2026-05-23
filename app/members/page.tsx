@@ -146,20 +146,20 @@ export default function MembersPage() {
   }
 
   return (
-    <div className="flex flex-1 flex-col px-5 py-6 sm:px-8">
-      <header className="mb-4 flex items-center justify-between">
-        <div>
-          <Link href="/chat" className="text-sm text-brand-600 hover:underline">
+    <div className="app-page">
+      <header className="app-header">
+        <div className="min-w-0">
+          <Link href="/chat" className="back-link">
             {t("commonBackToChat")}
           </Link>
-          <h1 className="mt-1 text-2xl font-bold">{t("membersTitle")}</h1>
+          <h1 className="page-title mt-2">{t("membersTitle")}</h1>
         </div>
       </header>
 
       {loading ? (
-        <div className="text-sm text-slate-500">{t("commonLoading")}</div>
+        <div className="status-note">{t("commonLoading")}</div>
       ) : loadError ? (
-        <div className="card text-center">
+        <div className="section-card text-center">
           <h2 className="text-lg font-bold text-slate-900">
             {t("chatLoadFailedTitle")}
           </h2>
@@ -176,7 +176,7 @@ export default function MembersPage() {
             </button>
             <button
               type="button"
-              className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-600 shadow-sm transition hover:bg-slate-50"
+              className="btn-secondary"
               onClick={() => {
                 clearSession();
                 router.replace("/");
@@ -187,18 +187,20 @@ export default function MembersPage() {
           </div>
         </div>
       ) : (
-        <ul className="card divide-y divide-slate-100 p-0">
+        <ul className="section-card divide-y divide-slate-100 p-0">
           {members.map((m) => (
             <li
               key={m.id}
-              className="flex flex-wrap items-center gap-3 px-4 py-3"
+              className="flex items-center gap-3 px-4 py-3"
             >
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-200 text-base font-semibold text-slate-700">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-200 text-base font-semibold text-slate-700">
                 {m.nickname.slice(0, 1).toUpperCase()}
               </div>
-              <div className="flex flex-1 flex-col">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium">{m.nickname}</span>
+              <div className="min-w-0 flex-1">
+                <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                  <span className="truncate font-semibold text-slate-900">
+                    {m.nickname}
+                  </span>
                   <RoleBadge role={m.role} />
                   {m.is_admin ? (
                     <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">
@@ -218,7 +220,7 @@ export default function MembersPage() {
                 </span>
               </div>
               {session?.member_id !== m.id ? (
-                <div className="flex shrink-0 items-center gap-2">
+                <div className="flex shrink-0 items-center gap-1.5">
                   <Link
                     href={`/chat?whisper=${encodeURIComponent(m.id)}`}
                     className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-50 p-2 shadow-sm ring-1 ring-violet-100 transition hover:bg-violet-100 active:bg-violet-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-200"

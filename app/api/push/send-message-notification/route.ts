@@ -42,7 +42,8 @@ export async function POST(request: Request) {
       sent: result.sent,
       disabled: result.gone,
       failed: result.failed,
-      skipped: result.skippedReason,
+      skipped: result.skipped,
+      skippedReason: result.skippedReason,
     });
   } catch (error) {
     if (error instanceof ApiRequestError) {

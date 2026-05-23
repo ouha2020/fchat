@@ -147,20 +147,20 @@ export default function JoinPage() {
   }
 
   return (
-    <div className="flex flex-1 flex-col px-5 py-8 sm:px-8">
-      <header className="mb-6">
-        <Link href="/" className="text-sm text-brand-600 hover:underline">
+    <div className="app-page-narrow">
+      <header className="app-header-stack">
+        <Link href="/" className="back-link">
           返回首页
         </Link>
-        <h1 className="mt-2 text-2xl font-bold text-slate-900">加入家庭</h1>
-        <p className="mt-1 text-sm text-slate-500">
+        <h1 className="page-title">加入家庭</h1>
+        <p className="page-subtitle">
           家人加入家庭只需要家庭代码，不需要注册。
         </p>
       </header>
 
       <EnvWarning />
 
-      <form onSubmit={onSubmit} className="card flex flex-col gap-4">
+      <form onSubmit={onSubmit} className="section-card flex flex-col gap-4">
         <div>
           <label className="label" htmlFor="code">
             家庭代码
@@ -191,7 +191,7 @@ export default function JoinPage() {
         </div>
 
         {recoverOpen ? (
-          <div className="rounded-2xl bg-slate-50 p-3">
+          <div className="rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-100">
             <label className="label" htmlFor="recover-email">
               创建家庭的邮箱
             </label>
@@ -222,12 +222,12 @@ export default function JoinPage() {
               家庭代码只会发送到创建家庭时使用的邮箱，页面不会直接显示代码。
             </p>
             {recoverNotice ? (
-              <div className="mt-2 rounded-xl bg-sky-50 px-3 py-2 text-sm text-sky-700">
+              <div className="mt-2 rounded-xl bg-sky-50 px-3 py-2 text-sm leading-6 text-sky-700">
                 {recoverNotice}
               </div>
             ) : null}
             {recoverError ? (
-              <div className="mt-2 rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">
+              <div className="mt-2 error-note">
                 {recoverError}
               </div>
             ) : null}
@@ -276,7 +276,7 @@ export default function JoinPage() {
         )}
 
         {error ? (
-          <div className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          <div className="error-note">
             {error}
           </div>
         ) : null}

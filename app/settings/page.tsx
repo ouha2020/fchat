@@ -26,11 +26,12 @@ import {
   fetchPushDiagnostics,
   pushNotificationErrorMessage,
   type PushDiagnostics,
-  type ServerSubscriptionInfo,
 } from "@/lib/pushNotificationService";
+import { getScheduleReminderHealth } from "@/lib/scheduleService";
 import { isSupabaseConfigured } from "@/lib/supabaseClient";
 import { getSupabaseAuth } from "@/lib/supabaseAuthClient";
 import { usePushNotificationControls } from "@/lib/usePushNotificationControls";
+import type { ScheduleReminderHealth } from "@/types/schedule";
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -48,6 +49,9 @@ export default function SettingsPage() {
   const push = usePushNotificationControls(session);
   const [diagnostics, setDiagnostics] = useState<PushDiagnostics | null>(null);
   const [diagLoading, setDiagLoading] = useState(false);
+  const [reminderHealth, setReminderHealth] =
+    useState<ScheduleReminderHealth | null>(null);
+  const [reminderHealthLoading, setReminderHealthLoading] = useState(false);
 
   async function loadDiagnostics() {
     if (!session) return;
@@ -183,6 +187,18 @@ export default function SettingsPage() {
       toast.error(humanizeError(err, language));
     } finally {
       setBusy(null);
+    }
+  }
+
+  async function loadReminderHealth() {
+    if (!session?.is_admin) return;
+    setReminderHealthLoading(true);
+    try {
+      setReminderHealth(await getScheduleReminderHealth(session));
+    } catch (err) {
+      toast.error(humanizeError(err, language));
+    } finally {
+      setReminderHealthLoading(false);
     }
   }
 
@@ -328,16 +344,16 @@ export default function SettingsPage() {
 
   if (loading) {
     return (
-      <div className="flex flex-1 flex-col px-5 py-6 sm:px-8">
-        <div className="text-sm text-slate-500">{t("commonLoading")}</div>
+      <div className="app-page">
+        <div className="status-note">{t("commonLoading")}</div>
       </div>
     );
   }
 
   if (loadError) {
     return (
-      <div className="flex flex-1 flex-col px-5 py-6 sm:px-8">
-        <div className="card text-center">
+      <div className="app-page">
+        <div className="section-card text-center">
           <h1 className="text-lg font-bold text-slate-900">
             {t("chatLoadFailedTitle")}
           </h1>
@@ -354,7 +370,7 @@ export default function SettingsPage() {
             </button>
             <button
               type="button"
-              className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-600 shadow-sm transition hover:bg-slate-50"
+              className="btn-secondary"
               onClick={() => {
                 clearSession();
                 router.replace("/");
@@ -372,15 +388,15 @@ export default function SettingsPage() {
   const canManageFamily = session.is_admin;
 
   return (
-    <div className="flex flex-1 flex-col px-5 py-6 sm:px-8">
-      <header className="mb-4">
-        <Link href="/chat" className="text-sm text-brand-600 hover:underline">
+    <div className="app-page">
+      <header className="app-header-stack">
+        <Link href="/chat" className="back-link">
           {t("commonBackToChat")}
         </Link>
-        <h1 className="mt-1 text-2xl font-bold">{t("settingsTitle")}</h1>
+        <h1 className="page-title">{t("settingsTitle")}</h1>
       </header>
 
-      <section className="card flex flex-col gap-3">
+      <section className="section-card flex flex-col gap-3">
         <Row label={t("settingsFamilyName")} value={session.family_name} />
         {canManageFamily ? (
           <Row
@@ -431,9 +447,12 @@ export default function SettingsPage() {
             当前身份保存在此浏览器中。如果更换手机或清除浏览器数据，可能需要重新输入家庭代码加入。
           </p>
         )}
+        <Link href="/me" className="btn-secondary text-center">
+          {t("meTitle")}
+        </Link>
       </section>
 
-      <section className="card mt-4 flex flex-col gap-3">
+      <section className="section-card mt-4 flex flex-col gap-3">
         <h2 className="text-base font-semibold">{t("settingsLanguage")}</h2>
         <div className="grid grid-cols-3 gap-2">
           {LANGUAGE_OPTIONS.map((opt) => (
@@ -453,7 +472,7 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      <section className="card mt-4 flex flex-col gap-3">
+      <section className="section-card mt-4 flex flex-col gap-3">
         <h2 className="text-base font-semibold">{t("settingsPushTitle")}</h2>
         <p className="text-sm leading-6 text-slate-500">
           {t("settingsPushDescription")}
@@ -529,7 +548,7 @@ export default function SettingsPage() {
       </section>
 
       {push.support?.supported && diagnostics ? (
-        <section className="card mt-4 flex flex-col gap-3">
+        <section className="section-card mt-4 flex flex-col gap-3">
           <h2 className="text-base font-semibold">{t("settingsPushDiagnostics")}</h2>
 
           <DiagRow
@@ -564,17 +583,13 @@ export default function SettingsPage() {
           <DiagRow
             label={t("settingsPushDiagnosticsEndpoint")}
             value={
-              diagnostics.serverSubscriptions.some(
-                (s) => s.endpoint === diagnostics.subscriptionEndpoint,
-              )
+              isCurrentEndpointSaved(diagnostics)
                 ? t("settingsPushDiagnosticsEndpointSaved")
-                : diagnostics.subscriptionEndpoint
+                : diagnostics.subscriptionEndpointFingerprint
                   ? t("settingsPushDiagnosticsEndpointNotSaved")
-                  : "—"
+                  : "-"
             }
-            ok={diagnostics.serverSubscriptions.some(
-              (s) => s.endpoint === diagnostics.subscriptionEndpoint,
-            )}
+            ok={isCurrentEndpointSaved(diagnostics)}
           />
           <DiagRow
             label={t("settingsPushDiagnosticsPlatform")}
@@ -638,7 +653,7 @@ export default function SettingsPage() {
       ) : null}
 
       {canManageFamily ? (
-        <section className="card mt-4 flex flex-col gap-3">
+        <section className="section-card mt-4 flex flex-col gap-3">
           <h2 className="text-base font-semibold">{t("settingsAdminActions")}</h2>
           <button
             type="button"
@@ -677,10 +692,33 @@ export default function SettingsPage() {
               onChange={(e) => handleToggleJoin(e.target.checked)}
             />
           </label>
+          <div className="mt-2 rounded-2xl bg-slate-50 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-900">
+                  {t("scheduleReminderHealthTitle")}
+                </h3>
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  {t("scheduleReminderHealthDescription")}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="btn-secondary shrink-0 px-3 py-2 text-sm"
+                disabled={reminderHealthLoading}
+                onClick={loadReminderHealth}
+              >
+                {reminderHealthLoading ? t("commonLoading") : t("chatRetry")}
+              </button>
+            </div>
+            {reminderHealth ? (
+              <ReminderHealthPanel health={reminderHealth} t={t} />
+            ) : null}
+          </div>
         </section>
       ) : null}
 
-      <section className="card mt-4 flex flex-col gap-3">
+      <section className="section-card mt-4 flex flex-col gap-3">
         <h2 className="text-base font-semibold">{t("settingsSession")}</h2>
         <button
           type="button"
@@ -699,6 +737,77 @@ export default function SettingsPage() {
           {busy === "leave" ? t("settingsLeaving") : t("settingsLeaveFamily")}
         </button>
       </section>
+    </div>
+  );
+}
+
+function ReminderHealthPanel({
+  health,
+  t,
+}: {
+  health: ScheduleReminderHealth;
+  t: ReturnType<typeof useLanguage>["t"];
+}) {
+  const rows = [
+    [t("scheduleReminderStatusPending"), health.pending],
+    [t("scheduleReminderStatusSent"), health.sent],
+    [t("scheduleReminderStatusFailed"), health.failed],
+    [t("scheduleReminderStatusGone"), health.gone],
+    [t("scheduleReminderStatusSkipped"), health.skipped],
+  ] as const;
+
+  return (
+    <div className="mt-3 space-y-3">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+        {rows.map(([label, value]) => (
+          <div key={label} className="rounded-xl bg-white p-2 text-center ring-1 ring-slate-100">
+            <div className="text-lg font-bold text-slate-900">{value}</div>
+            <div className="mt-0.5 text-xs text-slate-500">{label}</div>
+          </div>
+        ))}
+      </div>
+      <div className="rounded-xl bg-white p-3 text-sm ring-1 ring-slate-100">
+        <div className="flex items-center justify-between gap-2">
+          <span className="font-semibold text-slate-800">
+            {t("scheduleReminderPrivateFailureCount")}
+          </span>
+          <span className="text-slate-600">{health.private_failed}</span>
+        </div>
+        <p className="mt-1 text-xs leading-5 text-slate-500">
+          {t("scheduleReminderHealthPrivacyNote")}
+        </p>
+      </div>
+      {health.recentFailures.length > 0 ? (
+        <div className="space-y-2">
+          <h4 className="text-sm font-semibold text-slate-900">
+            {t("scheduleReminderRecentFailures")}
+          </h4>
+          {health.recentFailures.slice(0, 5).map((failure) => (
+            <div
+              key={failure.deliveryId}
+              className="rounded-xl bg-white p-3 text-xs text-slate-600 ring-1 ring-slate-100"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-mono">{failure.deliveryId.slice(0, 8)}</span>
+                <span>{failure.status}</span>
+              </div>
+              <div className="mt-1">
+                {t("scheduleReminderAttemptCount")}: {failure.attemptCount}
+              </div>
+              {failure.nextRetryAt ? (
+                <div className="mt-1">
+                  {t("scheduleReminderNextRetryAt")}:{" "}
+                  {new Date(failure.nextRetryAt).toLocaleString()}
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="rounded-xl bg-white p-3 text-sm text-slate-500 ring-1 ring-slate-100">
+          {t("scheduleReminderNoRecentFailures")}
+        </p>
+      )}
     </div>
   );
 }
@@ -774,5 +883,14 @@ function DiagRow({
         {value}
       </span>
     </div>
+  );
+}
+
+function isCurrentEndpointSaved(diagnostics: PushDiagnostics): boolean {
+  return Boolean(
+    diagnostics.subscriptionEndpointFingerprint &&
+      diagnostics.serverSubscriptions.some(
+        (sub) => sub.endpointFingerprint === diagnostics.subscriptionEndpointFingerprint,
+      ),
   );
 }

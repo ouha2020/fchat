@@ -85,20 +85,20 @@ export default function CreateFamilyPage() {
   }
 
   return (
-    <div className="flex flex-1 flex-col px-5 py-8 sm:px-8">
-      <header className="mb-6">
-        <Link href="/verify-family-code" className="text-sm text-brand-600 hover:underline">
+    <div className="app-page-narrow">
+      <header className="app-header-stack">
+        <Link href="/verify-family-code" className="back-link">
           返回验证
         </Link>
-        <h1 className="mt-2 text-2xl font-bold text-slate-900">创建新家庭</h1>
-        <p className="mt-1 text-sm leading-relaxed text-slate-500">
+        <h1 className="page-title">创建新家庭</h1>
+        <p className="page-subtitle">
           请使用邮箱中已验证的家庭代码继续创建家庭。
         </p>
       </header>
 
       <EnvWarning />
 
-      <form onSubmit={onSubmit} className="card flex flex-col gap-4">
+      <form onSubmit={onSubmit} className="section-card flex flex-col gap-4">
         {checking ? (
           <div className="text-sm text-slate-500">正在检查创建资格...</div>
         ) : null}
@@ -158,7 +158,7 @@ export default function CreateFamilyPage() {
         </div>
 
         {error ? (
-          <div className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          <div className="error-note">
             {error}
           </div>
         ) : null}

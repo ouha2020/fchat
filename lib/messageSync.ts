@@ -21,6 +21,7 @@ const FULL_REFRESH_LIMIT = 100;
 const DELTA_LIMIT = 300;
 const MAX_DELTA_PAGES = 5;
 const LOCK_TTL_MS = 15_000;
+const LOCK_RETRY_DELAYS_MS = [140, 360, 720] as const;
 const FULL_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const STALE_CURSOR_MS = 7 * 24 * 60 * 60 * 1000;
 const FULL_REFRESH_OPEN_COUNT = 10;
@@ -47,8 +48,13 @@ export async function syncMessages(
   session: LocalSession,
   options: SyncOptions = {},
 ): Promise<MessageSyncResult> {
-  const locked = !acquireSyncLock(session);
   const cached = await loadCachedMessagesForSession(session).catch(() => []);
+  let locked = !acquireSyncLock(session);
+  for (const delayMs of LOCK_RETRY_DELAYS_MS) {
+    if (!locked) break;
+    await sleep(delayMs);
+    locked = !acquireSyncLock(session);
+  }
   if (locked) {
     return { status: "locked", messages: cached };
   }
@@ -278,4 +284,10 @@ function releaseSyncLock(session: LocalSession): void {
   } catch {
     // Best effort only.
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }

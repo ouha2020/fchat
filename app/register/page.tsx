@@ -44,20 +44,20 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="flex flex-1 flex-col px-5 py-8 sm:px-8">
-      <header className="mb-6">
-        <Link href="/" className="text-sm text-brand-600 hover:underline">
+    <div className="app-page-narrow">
+      <header className="app-header-stack">
+        <Link href="/" className="back-link">
           返回首页
         </Link>
-        <h1 className="mt-2 text-2xl font-bold text-slate-900">注册邮箱</h1>
-        <p className="mt-1 text-sm leading-relaxed text-slate-500">
+        <h1 className="page-title">注册邮箱</h1>
+        <p className="page-subtitle">
           创建家庭需要先注册邮箱。家庭代码会发送到这个邮箱。
         </p>
       </header>
 
       <EnvWarning />
 
-      <form onSubmit={onSubmit} className="card flex flex-col gap-4">
+      <form onSubmit={onSubmit} className="section-card flex flex-col gap-4">
         <div>
           <label className="label" htmlFor="email">邮箱</label>
           <input
@@ -96,7 +96,7 @@ export default function RegisterPage() {
         </div>
 
         {error ? (
-          <div className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          <div className="error-note">
             {error}
           </div>
         ) : null}

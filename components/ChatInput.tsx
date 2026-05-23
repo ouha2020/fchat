@@ -51,7 +51,7 @@ const MAX_RECORD_MS = 60_000;
 const MIN_RECORD_MS = 600;
 const CONSENT_KEY = "family-chat:voice-recording-consent:v1";
 const iconButtonClass =
-  "inline-flex h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-cover bg-center bg-no-repeat shadow-sm ring-1 ring-slate-200/70 transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-cover bg-center bg-no-repeat shadow-sm ring-1 ring-slate-200/70 transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200";
 const inputShellClass =
   "fixed inset-x-0 bottom-0 z-50 mx-auto min-h-[61px] w-full max-w-3xl border-t border-slate-200 bg-white";
 
@@ -452,8 +452,8 @@ export default function ChatInput({
           <div
             className={
               slideOffActive
-                ? "flex items-center justify-center gap-2 rounded-lg bg-slate-100 px-4 py-4 text-sm text-slate-500 ring-1 ring-slate-200 transition-colors"
-                : "flex items-center justify-center gap-2 rounded-lg bg-rose-50 px-4 py-4 text-sm text-rose-700 ring-1 ring-rose-100 transition-colors"
+                ? "flex h-11 items-center justify-center gap-2 rounded-lg bg-slate-100 px-4 text-sm text-slate-500 ring-1 ring-slate-200 transition-colors"
+                : "flex h-11 items-center justify-center gap-2 rounded-lg bg-rose-50 px-4 text-sm text-rose-700 ring-1 ring-rose-100 transition-colors"
             }
           >
             <span
@@ -487,7 +487,7 @@ export default function ChatInput({
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       >
         <div className="flex items-center gap-2 px-3 py-2 sm:px-4">
-          <div className="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg bg-blue-50 px-3 py-3 text-sm text-blue-700 ring-1 ring-blue-100">
+          <div className="flex h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-lg bg-blue-50 px-3 text-sm text-blue-700 ring-1 ring-blue-100">
             <span
               aria-hidden
               className="inline-block h-2.5 w-2.5 shrink-0 animate-pulse rounded-full bg-blue-500"

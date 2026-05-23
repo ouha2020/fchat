@@ -91,6 +91,8 @@ export async function POST(request: Request) {
           body.preferences?.importantEnabled,
           false,
         ),
+        disabled_at: null,
+        disabled_reason: null,
         updated_at: now,
       },
       { onConflict: "member_id,endpoint" },

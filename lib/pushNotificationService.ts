@@ -192,7 +192,8 @@ export interface PushDiagnostics {
   permission: NotificationPermission | "unsupported";
   swRegistered: boolean;
   subscriptionExists: boolean;
-  subscriptionEndpoint: string | null;
+  subscriptionEndpointHost: string | null;
+  subscriptionEndpointFingerprint: string | null;
   subscriptionExpiration: number | null;
   platform: PushPlatform;
   isStandalone: boolean;
@@ -202,13 +203,16 @@ export interface PushDiagnostics {
 
 export interface ServerSubscriptionInfo {
   id: string;
-  endpoint: string;
+  endpointHost: string;
+  endpointFingerprint: string;
   platform: string;
   enabled: boolean;
   messages_enabled: boolean;
   location_enabled: boolean;
   important_enabled: boolean;
   last_notified_at: string | null;
+  disabled_at: string | null;
+  disabled_reason: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -221,7 +225,8 @@ export async function fetchPushDiagnostics(
 
   let swRegistered = false;
   let subscriptionExists = false;
-  let subscriptionEndpoint: string | null = null;
+  let subscriptionEndpointHost: string | null = null;
+  let subscriptionEndpointFingerprint: string | null = null;
   let subscriptionExpiration: number | null = null;
 
   if ("serviceWorker" in navigator) {
@@ -232,7 +237,8 @@ export async function fetchPushDiagnostics(
         const sub = await reg.pushManager.getSubscription();
         subscriptionExists = Boolean(sub);
         if (sub) {
-          subscriptionEndpoint = sub.endpoint;
+          subscriptionEndpointHost = endpointHost(sub.endpoint);
+          subscriptionEndpointFingerprint = await endpointFingerprint(sub.endpoint);
           subscriptionExpiration = sub.expirationTime ?? null;
         }
       }
@@ -267,13 +273,32 @@ export async function fetchPushDiagnostics(
     permission,
     swRegistered,
     subscriptionExists,
-    subscriptionEndpoint,
+    subscriptionEndpointHost,
+    subscriptionEndpointFingerprint,
     subscriptionExpiration,
     platform: detectPlatform(),
     isStandalone: isStandalonePwa(),
     serverSubscriptions,
     presence,
   };
+}
+
+function endpointHost(endpoint: string): string {
+  try {
+    return new URL(endpoint).hostname || "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+async function endpointFingerprint(endpoint: string): Promise<string | null> {
+  if (!globalThis.crypto?.subtle) return null;
+  const bytes = new TextEncoder().encode(endpoint);
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("")
+    .slice(0, 12);
 }
 
 export function pushNotificationErrorMessage(

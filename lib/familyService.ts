@@ -44,6 +44,11 @@ export type JoinFamilyState =
   | "join_disabled"
   | "rate_limited";
 
+export type RestoreSessionResult =
+  | { status: "valid"; session: LocalSession }
+  | { status: "expired" }
+  | { status: "recoverable_error"; error: unknown };
+
 export async function createFamily(
   input: CreateFamilyInput,
 ): Promise<LocalSession> {
@@ -192,6 +197,18 @@ export async function validateMember(
     role: row.role,
     is_admin: row.is_admin,
   };
+}
+
+export async function safeRestoreSession(
+  memberId: string,
+  memberToken: string,
+): Promise<RestoreSessionResult> {
+  try {
+    const session = await validateMember(memberId, memberToken);
+    return session ? { status: "valid", session } : { status: "expired" };
+  } catch (error) {
+    return { status: "recoverable_error", error };
+  }
 }
 
 export async function fetchFamilySettings(session: LocalSession) {

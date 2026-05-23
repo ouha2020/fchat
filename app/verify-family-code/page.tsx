@@ -94,20 +94,20 @@ export default function VerifyFamilyCodePage() {
   }
 
   return (
-    <div className="flex flex-1 flex-col px-5 py-8 sm:px-8">
-      <header className="mb-6">
-        <Link href="/" className="text-sm text-brand-600 hover:underline">
+    <div className="app-page-narrow">
+      <header className="app-header-stack">
+        <Link href="/" className="back-link">
           返回首页
         </Link>
-        <h1 className="mt-2 text-2xl font-bold text-slate-900">验证家庭代码</h1>
-        <p className="mt-1 text-sm leading-relaxed text-slate-500">
+        <h1 className="page-title">验证家庭代码</h1>
+        <p className="page-subtitle">
           请输入发送到你邮箱中的家庭代码。
         </p>
       </header>
 
       <EnvWarning />
 
-      <form onSubmit={onSubmit} className="card flex flex-col gap-4">
+      <form onSubmit={onSubmit} className="section-card flex flex-col gap-4">
         {checking ? (
           <div className="text-sm text-slate-500">正在检查账号状态…</div>
         ) : null}
@@ -126,12 +126,12 @@ export default function VerifyFamilyCodePage() {
         </div>
 
         {notice ? (
-          <div className="rounded-xl bg-sky-50 px-3 py-2 text-sm text-sky-700">
+          <div className="rounded-xl bg-sky-50 px-3 py-2 text-sm leading-6 text-sky-700">
             {notice}
           </div>
         ) : null}
         {error ? (
-          <div className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          <div className="error-note">
             {error}
           </div>
         ) : null}

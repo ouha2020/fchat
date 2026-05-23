@@ -1,7 +1,8 @@
-const PRECACHE = "family-chat-precache-v8";
-const RUNTIME = "family-chat-runtime-v8";
+const PRECACHE = "family-chat-precache-v9";
+const RUNTIME = "family-chat-runtime-v9";
 
 const PUSH_RECEIVED = "family-chat:push-received";
+const SCHEDULE_REMINDER_RECEIVED = "family-chat:schedule-reminder";
 
 const PRECACHE_URLS = [
   "/offline",
@@ -9,10 +10,12 @@ const PRECACHE_URLS = [
   "/apple-icon.png",
   "/ui-icons/image.png",
   "/ui-icons/location.png",
+  "/ui-icons/me.png",
   "/ui-icons/members.png",
   "/ui-icons/notify-off.png",
   "/ui-icons/notify-on.png",
   "/ui-icons/plus.png",
+  "/ui-icons/schedule.png",
   "/ui-icons/settings.png",
   "/ui-icons/voice.png",
 ];
@@ -103,9 +106,11 @@ self.addEventListener("push", (event) => {
     tag: data.tag || "family-chat",
     renotify: false,
     data: {
+      type: data.type || "message",
       url: data.url || "/chat",
       familyId: data.familyId || null,
       messageId: data.messageId || null,
+      scheduleItemId: data.scheduleItemId || null,
     },
   };
 
@@ -117,8 +122,15 @@ self.addEventListener("notificationclick", (event) => {
   const data = event.notification.data || {};
   const baseUrl = data.url || "/chat";
   const messageId = data.messageId || null;
+  const scheduleItemId = data.scheduleItemId || null;
   const familyId = data.familyId || null;
-  const targetUrl = messageId
+  const isScheduleReminder =
+    data.type === "schedule-reminder" || Boolean(scheduleItemId);
+  const targetUrl = isScheduleReminder
+    ? scheduleItemId
+      ? `/schedule?item=${encodeURIComponent(scheduleItemId)}`
+      : baseUrl || "/schedule"
+    : messageId
     ? `${baseUrl}?mid=${encodeURIComponent(messageId)}`
     : baseUrl;
   const absoluteUrl = new URL(targetUrl, self.location.origin).href;
@@ -143,11 +155,14 @@ self.addEventListener("notificationclick", (event) => {
                   client;
               }
               const focusedClient = await targetClient.focus();
-              focusedClient.postMessage({
-                type: PUSH_RECEIVED,
-                familyId,
-                messageId,
-              });
+              focusedClient.postMessage(
+                buildClientPushMessage({
+                  isScheduleReminder,
+                  familyId,
+                  messageId,
+                  scheduleItemId,
+                }),
+              );
               return focusedClient;
             }
           } catch {
@@ -210,16 +225,39 @@ async function deliverForegroundOrNotify(title, options) {
   const visibleAppClients = await getVisibleAppWindowClients();
   if (visibleAppClients.length > 0) {
     visibleAppClients.forEach((client) => {
-      client.postMessage({
-        type: PUSH_RECEIVED,
-        familyId: options.data.familyId,
-        messageId: options.data.messageId,
-      });
+      client.postMessage(
+        buildClientPushMessage({
+          isScheduleReminder: options.data.type === "schedule-reminder",
+          familyId: options.data.familyId,
+          messageId: options.data.messageId,
+          scheduleItemId: options.data.scheduleItemId,
+        }),
+      );
     });
     return;
   }
 
   return self.registration.showNotification(title, options);
+}
+
+function buildClientPushMessage({
+  isScheduleReminder,
+  familyId,
+  messageId,
+  scheduleItemId,
+}) {
+  if (isScheduleReminder) {
+    return {
+      type: SCHEDULE_REMINDER_RECEIVED,
+      familyId,
+      scheduleItemId,
+    };
+  }
+  return {
+    type: PUSH_RECEIVED,
+    familyId,
+    messageId,
+  };
 }
 
 async function getVisibleAppWindowClients() {

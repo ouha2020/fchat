@@ -20,7 +20,7 @@ import {
 } from "@/lib/chatBackground";
 import { effectFromColumns, transformForSending, type Effect, detectEffect } from "@/lib/effects";
 import { humanizeError } from "@/lib/errors";
-import { validateMember } from "@/lib/familyService";
+import { safeRestoreSession } from "@/lib/familyService";
 import {
   dismissImportantNotification,
   getDismissedImportantIds,
@@ -62,6 +62,7 @@ import {
 } from "@/lib/pushNotificationService";
 import type { RecordingResult } from "@/lib/recordingService";
 import { getSupabase, isSupabaseConfigured } from "@/lib/supabaseClient";
+import { withTimeout } from "@/lib/timeout";
 import { usePushNotificationControls } from "@/lib/usePushNotificationControls";
 import type { ImportantNotification } from "@/types/importantNotification";
 import type { FamilyMember } from "@/types/member";
@@ -77,6 +78,7 @@ const REALTIME_BACKGROUND_DISCONNECT_MS = 45_000;
 const REALTIME_BATCH_FLUSH_MS = 150;
 const MESSAGE_DELIVERED_REPORT_DELAY_MS = 500;
 const MESSAGE_READ_REPORT_DELAY_MS = 700;
+const CHAT_BOOTSTRAP_DATA_TIMEOUT_MS = 15_000;
 
 interface MessageRealtimeEvent {
   id: string;
@@ -131,6 +133,10 @@ function sortMessagesByCreatedAt(rows: Message[]): Message[] {
       new Date(a.created_at).getTime() - new Date(b.created_at).getTime() ||
       a.id.localeCompare(b.id),
   );
+}
+
+function isRealtimeProblemStatus(status: string): boolean {
+  return status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED";
 }
 
 function mergeMessagesById(existing: Message[], incoming: Message[]): Message[] {
@@ -919,20 +925,29 @@ export default function ChatPage() {
       }
       const local = loadSession();
       if (!local) {
+        setLoading(false);
         router.replace("/");
         return;
       }
       let fresh: LocalSession | null = null;
       try {
-        fresh = await validateMember(local.member_id, local.member_token);
+        const restored = await safeRestoreSession(local.member_id, local.member_token);
         if (cancelled) return;
-        if (!fresh) {
+        if (restored.status === "expired") {
           clearSession();
           setSession(null);
           setLoadError(t("chatSessionExpired"));
           setLoading(false);
           return;
         }
+        if (restored.status === "recoverable_error") {
+          setLoadError(
+            humanizeError(restored.error, language) || t("chatLoadFailed"),
+          );
+          setLoading(false);
+          return;
+        }
+        fresh = restored.session;
         saveSession(fresh);
         setSession(fresh);
         cachedMessageLimitRef.current = INITIAL_CACHED_MESSAGE_LIMIT;
@@ -955,10 +970,14 @@ export default function ChatPage() {
           setLoading(false);
         }
 
-        const [mems, important] = await Promise.all([
-          listMembers(fresh, { includeRemoved: true }),
-          listImportantNotifications(fresh),
-        ]);
+        const [mems, important] = await withTimeout(
+          Promise.all([
+            listMembers(fresh, { includeRemoved: true }),
+            listImportantNotifications(fresh),
+          ]),
+          CHAT_BOOTSTRAP_DATA_TIMEOUT_MS,
+          "chat_bootstrap_timeout",
+        );
         if (cancelled) return;
         setMembers(mems);
         setImportantNotifications(important);
@@ -966,12 +985,16 @@ export default function ChatPage() {
           getDismissedImportantIds(fresh.family_id, fresh.member_id),
         );
 
-        const syncResult = await syncMessages(fresh, {
-          forceFullRefresh: cached.length === 0,
-          onMessages: (next) => {
-            if (!cancelled) setMessages(filterVisibleMessages(next, fresh));
-          },
-        });
+        const syncResult = await withTimeout(
+          syncMessages(fresh, {
+            forceFullRefresh: cached.length === 0,
+            onMessages: (next) => {
+              if (!cancelled) setMessages(filterVisibleMessages(next, fresh));
+            },
+          }),
+          CHAT_BOOTSTRAP_DATA_TIMEOUT_MS,
+          "chat_bootstrap_timeout",
+        );
         if (cancelled) return;
         if (syncResult.messages.length > 0) {
           setMessages(filterVisibleMessages(syncResult.messages, fresh));
@@ -997,6 +1020,7 @@ export default function ChatPage() {
   useEffect(() => {
     if (!session || !realtimeConnected) return;
     const sb = getSupabase();
+    let active = true;
 
     const messageEventsChannel = sb
       .channel(`message_events:${session.family_id}`)
@@ -1009,6 +1033,7 @@ export default function ChatPage() {
           filter: `recipient_member_id=eq.${session.member_id}`,
         },
         (payload) => {
+          if (!active) return;
           const event = payload.new as MessageRealtimeEvent;
           if (event.family_id !== session.family_id) return;
           scheduleRealtimeBatchFetch(event.message_id);
@@ -1018,6 +1043,15 @@ export default function ChatPage() {
         if (typeof window !== "undefined") {
           // eslint-disable-next-line no-console
           console.log(`[realtime message events] ${status}`);
+        }
+        if (
+          active &&
+          isRealtimeProblemStatus(status) &&
+          document.visibilityState === "visible"
+        ) {
+          syncMessages(session, { onMessages: handleSyncedMessages }).catch(
+            () => undefined,
+          );
         }
       });
 
@@ -1032,12 +1066,21 @@ export default function ChatPage() {
           filter: `family_id=eq.${session.family_id}`,
         },
         (payload) => {
+          if (!active) return;
           const event = payload.new as ImportantNotificationRealtimeEvent;
           if (event.family_id !== session.family_id) return;
           refreshImportantNotifications(session).catch(() => undefined);
         },
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (
+          active &&
+          isRealtimeProblemStatus(status) &&
+          document.visibilityState === "visible"
+        ) {
+          refreshImportantNotifications(session).catch(() => undefined);
+        }
+      });
 
     const membersChannel = sb
       .channel(`members:${session.family_id}`)
@@ -1050,6 +1093,7 @@ export default function ChatPage() {
           filter: `family_id=eq.${session.family_id}`,
         },
         (payload) => {
+          if (!active) return;
           listMembers(session, { includeRemoved: true })
             .then(setMembers)
             .catch(() => undefined);
@@ -1067,7 +1111,17 @@ export default function ChatPage() {
           }
         },
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (
+          active &&
+          isRealtimeProblemStatus(status) &&
+          document.visibilityState === "visible"
+        ) {
+          listMembers(session, { includeRemoved: true })
+            .then(setMembers)
+            .catch(() => undefined);
+        }
+      });
 
     const syncVisibleMessages = () => {
       if (document.visibilityState !== "visible") return;
@@ -1101,6 +1155,7 @@ export default function ChatPage() {
     const pendingRealtimeMessageIds = pendingRealtimeMessageIdsRef.current;
 
     return () => {
+      active = false;
       sb.removeChannel(messageEventsChannel);
       sb.removeChannel(importantEventsChannel);
       sb.removeChannel(membersChannel);
@@ -1390,7 +1445,7 @@ export default function ChatPage() {
   ) {
     if (!session) return;
     const menuWidth = 180;
-    const menuHeight = 152;
+    const menuHeight = 200;
     const x =
       typeof window === "undefined"
         ? point.x
@@ -1753,7 +1808,7 @@ export default function ChatPage() {
         </>
       ) : null}
       <header
-        className="flex min-h-16 items-center justify-between gap-3 border-b border-slate-200 bg-white px-5 py-2 sm:px-6"
+        className="flex min-h-14 items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 py-2 sm:px-5"
         onDoubleClick={handleHeaderDoubleClick}
         onTouchEnd={handleHeaderTouchEnd}
       >
@@ -1763,7 +1818,7 @@ export default function ChatPage() {
             {session.family_name}
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-2.5">
+        <div className="flex shrink-0 items-center gap-1 sm:gap-2">
           <button
             type="button"
             className="inline-flex h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-cover bg-center bg-no-repeat shadow-sm ring-1 ring-slate-200/70 transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
@@ -1784,6 +1839,20 @@ export default function ChatPage() {
             onClick={handleToggleNotifications}
           />
           <Link
+            href="/schedule"
+            className="inline-flex h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-cover bg-center bg-no-repeat shadow-sm ring-1 ring-slate-200/70 transition hover:brightness-95 active:brightness-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+            style={{ backgroundImage: "url(/ui-icons/schedule.png)" }}
+            aria-label={t("scheduleTitle")}
+            title={t("scheduleTitle")}
+          />
+          <Link
+            href="/me"
+            className="inline-flex h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-cover bg-center bg-no-repeat shadow-sm ring-1 ring-slate-200/70 transition hover:brightness-95 active:brightness-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+            style={{ backgroundImage: "url(/ui-icons/me.png)" }}
+            aria-label={t("meTitle")}
+            title={t("meTitle")}
+          />
+          <Link
             href="/members"
             className="inline-flex h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-cover bg-center bg-no-repeat shadow-sm ring-1 ring-slate-200/70 transition hover:brightness-95 active:brightness-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
             style={{ backgroundImage: "url(/ui-icons/members.png)" }}
@@ -1801,7 +1870,7 @@ export default function ChatPage() {
       </header>
 
       {error ? (
-        <div className="border-b border-rose-100 bg-rose-50 px-4 py-2 text-sm text-rose-700">
+        <div className="border-b border-rose-100 bg-rose-50 px-4 py-2 text-sm leading-6 text-rose-700">
           {error}
         </div>
       ) : null}

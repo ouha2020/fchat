@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
 import { useDialog } from "@/components/Dialog";
@@ -344,20 +344,22 @@ export default function SettingsPage() {
 
   if (loading) {
     return (
-      <div className="app-page">
-        <div className="status-note">{t("commonLoading")}</div>
-      </div>
+      <main className="min-h-dvh bg-[#fbfff7] px-4 py-6 text-slate-900">
+        <div className="mx-auto w-full max-w-2xl rounded-[22px] bg-white/95 px-4 py-3 text-sm leading-6 text-[#526452] shadow-[0_14px_36px_rgba(79,168,95,0.10)] ring-1 ring-[#dff3d8]">
+          {t("commonLoading")}
+        </div>
+      </main>
     );
   }
 
   if (loadError) {
     return (
-      <div className="app-page">
-        <div className="section-card text-center">
+      <main className="min-h-dvh bg-[#fbfff7] px-4 py-6 text-slate-900">
+        <div className="mx-auto w-full max-w-2xl rounded-[26px] bg-white/95 p-5 text-center shadow-[0_18px_50px_rgba(79,168,95,0.12)] ring-1 ring-[#dff3d8]">
           <h1 className="text-lg font-bold text-slate-900">
             {t("chatLoadFailedTitle")}
           </h1>
-          <p className="mt-2 text-sm leading-relaxed text-slate-500">
+          <p className="mt-2 text-sm leading-relaxed text-[#526452]">
             {loadError}
           </p>
           <div className="mt-5 grid grid-cols-2 gap-3">
@@ -380,7 +382,7 @@ export default function SettingsPage() {
             </button>
           </div>
         </div>
-      </div>
+      </main>
     );
   }
 
@@ -388,356 +390,384 @@ export default function SettingsPage() {
   const canManageFamily = session.is_admin;
 
   return (
-    <div className="app-page">
-      <header className="app-header-stack">
-        <Link href="/chat" className="back-link">
-          {t("commonBackToChat")}
-        </Link>
-        <h1 className="page-title">{t("settingsTitle")}</h1>
-      </header>
+    <main className="min-h-dvh overflow-x-hidden bg-[#fbfff7] text-slate-900">
+      <div
+        className="mx-auto w-full max-w-2xl px-4 pb-8 sm:px-6"
+        style={{
+          paddingTop: "max(env(safe-area-inset-top), 14px)",
+          paddingBottom: "calc(env(safe-area-inset-bottom) + 28px)",
+        }}
+      >
+        <header className="mb-5 flex items-center justify-between gap-3">
+          <Link
+            href="/chat"
+            className="inline-flex min-h-10 items-center gap-1.5 rounded-full bg-white/95 px-3 text-sm font-semibold text-[#2f7d42] shadow-[0_10px_28px_rgba(79,168,95,0.12)] ring-1 ring-[#dff3d8] backdrop-blur-xl transition hover:bg-white active:translate-y-px active:scale-[0.985] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#72c982]"
+          >
+            <span>{t("commonBackToChat")}</span>
+          </Link>
+          <span className="min-w-0 truncate rounded-full bg-[#ddf8d7] px-3 py-1.5 text-xs font-semibold text-[#2f7d42] shadow-[0_6px_18px_rgba(79,168,95,0.10)]">
+            {session.family_name}
+          </span>
+        </header>
 
-      <section className="section-card flex flex-col gap-3">
-        <Row label={t("settingsFamilyName")} value={session.family_name} />
-        {canManageFamily ? (
-          <Row
-            label={t("settingsFamilyCode")}
-            value={
-              <span className="inline-flex items-center justify-end gap-2">
-                <span className="select-all font-mono text-base tracking-widest">
-                  {showFamilyCode ? session.family_code : maskFamilyCode(session.family_code)}
-                </span>
-                <button
-                  type="button"
-                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
-                  aria-label={
-                    showFamilyCode
-                      ? t("settingsHideFamilyCode")
-                      : t("settingsShowFamilyCode")
-                  }
-                  title={
-                    showFamilyCode
-                      ? t("settingsHideFamilyCode")
-                      : t("settingsShowFamilyCode")
-                  }
-                  aria-pressed={showFamilyCode}
-                  onClick={() => setShowFamilyCode((visible) => !visible)}
-                >
-                  {showFamilyCode ? <EyeOffIcon /> : <EyeIcon />}
-                </button>
-              </span>
-            }
-          />
-        ) : null}
-        <Row label={t("settingsMyNickname")} value={session.nickname} />
-        <Row label={t("settingsMyRole")} value={
-          { father: t("roleFather"), mother: t("roleMother"), child: t("roleChild") }[session.role]
-        } />
-        <Row label={t("settingsIsAdmin")} value={session.is_admin ? t("commonYes") : t("commonNo")} />
-        {canManageFamily ? (
-          <div className="grid grid-cols-2 gap-2 pt-2">
-            <button type="button" className="btn-secondary" onClick={handleCopyFamilyCode}>
-              复制家庭代码
-            </button>
-            <button type="button" className="btn-secondary" onClick={handleCopyInviteText}>
-              复制邀请文案
-            </button>
-          </div>
-        ) : (
-          <p className="rounded-xl bg-slate-50 p-3 text-sm leading-6 text-slate-500">
-            当前身份保存在此浏览器中。如果更换手机或清除浏览器数据，可能需要重新输入家庭代码加入。
-          </p>
-        )}
-        <Link href="/me" className="btn-secondary text-center">
-          {t("meTitle")}
-        </Link>
-      </section>
-
-      <section className="section-card mt-4 flex flex-col gap-3">
-        <h2 className="text-base font-semibold">{t("settingsLanguage")}</h2>
-        <div className="grid grid-cols-3 gap-2">
-          {LANGUAGE_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              className={`rounded-xl px-3 py-2 text-sm font-medium transition ${
-                language === opt.value
-                  ? "bg-brand-500 text-white"
-                  : "bg-white text-slate-700 ring-1 ring-inset ring-slate-200 hover:bg-slate-50"
-              }`}
-              onClick={() => setLanguage(opt.value)}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-      </section>
-
-      <section className="section-card mt-4 flex flex-col gap-3">
-        <h2 className="text-base font-semibold">{t("settingsPushTitle")}</h2>
-        <p className="text-sm leading-6 text-slate-500">
-          {t("settingsPushDescription")}
-        </p>
-
-        {!push.support ? (
-          <p className="rounded-xl bg-slate-50 p-3 text-sm text-slate-500">
-            {t("commonLoading")}
-          </p>
-        ) : push.support.reason === "ios_not_standalone" ? (
-          <div className="rounded-xl bg-brand-50 p-3 text-sm leading-6 text-slate-700">
-            <p className="font-medium text-slate-900">
-              {t("settingsPushIosGuideTitle")}
-            </p>
-            <ol className="mt-2 list-decimal space-y-1 pl-5">
-              <li>{t("settingsPushIosGuide1")}</li>
-              <li>{t("settingsPushIosGuide2")}</li>
-              <li>{t("settingsPushIosGuide3")}</li>
-              <li>{t("settingsPushIosGuide4")}</li>
-              <li>{t("settingsPushIosGuide5")}</li>
-            </ol>
-          </div>
-        ) : push.support.supported ? (
-          <>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                className="btn-primary flex-1"
-                disabled={!!busy || push.busy || push.enabled}
-                onClick={handleEnablePush}
-              >
-                {t("settingsPushEnable")}
-              </button>
-              <button
-                type="button"
-                className="btn-secondary flex-1"
-                disabled={!!busy || push.busy || !push.enabled}
-                onClick={handleDisablePush}
-              >
-                {t("settingsPushDisable")}
-              </button>
+        <section className="mb-5 rounded-[28px] bg-gradient-to-br from-white via-[#fbfff7] to-[#eaf9e2] p-4 shadow-[0_18px_50px_rgba(79,168,95,0.14)] ring-1 ring-[#dff3d8] backdrop-blur-xl">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#4fa85f] text-lg font-black text-white shadow-[0_10px_24px_rgba(79,168,95,0.28)]">
+              家
             </div>
-            {push.support.permission === "denied" ? (
-              <p className="text-sm text-rose-600">{t("settingsPushDenied")}</p>
-            ) : null}
-            <div className="rounded-xl bg-slate-50 p-3 text-sm leading-6 text-slate-600">
-              <div className="flex items-center justify-between gap-3">
-                <span className="font-medium text-slate-700">
-                  {t("settingsPushNewMessages")}
-                </span>
-                <span
-                  className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-                    push.enabled
-                      ? "bg-emerald-100 text-emerald-700"
-                      : "bg-slate-200 text-slate-600"
-                  }`}
-                >
-                  {push.enabled ? t("commonYes") : t("commonNo")}
-                </span>
-              </div>
-              <p className="mt-2 text-slate-500">
-                {t("settingsPushPrivacyNote")}
+            <div className="min-w-0 flex-1">
+              <h1 className="truncate text-[26px] font-bold leading-tight tracking-normal text-slate-950">
+                {t("settingsTitle")}
+              </h1>
+              <p className="mt-1 truncate text-sm text-[#526452]">
+                {session.nickname} ·{" "}
+                {
+                  {
+                    father: t("roleFather"),
+                    mother: t("roleMother"),
+                    child: t("roleChild"),
+                  }[session.role]
+                }
               </p>
             </div>
-          </>
-        ) : (
-          <p className="rounded-xl bg-slate-50 p-3 text-sm text-slate-500">
-            {push.support.reason === "missing_vapid_key"
-              ? t("settingsPushMissingConfig")
-              : t("settingsPushUnsupported")}
-          </p>
-        )}
-      </section>
+            <StatusBadge ok={session.is_admin}>
+              {session.is_admin ? t("commonAdmin") : t("commonMe")}
+            </StatusBadge>
+          </div>
+        </section>
 
-      {push.support?.supported && diagnostics ? (
-        <section className="section-card mt-4 flex flex-col gap-3">
-          <h2 className="text-base font-semibold">{t("settingsPushDiagnostics")}</h2>
-
-          <DiagRow
-            label={t("settingsPushDiagnosticsPermission")}
-            value={
-              diagnostics.permission === "granted"
-                ? t("settingsPushDiagnosticsPermissionGranted")
-                : diagnostics.permission === "denied"
-                  ? t("settingsPushDiagnosticsPermissionDenied")
-                  : t("settingsPushDiagnosticsPermissionDefault")
-            }
-            ok={diagnostics.permission === "granted"}
-          />
-          <DiagRow
-            label={t("settingsPushDiagnosticsSW")}
-            value={
-              diagnostics.swRegistered
-                ? t("settingsPushDiagnosticsSWRegistered")
-                : t("settingsPushDiagnosticsSWNotRegistered")
-            }
-            ok={diagnostics.swRegistered}
-          />
-          <DiagRow
-            label={t("settingsPushDiagnosticsSubscription")}
-            value={
-              diagnostics.subscriptionExists
-                ? t("settingsPushDiagnosticsSubscriptionActive")
-                : t("settingsPushDiagnosticsSubscriptionNone")
-            }
-            ok={diagnostics.subscriptionExists}
-          />
-          <DiagRow
-            label={t("settingsPushDiagnosticsEndpoint")}
-            value={
-              isCurrentEndpointSaved(diagnostics)
-                ? t("settingsPushDiagnosticsEndpointSaved")
-                : diagnostics.subscriptionEndpointFingerprint
-                  ? t("settingsPushDiagnosticsEndpointNotSaved")
-                  : "-"
-            }
-            ok={isCurrentEndpointSaved(diagnostics)}
-          />
-          <DiagRow
-            label={t("settingsPushDiagnosticsPlatform")}
-            value={diagnostics.platform}
-            ok={true}
-          />
-          <DiagRow
-            label={t("settingsPushDiagnosticsLastNotified")}
-            value={
-              diagnostics.serverSubscriptions[0]?.last_notified_at
-                ? new Date(
-                    diagnostics.serverSubscriptions[0].last_notified_at,
-                  ).toLocaleString()
-                : t("settingsPushDiagnosticsNever")
-            }
-            ok={true}
-          />
-          {diagnostics.presence ? (
-            <DiagRow
-              label={t("settingsPushDiagnosticsPresence")}
+        <SettingsSection>
+          <SettingsGroup>
+            <SettingsRow
+              label={t("settingsFamilyName")}
+              value={session.family_name}
+            />
+            {canManageFamily ? (
+              <SettingsRow
+                label={t("settingsFamilyCode")}
+                value={
+                  <span className="inline-flex min-w-0 items-center justify-end gap-2">
+                    <span className="min-w-0 select-all truncate font-mono text-base tracking-widest text-slate-900">
+                      {showFamilyCode
+                        ? session.family_code
+                        : maskFamilyCode(session.family_code)}
+                    </span>
+                    <IconButton
+                      ariaLabel={
+                        showFamilyCode
+                          ? t("settingsHideFamilyCode")
+                          : t("settingsShowFamilyCode")
+                      }
+                      title={
+                        showFamilyCode
+                          ? t("settingsHideFamilyCode")
+                          : t("settingsShowFamilyCode")
+                      }
+                      pressed={showFamilyCode}
+                      onClick={() => setShowFamilyCode((visible) => !visible)}
+                    >
+                      {showFamilyCode ? <EyeOffIcon /> : <EyeIcon />}
+                    </IconButton>
+                  </span>
+                }
+              />
+            ) : null}
+            <SettingsRow label={t("settingsMyNickname")} value={session.nickname} />
+            <SettingsRow
+              label={t("settingsMyRole")}
               value={
-                diagnostics.presence.is_active
-                  ? t("commonYes")
-                  : t("commonNo")
+                {
+                  father: t("roleFather"),
+                  mother: t("roleMother"),
+                  child: t("roleChild"),
+                }[session.role]
               }
-              ok={diagnostics.presence.is_active}
             />
-          ) : null}
-
-          <button
-            type="button"
-            className="btn-secondary mt-1"
-            disabled={!!busy || diagLoading}
-            onClick={handleTestNotification}
-          >
-            {busy === "test"
-              ? t("commonLoading")
-              : t("settingsPushDiagnosticsTestButton")}
-          </button>
-
-          {diagnostics.platform === "android" ? (
-            <div className="rounded-xl bg-brand-50 p-3 text-sm leading-6 text-slate-700">
-              <p className="font-medium text-slate-900">
-                {t("settingsPushDiagnosticsAndroidTip")}
-              </p>
-              <p className="mt-1 text-slate-600">
-                {t("settingsPushDiagnosticsAndroidTipText")}
-              </p>
-            </div>
-          ) : null}
-
-          <button
-            type="button"
-            className="text-sm text-brand-600 hover:underline self-start"
-            onClick={loadDiagnostics}
-            disabled={diagLoading}
-          >
-            {diagLoading ? t("commonLoading") : "↻ " + t("chatRetry")}
-          </button>
-        </section>
-      ) : null}
-
-      {canManageFamily ? (
-        <section className="section-card mt-4 flex flex-col gap-3">
-          <h2 className="text-base font-semibold">{t("settingsAdminActions")}</h2>
-          <button
-            type="button"
-            className="btn-secondary"
-            disabled={!!busy}
-            onClick={handleRename}
-          >
-            {t("settingsRenameFamily")}
-          </button>
-          <button
-            type="button"
-            className="btn-secondary"
-            disabled={!!busy}
-            onClick={handleResetCode}
-          >
-            {t("settingsResetCode")}
-          </button>
-          <button
-            type="button"
-            className="btn-secondary"
-            disabled={!!busy}
-            onClick={handleChangeAccountPassword}
-          >
-            {busy === "changeAccountPassword" ? t("commonLoading") : "修改密码"}
-          </button>
-          <p className="rounded-xl bg-sky-50 px-3 py-2 text-sm leading-6 text-sky-700">
-            管理操作使用创建者邮箱账号验证，不再单独使用管理员密码。
-          </p>
-          <label className="flex items-center justify-between rounded-xl px-1 py-2">
-            <span className="text-sm text-slate-700">{t("settingsAllowJoin")}</span>
-            <input
-              type="checkbox"
-              className="h-5 w-5"
-              checked={joinOn}
-              disabled={!!busy}
-              onChange={(e) => handleToggleJoin(e.target.checked)}
+            <SettingsRow
+              label={t("settingsIsAdmin")}
+              value={session.is_admin ? t("commonYes") : t("commonNo")}
             />
-          </label>
-          <div className="mt-2 rounded-2xl bg-slate-50 p-3">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h3 className="text-sm font-semibold text-slate-900">
-                  {t("scheduleReminderHealthTitle")}
-                </h3>
-                <p className="mt-1 text-xs leading-5 text-slate-500">
-                  {t("scheduleReminderHealthDescription")}
-                </p>
-              </div>
-              <button
-                type="button"
-                className="btn-secondary shrink-0 px-3 py-2 text-sm"
-                disabled={reminderHealthLoading}
-                onClick={loadReminderHealth}
-              >
-                {reminderHealthLoading ? t("commonLoading") : t("chatRetry")}
-              </button>
+          </SettingsGroup>
+
+          {canManageFamily ? (
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <SoftButton onClick={handleCopyFamilyCode}>
+                复制家庭代码
+              </SoftButton>
+              <SoftButton onClick={handleCopyInviteText}>
+                复制邀请文案
+              </SoftButton>
             </div>
-            {reminderHealth ? (
-              <ReminderHealthPanel health={reminderHealth} t={t} />
-            ) : null}
+          ) : (
+            <InfoPanel className="mt-3">
+              当前身份保存在此浏览器中。如果更换手机或清除浏览器数据，可能需要重新输入家庭代码加入。
+            </InfoPanel>
+          )}
+
+          <Link href="/me" className="mt-3 flex min-h-12 items-center justify-center rounded-2xl bg-white/95 px-4 text-sm font-semibold text-[#2f7d42] shadow-[0_10px_26px_rgba(79,168,95,0.10)] ring-1 ring-[#dff3d8] transition hover:bg-white active:translate-y-px active:scale-[0.985] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#72c982]">
+            {t("meTitle")}
+          </Link>
+        </SettingsSection>
+
+        <SettingsSection title={t("settingsLanguage")}>
+          <div className="grid grid-cols-3 rounded-[18px] bg-[#e2f8dc] p-1 shadow-inner ring-1 ring-[#cdeec8]">
+            {LANGUAGE_OPTIONS.map((opt) => {
+              const selected = language === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  className={`min-h-10 rounded-[14px] px-2 text-sm font-semibold transition active:translate-y-px active:scale-[0.985] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#72c982] ${
+                    selected
+                      ? "bg-white text-[#2f7d42] shadow-[0_8px_20px_rgba(79,168,95,0.16)]"
+                      : "text-[#5b735d] hover:text-[#244f2c]"
+                  }`}
+                  onClick={() => setLanguage(opt.value)}
+                >
+                  <span className="block truncate">{opt.label}</span>
+                </button>
+              );
+            })}
           </div>
-        </section>
-      ) : null}
+        </SettingsSection>
 
-      <section className="section-card mt-4 flex flex-col gap-3">
-        <h2 className="text-base font-semibold">{t("settingsSession")}</h2>
-        <button
-          type="button"
-          className="btn-secondary"
-          onClick={handleSwitch}
-          disabled={!!busy}
+        <SettingsSection
+          title={t("settingsPushTitle")}
+          description={t("settingsPushDescription")}
         >
-          {t("settingsSwitchFamily")}
-        </button>
-        <button
-          type="button"
-          className="btn-danger"
-          onClick={handleLeave}
-          disabled={busy === "leave"}
-        >
-          {busy === "leave" ? t("settingsLeaving") : t("settingsLeaveFamily")}
-        </button>
-      </section>
-    </div>
+          {!push.support ? (
+            <InfoPanel>{t("commonLoading")}</InfoPanel>
+          ) : push.support.reason === "ios_not_standalone" ? (
+            <InfoPanel tone="green">
+              <p className="font-semibold text-slate-900">
+                {t("settingsPushIosGuideTitle")}
+              </p>
+              <ol className="mt-2 list-decimal space-y-1 pl-5">
+                <li>{t("settingsPushIosGuide1")}</li>
+                <li>{t("settingsPushIosGuide2")}</li>
+                <li>{t("settingsPushIosGuide3")}</li>
+                <li>{t("settingsPushIosGuide4")}</li>
+                <li>{t("settingsPushIosGuide5")}</li>
+              </ol>
+            </InfoPanel>
+          ) : push.support.supported ? (
+            <>
+              <SettingsGroup>
+                <SettingsRow
+                  label={t("settingsPushNewMessages")}
+                  value={
+                    <StatusBadge ok={push.enabled}>
+                      {push.enabled ? t("commonYes") : t("commonNo")}
+                    </StatusBadge>
+                  }
+                />
+              </SettingsGroup>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <SoftButton
+                  variant="primary"
+                  disabled={!!busy || push.busy || push.enabled}
+                  onClick={handleEnablePush}
+                >
+                  {t("settingsPushEnable")}
+                </SoftButton>
+                <SoftButton
+                  disabled={!!busy || push.busy || !push.enabled}
+                  onClick={handleDisablePush}
+                >
+                  {t("settingsPushDisable")}
+                </SoftButton>
+              </div>
+              {push.support.permission === "denied" ? (
+                <InfoPanel tone="danger" className="mt-3">
+                  {t("settingsPushDenied")}
+                </InfoPanel>
+              ) : null}
+              <InfoPanel className="mt-3">
+                {t("settingsPushPrivacyNote")}
+              </InfoPanel>
+            </>
+          ) : (
+            <InfoPanel>
+              {push.support.reason === "missing_vapid_key"
+                ? t("settingsPushMissingConfig")
+                : t("settingsPushUnsupported")}
+            </InfoPanel>
+          )}
+        </SettingsSection>
+
+        {push.support?.supported && diagnostics ? (
+          <SettingsSection title={t("settingsPushDiagnostics")}>
+            <SettingsGroup>
+              <DiagRow
+                label={t("settingsPushDiagnosticsPermission")}
+                value={
+                  diagnostics.permission === "granted"
+                    ? t("settingsPushDiagnosticsPermissionGranted")
+                    : diagnostics.permission === "denied"
+                      ? t("settingsPushDiagnosticsPermissionDenied")
+                      : t("settingsPushDiagnosticsPermissionDefault")
+                }
+                ok={diagnostics.permission === "granted"}
+              />
+              <DiagRow
+                label={t("settingsPushDiagnosticsSW")}
+                value={
+                  diagnostics.swRegistered
+                    ? t("settingsPushDiagnosticsSWRegistered")
+                    : t("settingsPushDiagnosticsSWNotRegistered")
+                }
+                ok={diagnostics.swRegistered}
+              />
+              <DiagRow
+                label={t("settingsPushDiagnosticsSubscription")}
+                value={
+                  diagnostics.subscriptionExists
+                    ? t("settingsPushDiagnosticsSubscriptionActive")
+                    : t("settingsPushDiagnosticsSubscriptionNone")
+                }
+                ok={diagnostics.subscriptionExists}
+              />
+              <DiagRow
+                label={t("settingsPushDiagnosticsEndpoint")}
+                value={
+                  isCurrentEndpointSaved(diagnostics)
+                    ? t("settingsPushDiagnosticsEndpointSaved")
+                    : diagnostics.subscriptionEndpointFingerprint
+                      ? t("settingsPushDiagnosticsEndpointNotSaved")
+                      : "-"
+                }
+                ok={isCurrentEndpointSaved(diagnostics)}
+              />
+              <DiagRow
+                label={t("settingsPushDiagnosticsPlatform")}
+                value={diagnostics.platform}
+                ok={true}
+              />
+              <DiagRow
+                label={t("settingsPushDiagnosticsLastNotified")}
+                value={
+                  diagnostics.serverSubscriptions[0]?.last_notified_at
+                    ? new Date(
+                        diagnostics.serverSubscriptions[0].last_notified_at,
+                      ).toLocaleString()
+                    : t("settingsPushDiagnosticsNever")
+                }
+                ok={true}
+              />
+              {diagnostics.presence ? (
+                <DiagRow
+                  label={t("settingsPushDiagnosticsPresence")}
+                  value={
+                    diagnostics.presence.is_active
+                      ? t("commonYes")
+                      : t("commonNo")
+                  }
+                  ok={diagnostics.presence.is_active}
+                />
+              ) : null}
+            </SettingsGroup>
+
+            <div className="mt-3 grid grid-cols-[1fr_auto] gap-2">
+              <SoftButton
+                disabled={!!busy || diagLoading}
+                onClick={handleTestNotification}
+              >
+                {busy === "test"
+                  ? t("commonLoading")
+                  : t("settingsPushDiagnosticsTestButton")}
+              </SoftButton>
+              <SoftButton
+                disabled={diagLoading}
+                onClick={loadDiagnostics}
+              >
+                {diagLoading ? t("commonLoading") : t("chatRetry")}
+              </SoftButton>
+            </div>
+
+            {diagnostics.platform === "android" ? (
+              <InfoPanel tone="green" className="mt-3">
+                <p className="font-semibold text-slate-900">
+                  {t("settingsPushDiagnosticsAndroidTip")}
+                </p>
+                <p className="mt-1 text-[#526452]">
+                  {t("settingsPushDiagnosticsAndroidTipText")}
+                </p>
+              </InfoPanel>
+            ) : null}
+          </SettingsSection>
+        ) : null}
+
+        {canManageFamily ? (
+          <SettingsSection title={t("settingsAdminActions")}>
+            <SettingsGroup>
+              <ActionRow
+                label={t("settingsRenameFamily")}
+                disabled={!!busy}
+                onClick={handleRename}
+              />
+              <ActionRow
+                label={t("settingsResetCode")}
+                disabled={!!busy}
+                onClick={handleResetCode}
+              />
+              <ActionRow
+                label={busy === "changeAccountPassword" ? t("commonLoading") : "修改密码"}
+                disabled={!!busy}
+                onClick={handleChangeAccountPassword}
+              />
+              <ToggleRow
+                label={t("settingsAllowJoin")}
+                checked={joinOn}
+                disabled={!!busy}
+                onChange={handleToggleJoin}
+              />
+            </SettingsGroup>
+            <InfoPanel tone="blue" className="mt-3">
+              管理操作使用创建者邮箱账号验证，不再单独使用管理员密码。
+            </InfoPanel>
+
+            <div className="mt-3 rounded-[22px] bg-white/95 p-3 shadow-[0_12px_30px_rgba(79,168,95,0.10)] ring-1 ring-[#dff3d8]">
+              <div className="flex min-w-0 items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="truncate text-sm font-semibold text-slate-900">
+                    {t("scheduleReminderHealthTitle")}
+                  </h3>
+                  <p className="mt-1 text-xs leading-5 text-[#627263]">
+                    {t("scheduleReminderHealthDescription")}
+                  </p>
+                </div>
+                <SoftButton
+                  className="shrink-0 px-3"
+                  disabled={reminderHealthLoading}
+                  onClick={loadReminderHealth}
+                >
+                  {reminderHealthLoading ? t("commonLoading") : t("chatRetry")}
+                </SoftButton>
+              </div>
+              {reminderHealth ? (
+                <ReminderHealthPanel health={reminderHealth} t={t} />
+              ) : null}
+            </div>
+          </SettingsSection>
+        ) : null}
+
+        <SettingsSection title={t("settingsSession")}>
+          <SettingsGroup>
+            <ActionRow
+              label={t("settingsSwitchFamily")}
+              disabled={!!busy}
+              onClick={handleSwitch}
+            />
+            <ActionRow
+              label={busy === "leave" ? t("settingsLeaving") : t("settingsLeaveFamily")}
+              disabled={busy === "leave"}
+              danger
+              onClick={handleLeave}
+            />
+          </SettingsGroup>
+        </SettingsSection>
+      </div>
+    </main>
   );
 }
 
@@ -760,20 +790,25 @@ function ReminderHealthPanel({
     <div className="mt-3 space-y-3">
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
         {rows.map(([label, value]) => (
-          <div key={label} className="rounded-xl bg-white p-2 text-center ring-1 ring-slate-100">
-            <div className="text-lg font-bold text-slate-900">{value}</div>
-            <div className="mt-0.5 text-xs text-slate-500">{label}</div>
+          <div
+            key={label}
+            className="rounded-2xl bg-[#f8fff4] p-2.5 text-center shadow-inner ring-1 ring-[#dff3d8]"
+          >
+            <div className="text-lg font-bold leading-tight text-slate-900">
+              {value}
+            </div>
+            <div className="mt-1 truncate text-xs text-[#627263]">{label}</div>
           </div>
         ))}
       </div>
-      <div className="rounded-xl bg-white p-3 text-sm ring-1 ring-slate-100">
-        <div className="flex items-center justify-between gap-2">
-          <span className="font-semibold text-slate-800">
+      <div className="rounded-2xl bg-[#f8fff4] p-3 text-sm ring-1 ring-[#dff3d8]">
+        <div className="flex min-w-0 items-center justify-between gap-2">
+          <span className="min-w-0 truncate font-semibold text-slate-800">
             {t("scheduleReminderPrivateFailureCount")}
           </span>
-          <span className="text-slate-600">{health.private_failed}</span>
+          <span className="shrink-0 text-[#526452]">{health.private_failed}</span>
         </div>
-        <p className="mt-1 text-xs leading-5 text-slate-500">
+        <p className="mt-1 text-xs leading-5 text-[#627263]">
           {t("scheduleReminderHealthPrivacyNote")}
         </p>
       </div>
@@ -785,11 +820,13 @@ function ReminderHealthPanel({
           {health.recentFailures.slice(0, 5).map((failure) => (
             <div
               key={failure.deliveryId}
-              className="rounded-xl bg-white p-3 text-xs text-slate-600 ring-1 ring-slate-100"
+              className="rounded-2xl bg-[#f8fff4] p-3 text-xs text-[#526452] ring-1 ring-[#dff3d8]"
             >
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-mono">{failure.deliveryId.slice(0, 8)}</span>
-                <span>{failure.status}</span>
+              <div className="flex min-w-0 items-center justify-between gap-2">
+                <span className="min-w-0 truncate font-mono">
+                  {failure.deliveryId.slice(0, 8)}
+                </span>
+                <span className="shrink-0">{failure.status}</span>
               </div>
               <div className="mt-1">
                 {t("scheduleReminderAttemptCount")}: {failure.attemptCount}
@@ -804,7 +841,7 @@ function ReminderHealthPanel({
           ))}
         </div>
       ) : (
-        <p className="rounded-xl bg-white p-3 text-sm text-slate-500 ring-1 ring-slate-100">
+        <p className="rounded-2xl bg-[#f8fff4] p-3 text-sm text-[#627263] ring-1 ring-[#dff3d8]">
           {t("scheduleReminderNoRecentFailures")}
         </p>
       )}
@@ -814,6 +851,216 @@ function ReminderHealthPanel({
 
 function maskFamilyCode(code: string): string {
   return "•".repeat(Math.max(code.length, 6));
+}
+
+function SettingsSection({
+  title,
+  description,
+  children,
+}: {
+  title?: string;
+  description?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="mt-5">
+      {title ? (
+        <div className="mb-2 px-1">
+          <h2 className="text-[13px] font-bold uppercase tracking-[0.08em] text-[#2f7d42]">
+            {title}
+          </h2>
+          {description ? (
+            <p className="mt-1 text-sm leading-6 text-[#526452]">
+              {description}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+      {children}
+    </section>
+  );
+}
+
+function SettingsGroup({ children }: { children: ReactNode }) {
+  return (
+    <div className="overflow-hidden rounded-[22px] bg-white/95 shadow-[0_14px_36px_rgba(79,168,95,0.10)] ring-1 ring-[#dff3d8] backdrop-blur-xl">
+      {children}
+    </div>
+  );
+}
+
+function SettingsRow({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <div className="flex min-h-[52px] items-center justify-between gap-3 border-b border-[#dff3d8]/80 px-4 py-3 last:border-b-0">
+      <span className="min-w-0 max-w-[45%] shrink-0 truncate text-sm font-medium text-[#627263]">
+        {label}
+      </span>
+      <span className="min-w-0 flex-1 text-right text-sm font-semibold leading-5 text-slate-800 [overflow-wrap:anywhere]">
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function ActionRow({
+  label,
+  disabled,
+  danger = false,
+  onClick,
+}: {
+  label: string;
+  disabled?: boolean;
+  danger?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`flex min-h-[52px] w-full items-center justify-between gap-3 border-b border-[#dff3d8]/80 px-4 py-3 text-left text-sm font-semibold transition last:border-b-0 active:translate-y-px active:scale-[0.985] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#72c982] disabled:cursor-not-allowed disabled:opacity-50 ${
+        danger ? "text-rose-600" : "text-slate-800 hover:bg-[#f4fff0]"
+      }`}
+      disabled={disabled}
+      onClick={onClick}
+    >
+      <span className="min-w-0 truncate">{label}</span>
+      <ChevronRightIcon />
+    </button>
+  );
+}
+
+function ToggleRow({
+  label,
+  checked,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  disabled?: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="flex min-h-[52px] items-center justify-between gap-3 border-b border-[#dff3d8]/80 px-4 py-3 transition active:translate-y-px active:scale-[0.985] last:border-b-0">
+      <span className="min-w-0 truncate text-sm font-semibold text-slate-800">
+        {label}
+      </span>
+      <span className="relative inline-flex h-8 w-[52px] shrink-0 items-center">
+        <input
+          type="checkbox"
+          className="peer sr-only"
+          checked={checked}
+          disabled={disabled}
+          onChange={(e) => onChange(e.target.checked)}
+        />
+        <span className="absolute inset-0 rounded-full bg-[#dce9db] transition peer-checked:bg-[#4fa85f] peer-focus-visible:ring-2 peer-focus-visible:ring-[#72c982] peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-white peer-disabled:opacity-50" />
+        <span className="absolute left-1 h-6 w-6 rounded-full bg-white shadow-[0_4px_12px_rgba(71,64,49,0.22)] transition peer-checked:translate-x-5 peer-disabled:opacity-80" />
+      </span>
+    </label>
+  );
+}
+
+function SoftButton({
+  children,
+  disabled,
+  variant = "secondary",
+  className = "",
+  onClick,
+}: {
+  children: ReactNode;
+  disabled?: boolean;
+  variant?: "primary" | "secondary";
+  className?: string;
+  onClick: () => void;
+}) {
+  const tone =
+    variant === "primary"
+      ? "bg-[#4fa85f] text-white shadow-[0_12px_26px_rgba(79,168,95,0.26)] hover:bg-[#3f9650]"
+      : "bg-white/95 text-[#2f7d42] shadow-[0_10px_24px_rgba(79,168,95,0.10)] ring-1 ring-[#dff3d8] hover:bg-[#fbfff7]";
+  return (
+    <button
+      type="button"
+      className={`inline-flex min-h-11 min-w-0 items-center justify-center rounded-2xl px-4 text-sm font-semibold transition active:translate-y-px active:scale-[0.985] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#72c982] disabled:cursor-not-allowed disabled:opacity-50 ${tone} ${className}`}
+      disabled={disabled}
+      onClick={onClick}
+    >
+      <span className="truncate">{children}</span>
+    </button>
+  );
+}
+
+function InfoPanel({
+  children,
+  tone = "neutral",
+  className = "",
+}: {
+  children: ReactNode;
+  tone?: "neutral" | "green" | "blue" | "danger";
+  className?: string;
+}) {
+  const toneClass = {
+    neutral: "bg-white/92 text-[#526452] ring-[#dff3d8]",
+    green: "bg-[#e7f9df] text-[#355f3b] ring-[#cdeec8]",
+    blue: "bg-sky-50/90 text-sky-800 ring-sky-100",
+    danger: "bg-rose-50/90 text-rose-700 ring-rose-100",
+  }[tone];
+  return (
+    <div className={`rounded-[18px] px-3.5 py-3 text-sm leading-6 ring-1 ${toneClass} ${className}`}>
+      {children}
+    </div>
+  );
+}
+
+function StatusBadge({
+  ok,
+  children,
+}: {
+  ok: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <span
+      className={`inline-flex min-h-7 max-w-full items-center gap-1.5 rounded-full px-2.5 text-xs font-bold ${
+        ok
+          ? "bg-[#ddf8d7] text-[#2f7d42]"
+          : "bg-[#edf6eb] text-[#5b735d]"
+      }`}
+    >
+      <span
+        aria-hidden="true"
+        className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+          ok ? "bg-[#4fa85f]" : "bg-[#8fa08f]"
+        }`}
+      />
+      <span className="truncate">{children}</span>
+    </span>
+  );
+}
+
+function IconButton({
+  children,
+  ariaLabel,
+  title,
+  pressed,
+  onClick,
+}: {
+  children: ReactNode;
+  ariaLabel: string;
+  title: string;
+  pressed: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#e7f9df] text-[#2f7d42] transition hover:bg-[#ddf8d7] hover:text-[#244f2c] active:translate-y-px active:scale-[0.985] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#72c982]"
+      aria-label={ariaLabel}
+      title={title}
+      aria-pressed={pressed}
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  );
 }
 
 function EyeIcon() {
@@ -854,15 +1101,6 @@ function EyeOffIcon() {
   );
 }
 
-function Row({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div className="flex items-center justify-between gap-3">
-      <span className="text-sm text-slate-500">{label}</span>
-      <span className="text-sm font-medium text-slate-800">{value}</span>
-    </div>
-  );
-}
-
 function DiagRow({
   label,
   value,
@@ -873,16 +1111,41 @@ function DiagRow({
   ok: boolean;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3">
-      <span className="text-sm text-slate-500">{label}</span>
+    <div className="flex min-h-[52px] items-center justify-between gap-3 border-b border-[#dff3d8]/80 px-4 py-3 last:border-b-0">
+      <span className="min-w-0 max-w-[45%] shrink-0 truncate text-sm font-medium text-[#627263]">
+        {label}
+      </span>
       <span
-        className={`text-sm font-medium ${
-          ok ? "text-emerald-700" : "text-rose-600"
+        className={`inline-flex min-w-0 items-center justify-end gap-2 text-right text-sm font-semibold leading-5 ${
+          ok ? "text-[#4f7d47]" : "text-rose-600"
         }`}
       >
-        {value}
+        <span
+          aria-hidden="true"
+          className={`h-2 w-2 shrink-0 rounded-full ${
+            ok ? "bg-[#4fa85f]" : "bg-rose-400"
+          }`}
+        />
+        <span className="min-w-0 [overflow-wrap:anywhere]">{value}</span>
       </span>
     </div>
+  );
+}
+
+function ChevronRightIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-4 w-4 shrink-0 text-slate-300"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M9 18l6-6-6-6" />
+    </svg>
   );
 }
 

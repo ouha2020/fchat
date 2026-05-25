@@ -1,43 +1,94 @@
 "use client";
 
+import Link from "next/link";
 import { useRef } from "react";
 
 import AudioBubble from "./AudioBubble";
-import RoleBadge from "./RoleBadge";
+import { useLanguage } from "@/components/LanguageProvider";
 import { formatTime } from "@/lib/format";
+import { createGoogleMapUrl } from "@/lib/locationService";
+import { safeGoogleMapsUrl, safeHttpUrl } from "@/lib/security";
+import {
+  getSystemMessageTone,
+  localizeSystemMessage,
+} from "@/lib/systemMessage";
+import type { TranslationKey } from "@/lib/i18n";
 import type { Message } from "@/types/message";
 import type { FamilyMember } from "@/types/member";
+import type { FamilyRole } from "@/types/family";
+
+const ROLE_KEYS: Record<FamilyRole, TranslationKey> = {
+  father: "roleFather",
+  mother: "roleMother",
+  child: "roleChild",
+};
 
 interface Props {
   message: Message;
   sender: FamilyMember | null;
+  recipient?: FamilyMember | null;
   isMine: boolean;
-  canDelete?: boolean;
-  onRequestDelete?: (messageId: string) => void;
+  highlighted?: boolean;
+  onRequestActions?: (
+    message: Message,
+    point: { x: number; y: number },
+  ) => void;
+  onReplayEffect?: (message: Message) => void;
 }
 
 export default function ChatMessage({
   message,
   sender,
+  recipient,
   isMine,
-  canDelete,
-  onRequestDelete,
+  highlighted,
+  onRequestActions,
+  onReplayEffect,
 }: Props) {
+  const { language, t } = useLanguage();
+  const actionHandlers = useLongPress(
+    (point) => onRequestActions?.(message, point),
+    !!onRequestActions,
+  );
+  const actionClass = onRequestActions
+    ? "cursor-pointer select-none [-webkit-touch-callout:none] [-webkit-user-select:none]"
+    : "";
+  const roleLabel = sender ? t(ROLE_KEYS[sender.role]) : "";
+  const showRole =
+    !!sender && sender.nickname.trim().toLowerCase() !== roleLabel.trim().toLowerCase();
+  const highlightClass = highlighted
+    ? "important-message-highlight"
+    : "";
+  const isPrivate = !!message.recipient_member_id;
+  const whisperRecipientLabel =
+    isPrivate && isMine
+      ? t("messageWhisperTo", {
+          nickname: recipient?.nickname ?? t("commonUnknownMember"),
+        })
+      : null;
+
   if (message.message_type === "system") {
+    const tone = getSystemMessageTone(message);
+    const toneClass =
+      tone === "joined"
+        ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100"
+        : tone === "left"
+          ? "bg-slate-100 text-slate-600 ring-1 ring-slate-200"
+          : "bg-slate-200/70 text-slate-600";
     return (
-      <div className="flex justify-center py-2">
-        <span className="rounded-full bg-slate-200/70 px-3 py-1 text-xs text-slate-600">
-          {message.content}
+      <div className="flex justify-center py-2" {...actionHandlers}>
+        <span className={`rounded-full px-3 py-1 text-xs ${toneClass} ${actionClass} ${highlightClass}`}>
+          {localizeSystemMessage(message, t)}
         </span>
       </div>
     );
   }
 
   if (message.deleted_at) {
-    const label = isMine ? "你撤回了一条消息" : "对方撤回了一条消息";
+    const label = isMine ? t("messageYouDeleted") : t("messageOtherDeleted");
     return (
-      <div className="flex justify-center py-2">
-        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs italic text-slate-500">
+      <div className="flex justify-center py-2" {...actionHandlers}>
+        <span className={`rounded-full bg-slate-100 px-3 py-1 text-xs italic text-slate-500 ${highlightClass}`}>
           {label}
         </span>
       </div>
@@ -60,25 +111,48 @@ export default function ChatMessage({
           isMine ? "items-end" : "items-start"
         }`}
       >
-        <div className="flex items-center gap-2 text-xs text-slate-500">
+        <div className="flex max-w-full flex-wrap items-center gap-1.5 text-xs text-slate-500">
+          {whisperRecipientLabel ? (
+            <span className="max-w-36 truncate font-medium text-violet-700">
+              {whisperRecipientLabel}
+            </span>
+          ) : null}
           <span className="font-medium text-slate-700">
-            {sender?.nickname ?? "未知成员"}
+            {sender?.nickname ?? t("commonUnknownMember")}
           </span>
-          {sender ? <RoleBadge role={sender.role} /> : null}
-          <span>{formatTime(message.created_at)}</span>
+          {showRole ? (
+            <>
+              <span className="text-slate-300">·</span>
+              <span className="font-medium text-slate-500">
+                {roleLabel}
+              </span>
+            </>
+          ) : null}
+          <span className="text-slate-300">·</span>
+          <span>{formatTime(message.created_at, language)}</span>
         </div>
         <Bubble
           message={message}
           isMine={isMine}
-          canDelete={!!canDelete && !!onRequestDelete}
-          onRequestDelete={() => onRequestDelete?.(message.id)}
+          highlighted={highlighted}
+          actionHandlers={actionHandlers}
+          actionClass={actionClass}
+          isPrivate={isPrivate}
+          onReplayEffect={
+            message.effect_id && onReplayEffect
+              ? () => onReplayEffect(message)
+              : undefined
+          }
         />
       </div>
     </div>
   );
 }
 
-function useLongPress(onLongPress: () => void, enabled: boolean) {
+function useLongPress(
+  onLongPress: (point: { x: number; y: number }) => void,
+  enabled: boolean,
+) {
   const timeoutRef = useRef<number | null>(null);
   const firedRef = useRef(false);
 
@@ -89,13 +163,13 @@ function useLongPress(onLongPress: () => void, enabled: boolean) {
     }
   }
 
-  function start() {
+  function start(point: { x: number; y: number }) {
     if (!enabled) return;
     firedRef.current = false;
     clear();
     timeoutRef.current = window.setTimeout(() => {
       firedRef.current = true;
-      onLongPress();
+      onLongPress(point);
     }, 500);
   }
 
@@ -104,18 +178,25 @@ function useLongPress(onLongPress: () => void, enabled: boolean) {
   }
 
   return {
-    onTouchStart: start,
+    onTouchStart: (e: React.TouchEvent) => {
+      const touch = e.touches[0];
+      if (!touch) return;
+      start({ x: touch.clientX, y: touch.clientY });
+    },
     onTouchEnd: cancel,
     onTouchMove: cancel,
     onTouchCancel: cancel,
-    onMouseDown: start,
+    onMouseDown: (e: React.MouseEvent) => {
+      if (e.button !== 0) return;
+      start({ x: e.clientX, y: e.clientY });
+    },
     onMouseUp: cancel,
     onMouseLeave: cancel,
     onContextMenu: (e: React.MouseEvent) => {
       if (!enabled) return;
       e.preventDefault();
       cancel();
-      onLongPress();
+      onLongPress({ x: e.clientX, y: e.clientY });
     },
     // Suppress click events that follow a long-press
     onClickCapture: (e: React.MouseEvent) => {
@@ -131,104 +212,178 @@ function useLongPress(onLongPress: () => void, enabled: boolean) {
 function Bubble({
   message,
   isMine,
-  canDelete,
-  onRequestDelete,
+  isPrivate,
+  highlighted,
+  actionHandlers,
+  actionClass,
+  onReplayEffect,
 }: {
   message: Message;
   isMine: boolean;
-  canDelete: boolean;
-  onRequestDelete: () => void;
+  isPrivate: boolean;
+  highlighted?: boolean;
+  actionHandlers: ReturnType<typeof useLongPress>;
+  actionClass: string;
+  onReplayEffect?: () => void;
 }) {
-  const longPressHandlers = useLongPress(onRequestDelete, canDelete);
-  const longPressClass = canDelete
-    ? "cursor-pointer select-none [-webkit-touch-callout:none] [-webkit-user-select:none]"
-    : "";
-
+  const { t } = useLanguage();
   const base = `rounded-2xl px-3.5 py-2.5 text-sm shadow-sm ${
-    isMine
+    isPrivate && isMine
+      ? "bg-violet-500 text-white ring-1 ring-violet-300"
+      : isPrivate
+        ? "bg-violet-50 text-slate-800 ring-1 ring-violet-200"
+        : isMine
       ? "bg-brand-500 text-white"
       : "bg-white text-slate-800 ring-1 ring-slate-100"
   }`;
+  const highlightClass = highlighted
+    ? "important-message-highlight"
+    : "";
 
   if (message.message_type === "image" && message.image_url) {
+    const imageUrl = safeHttpUrl(message.image_url);
+    if (!imageUrl) return null;
+    const previewHref = `/image-preview?src=${encodeURIComponent(
+      imageUrl,
+    )}`;
+
     return (
       <div
-        {...longPressHandlers}
-        className={`overflow-hidden rounded-2xl ${longPressClass}`}
+        {...actionHandlers}
+        className={`relative overflow-hidden rounded-2xl ${isPrivate ? "ring-2 ring-violet-200" : ""} ${actionClass} ${highlightClass}`}
       >
-        <a
-          href={message.image_url}
-          target="_blank"
-          rel="noreferrer"
-          onClick={(e) => {
+        {isPrivate ? (
+          <span className="absolute left-2 top-2 z-10 rounded-full bg-white/90 px-2 py-0.5 text-[11px] font-semibold text-violet-700 shadow-sm">
+            {t("messageWhisperLabel")}
+          </span>
+        ) : null}
+        <Link
+          href={previewHref}
+          className="block"
+          onClickCapture={(e) => {
             // Don't navigate when the user is in the middle of a long-press.
-            longPressHandlers.onClickCapture(e);
+            actionHandlers.onClickCapture(e);
           }}
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={message.image_url}
-            alt="图片消息"
+            src={imageUrl}
+            alt={t("messageImageAlt")}
             className="max-h-72 max-w-full rounded-2xl object-cover"
             draggable={false}
           />
-        </a>
+        </Link>
       </div>
     );
   }
 
   if (message.message_type === "audio" && message.audio_url) {
+    const audioUrl = safeHttpUrl(message.audio_url);
+    if (!audioUrl) return null;
     return (
-      <div {...longPressHandlers} className={longPressClass}>
+      <div
+        {...actionHandlers}
+        className={`${isPrivate ? "rounded-2xl bg-violet-50 p-1 ring-1 ring-violet-200" : ""} ${actionClass}`}
+      >
+        {isPrivate ? (
+          <WhisperInlineLabel className="mb-1 px-2 pt-1 text-violet-700" />
+        ) : null}
         <AudioBubble
-          url={message.audio_url}
+          messageId={message.id}
+          url={audioUrl}
           durationMs={message.audio_duration_ms}
           isMine={isMine}
+          highlighted={highlighted}
         />
       </div>
     );
   }
 
   if (message.message_type === "location") {
+    const detail = message.address || t("messageLocationShared");
+    const mapUrl =
+      safeGoogleMapsUrl(message.map_url) ??
+      (message.latitude != null && message.longitude != null
+        ? createGoogleMapUrl(message.latitude, message.longitude)
+        : null);
+
     return (
       <a
-        href={message.map_url ?? "#"}
-        target="_blank"
-        rel="noreferrer"
-        {...longPressHandlers}
-        className={`${base} flex flex-col gap-1 no-underline ${longPressClass}`}
+        href={mapUrl ?? "#"}
+        target={mapUrl ? "_blank" : undefined}
+        rel={mapUrl ? "noreferrer" : undefined}
+        onClick={(e) => {
+          if (!mapUrl) e.preventDefault();
+        }}
+        {...actionHandlers}
+        className={`${base} flex min-w-40 max-w-56 flex-col gap-1 no-underline ${actionClass} ${highlightClass}`}
       >
-        <span className="flex items-center gap-1.5 font-medium">
-          <span>📍</span>
-          <span>{message.content || "发送了当前位置"}</span>
+        {isPrivate ? (
+          <WhisperInlineLabel className="mb-0.5 opacity-90" />
+        ) : null}
+        <span className="flex items-center gap-1.5 text-sm font-semibold">
+          <span aria-hidden className="text-xs">
+            📍
+          </span>
+          <span>{t("messageLocationTitle")}</span>
         </span>
-        {message.address ? (
-          <span className={isMine ? "text-brand-50" : "text-slate-500"}>
-            {message.address}
-          </span>
-        ) : null}
-        {message.latitude != null && message.longitude != null ? (
-          <span
-            className={`text-xs ${isMine ? "text-brand-100" : "text-slate-500"}`}
-          >
-            {message.latitude.toFixed(5)}, {message.longitude.toFixed(5)}
-          </span>
-        ) : null}
         <span
-          className={`text-xs ${isMine ? "text-brand-100" : "text-brand-500"}`}
+          className={`text-xs leading-5 ${isMine ? "text-brand-50" : "text-slate-700"}`}
         >
-          点击在地图中查看
+          {detail}
+        </span>
+        <span
+          className={`text-xs font-medium leading-5 ${isMine ? "text-brand-100" : "text-brand-500"}`}
+        >
+          {t("messageOpenMap")}
         </span>
       </a>
     );
   }
 
+  const isEffect = !!message.effect_id && !!onReplayEffect;
+  const effectClass = isEffect ? "cursor-pointer hover:opacity-90" : "";
+
   return (
     <div
-      {...longPressHandlers}
-      className={`${base} whitespace-pre-wrap break-words ${longPressClass}`}
+      {...actionHandlers}
+      onClick={isEffect ? onReplayEffect : undefined}
+      title={isEffect ? t("messageReplayEffect") : undefined}
+      className={`${base} flex flex-col gap-1 whitespace-pre-wrap break-words ${actionClass} ${effectClass} ${highlightClass}`}
     >
-      {message.content}
+      {isPrivate ? (
+        <WhisperInlineLabel
+          className={isMine ? "text-violet-50/90" : "text-violet-700"}
+        />
+      ) : null}
+      <span>{message.content}</span>
+      {isEffect ? (
+        <span aria-hidden className="text-xs opacity-70">
+          ✨
+        </span>
+      ) : null}
     </div>
+  );
+}
+
+function WhisperInlineLabel({ className = "" }: { className?: string }) {
+  const { t } = useLanguage();
+  return (
+    <span className={`inline-flex items-center gap-1 text-[11px] font-semibold ${className}`}>
+      <WhisperIcon />
+      <span>{t("messageWhisperLabel")}</span>
+    </span>
+  );
+}
+
+function WhisperIcon() {
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src="/ui-icons/whisper-lock.png"
+      alt=""
+      className="h-3.5 w-3.5 shrink-0 rounded-[3px]"
+      draggable={false}
+    />
   );
 }

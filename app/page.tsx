@@ -5,42 +5,33 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import EnvWarning from "@/components/EnvWarning";
-import RoleSelect from "@/components/RoleSelect";
-import { loadSession, saveSession } from "@/lib/authLocal";
-import { humanizeError } from "@/lib/errors";
-import { joinFamily, validateMember } from "@/lib/familyService";
+import { useToast } from "@/components/Toast";
+import { clearSession, loadSession, saveSession } from "@/lib/authLocal";
+import { ensureFamilyCode } from "@/lib/accountClient";
+import { safeRestoreSession } from "@/lib/familyService";
+import { getSupabaseAuth } from "@/lib/supabaseAuthClient";
 import { isSupabaseConfigured } from "@/lib/supabaseClient";
-import type { FamilyRole } from "@/types/family";
 
 export default function HomePage() {
   const router = useRouter();
-  const [familyCode, setFamilyCode] = useState("");
-  const [nickname, setNickname] = useState("");
-  const [role, setRole] = useState<FamilyRole | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [restoring, setRestoring] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     async function run() {
       const local = loadSession();
-      if (!local || !isSupabaseConfigured()) {
-        setRestoring(false);
+      if (!local || !isSupabaseConfigured()) return;
+      const result = await safeRestoreSession(local.member_id, local.member_token);
+      if (cancelled) return;
+      if (result.status === "valid") {
+        saveSession(result.session);
+        router.replace("/chat");
         return;
       }
-      try {
-        const session = await validateMember(local.member_id, local.member_token);
-        if (cancelled) return;
-        if (session) {
-          saveSession(session);
-          router.replace("/chat");
-          return;
-        }
-      } catch {
-        // ignore — fall through to manual entry
+      if (result.status === "expired") {
+        clearSession();
       }
-      if (!cancelled) setRestoring(false);
     }
     void run();
     return () => {
@@ -48,103 +39,89 @@ export default function HomePage() {
     };
   }, [router]);
 
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
-    if (!familyCode.trim() || !nickname.trim() || !role) {
-      setError("请填写家庭代码、昵称并选择角色");
-      return;
-    }
-    setLoading(true);
+  async function handleCreateFamily() {
+    if (busy) return;
+    setBusy(true);
     try {
-      const session = await joinFamily({
-        familyCode: familyCode.trim().toUpperCase(),
-        nickname: nickname.trim(),
-        role,
-      });
-      saveSession(session);
-      router.replace("/chat");
-    } catch (err) {
-      setError(humanizeError(err));
+      const { data } = await getSupabaseAuth().auth.getSession();
+      if (!data.session) {
+        router.push("/register");
+        return;
+      }
+      const result = await ensureFamilyCode(false);
+      if (result.status === "has_family" && result.session) {
+        saveSession(result.session);
+        toast.info("你已经创建过家庭，正在进入家庭聊天室。");
+        router.replace("/chat");
+        return;
+      }
+      if (result.status === "verified") {
+        router.push("/create-family");
+        return;
+      }
+      router.push(`/verify-family-code?status=${result.status}`);
+    } catch {
+      router.push("/login");
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
-  }
-
-  if (restoring) {
-    return (
-      <div className="flex flex-1 items-center justify-center text-slate-500">
-        正在恢复会话…
-      </div>
-    );
   }
 
   return (
-    <div className="flex flex-1 flex-col px-5 py-8 sm:px-8">
-      <header className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">家人聊天室</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          打开网址，输入家庭代码就能用，无需注册。
+    <div className="app-page-narrow">
+      <header className="app-header-stack">
+        <h1 className="page-title">家人聊天室</h1>
+        <p className="page-subtitle">
+          创建家庭需要邮箱注册。家人加入家庭只需要家庭代码。
         </p>
       </header>
 
       <EnvWarning />
 
-      <form onSubmit={onSubmit} className="card flex flex-col gap-4">
-        <div>
-          <label className="label" htmlFor="code">
-            家庭代码
-          </label>
-          <input
-            id="code"
-            className="field tracking-widest uppercase"
-            placeholder="例如 A8K3Q2"
-            maxLength={8}
-            value={familyCode}
-            onChange={(e) => setFamilyCode(e.target.value.toUpperCase())}
-            autoComplete="off"
-          />
-        </div>
-
-        <div>
-          <label className="label" htmlFor="nickname">
-            你的昵称
-          </label>
-          <input
-            id="nickname"
-            className="field"
-            placeholder="比如：小明"
-            maxLength={20}
-            value={nickname}
-            onChange={(e) => setNickname(e.target.value)}
-            autoComplete="off"
-          />
-        </div>
-
-        <div>
-          <span className="label">选择角色</span>
-          <RoleSelect value={role} onChange={setRole} />
-        </div>
-
-        {error ? (
-          <div className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">
-            {error}
-          </div>
-        ) : null}
-
+      <div className="grid gap-4">
         <button
-          type="submit"
-          className="btn-primary mt-1"
-          disabled={loading}
+          type="button"
+          className="action-card flex items-center justify-between gap-4"
+          disabled={busy}
+          onClick={handleCreateFamily}
         >
-          {loading ? "加入中…" : "进入家庭聊天室"}
+          <span className="min-w-0 text-left">
+            <span className="block text-lg font-bold text-slate-900">
+              创建家庭
+            </span>
+            <span className="mt-1 block text-sm leading-relaxed text-slate-500">
+              注册或登录邮箱，获取家庭代码后创建家庭。
+            </span>
+          </span>
+          <span className="icon-action text-2xl text-brand-600" aria-hidden="true">
+            +
+          </span>
         </button>
-      </form>
 
-      <div className="mt-6 text-center text-sm text-slate-500">
-        还没有家庭？
-        <Link className="ml-1 text-brand-600 hover:underline" href="/create-family">
-          创建一个新家庭
+        <Link
+          href="/join"
+          className="action-card flex items-center justify-between gap-4"
+        >
+          <span className="min-w-0">
+            <span className="block text-lg font-bold text-slate-900">
+              加入家庭
+            </span>
+            <span className="mt-1 block text-sm leading-relaxed text-slate-500">
+              输入家人分享的家庭代码、昵称和角色即可加入。
+            </span>
+          </span>
+          <span className="icon-action text-xl text-brand-600" aria-hidden="true">
+            →
+          </span>
+        </Link>
+      </div>
+
+      <div className="mt-6 flex justify-center gap-4 text-sm">
+        <Link className="text-brand-600 hover:underline" href="/login">
+          已注册？登录
+        </Link>
+        <Link className="text-slate-500 hover:text-brand-600" href="/forgot-password">
+          忘记密码
         </Link>
       </div>
     </div>

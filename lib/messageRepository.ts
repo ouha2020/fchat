@@ -1,0 +1,46 @@
+"use client";
+
+import type { LocalSession } from "@/lib/authLocal";
+import { clearMessageCacheForSession } from "@/lib/messageCache";
+import {
+  forceRefreshMessages,
+  loadCachedMessagesForSession,
+  mergeRealtimeMessage,
+  mergeRealtimeMessages,
+  noteMessageCacheOpen,
+  syncMessages,
+} from "@/lib/messageSync";
+import {
+  deleteMessage,
+  getMessageById,
+  getMessagesByIds,
+  getUnreadCount,
+  markMessagesDelivered,
+  markMessagesRead,
+  sendMessage,
+  uploadChatAudio,
+  uploadChatImage,
+} from "@/lib/messageService";
+
+export {
+  clearMessageCacheForSession,
+  deleteMessage,
+  forceRefreshMessages,
+  getMessageById,
+  getMessagesByIds,
+  getUnreadCount,
+  loadCachedMessagesForSession,
+  markMessagesDelivered,
+  markMessagesRead,
+  mergeRealtimeMessage,
+  mergeRealtimeMessages,
+  noteMessageCacheOpen,
+  sendMessage,
+  syncMessages,
+  uploadChatAudio,
+  uploadChatImage,
+};
+
+export function clearMessageCacheSilently(session: LocalSession): void {
+  clearMessageCacheForSession(session).catch(() => undefined);
+}

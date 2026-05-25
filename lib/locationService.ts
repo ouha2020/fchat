@@ -9,7 +9,7 @@ export interface LocationFix {
 export function getCurrentLocation(): Promise<LocationFix> {
   return new Promise((resolve, reject) => {
     if (typeof navigator === "undefined" || !navigator.geolocation) {
-      reject(new Error("当前浏览器不支持定位"));
+      reject(new Error("geolocation_unsupported"));
       return;
     }
     navigator.geolocation.getCurrentPosition(
@@ -26,5 +26,12 @@ export function getCurrentLocation(): Promise<LocationFix> {
 }
 
 export function createGoogleMapUrl(latitude: number, longitude: number): string {
-  return `https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`;
+  const lat = Number(latitude);
+  const lng = Number(longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    throw new Error("invalid_location");
+  }
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+    `${lat},${lng}`,
+  )}`;
 }

@@ -2,78 +2,742 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import ChatInput from "@/components/ChatInput";
 import ChatMessage from "@/components/ChatMessage";
 import EffectOverlay from "@/components/EffectOverlay";
 import EnvWarning from "@/components/EnvWarning";
+import ImportantNoticeBar from "@/components/ImportantNoticeBar";
+import { useLanguage } from "@/components/LanguageProvider";
+import { useDialog } from "@/components/Dialog";
+import { useToast } from "@/components/Toast";
 import { clearSession, loadSession, saveSession, type LocalSession } from "@/lib/authLocal";
+import {
+  CHAT_BACKGROUND_CHANGED,
+  getChatBackground,
+  setChatBackground,
+} from "@/lib/chatBackground";
 import { effectFromColumns, transformForSending, type Effect, detectEffect } from "@/lib/effects";
 import { humanizeError } from "@/lib/errors";
-import { validateMember } from "@/lib/familyService";
+import { safeRestoreSession } from "@/lib/familyService";
+import {
+  dismissImportantNotification,
+  getDismissedImportantIds,
+  saveDismissedImportantIds,
+} from "@/lib/importantNotificationPreference";
+import {
+  addImportantNotification,
+  listImportantNotifications,
+  removeImportantNotification,
+} from "@/lib/importantNotificationService";
 import { listMembers } from "@/lib/memberService";
 import {
   deleteMessage,
-  listMessages,
+  forceRefreshMessages,
+  getMessageById,
+  getMessagesByIds,
+  loadCachedMessagesForSession,
+  markMessagesDelivered,
+  markMessagesRead,
+  mergeRealtimeMessage,
+  mergeRealtimeMessages,
+  noteMessageCacheOpen,
   sendMessage,
+  syncMessages,
   uploadChatAudio,
   uploadChatImage,
-} from "@/lib/messageService";
+} from "@/lib/messageRepository";
 import { getCurrentLocation, createGoogleMapUrl } from "@/lib/locationService";
 import {
-  getNotificationPermission,
   installAudioUnlock,
   playNotificationSound,
-  requestNotificationPermission,
-  showBrowserNotification,
   vibrate,
-  type NotificationPerm,
 } from "@/lib/notify";
+import {
+  checkPushSubscriptionHealth,
+  pushNotificationErrorMessage,
+  requestMessagePush,
+  updatePushPresence,
+} from "@/lib/pushNotificationService";
 import type { RecordingResult } from "@/lib/recordingService";
 import { getSupabase, isSupabaseConfigured } from "@/lib/supabaseClient";
+import { withTimeout } from "@/lib/timeout";
+import { usePushNotificationControls } from "@/lib/usePushNotificationControls";
+import type { ImportantNotification } from "@/types/importantNotification";
 import type { FamilyMember } from "@/types/member";
 import type { Message } from "@/types/message";
 
+const MESSAGE_FALLBACK_POLL_MS = 30_000;
+const IMPORTANT_FALLBACK_POLL_MS = 30_000;
+const METADATA_FALLBACK_POLL_MS = 120_000;
+const INITIAL_CACHED_MESSAGE_LIMIT = 100;
+const CACHED_MESSAGE_PAGE_SIZE = 100;
+const PUSH_MESSAGE_DEDUPE_MS = 5_000;
+const REALTIME_BACKGROUND_DISCONNECT_MS = 45_000;
+const REALTIME_BATCH_FLUSH_MS = 150;
+const MESSAGE_DELIVERED_REPORT_DELAY_MS = 500;
+const MESSAGE_READ_REPORT_DELAY_MS = 700;
+const CHAT_BOOTSTRAP_DATA_TIMEOUT_MS = 15_000;
+
+interface MessageRealtimeEvent {
+  id: string;
+  family_id: string;
+  message_id: string;
+  recipient_member_id: string | null;
+  event_type: "insert" | "update";
+  created_at: string;
+}
+
+interface ImportantNotificationRealtimeEvent {
+  id: string;
+  family_id: string;
+  notification_id: string;
+  message_id: string;
+  event_type: "add" | "remove";
+  created_at: string;
+}
+
+interface PushReceivedMessage {
+  type?: string;
+  familyId?: string | null;
+  messageId?: string | null;
+  oldEndpoint?: string | null;
+  newEndpoint?: string | null;
+  endpoint?: string | null;
+}
+
+function isMessageVisibleToSession(
+  message: Message,
+  activeSession: LocalSession,
+): boolean {
+  return (
+    !message.recipient_member_id ||
+    message.sender_member_id === activeSession.member_id ||
+    message.recipient_member_id === activeSession.member_id
+  );
+}
+
+function filterVisibleMessages(
+  rows: Message[],
+  activeSession: LocalSession,
+): Message[] {
+  return rows.filter((message) =>
+    isMessageVisibleToSession(message, activeSession),
+  );
+}
+
+function sortMessagesByCreatedAt(rows: Message[]): Message[] {
+  return [...rows].sort(
+    (a, b) =>
+      new Date(a.created_at).getTime() - new Date(b.created_at).getTime() ||
+      a.id.localeCompare(b.id),
+  );
+}
+
+function isRealtimeProblemStatus(status: string): boolean {
+  return status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED";
+}
+
+function mergeMessagesById(existing: Message[], incoming: Message[]): Message[] {
+  const byId = new Map(existing.map((message) => [message.id, message]));
+  incoming.forEach((message) => byId.set(message.id, message));
+  return sortMessagesByCreatedAt([...byId.values()]);
+}
+
+function removeWhisperParamFromUrl(): void {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  url.searchParams.delete("whisper");
+  window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+}
+
+function setWhisperParamInUrl(memberId: string): void {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  url.searchParams.set("whisper", memberId);
+  window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+}
+
 export default function ChatPage() {
   const router = useRouter();
+  const { language, t } = useLanguage();
+  const dialog = useDialog();
+  const toast = useToast();
   const [session, setSession] = useState<LocalSession | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [members, setMembers] = useState<FamilyMember[]>([]);
+  const [whisperTargetId, setWhisperTargetId] = useState<string | null>(null);
+  const [importantNotifications, setImportantNotifications] = useState<
+    ImportantNotification[]
+  >([]);
+  const [dismissedImportantIds, setDismissedImportantIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(
+    null,
+  );
+  const [messageActionMenu, setMessageActionMenu] = useState<{
+    messageId: string;
+    x: number;
+    y: number;
+  } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [retryNonce, setRetryNonce] = useState(0);
+  const [chatBackgroundUrl, setChatBackgroundUrl] = useState<string | null>(null);
+  const [realtimeConnected, setRealtimeConnected] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const messagesContentRef = useRef<HTMLDivElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const lastHeaderTapRef = useRef(0);
+  const pullStartYRef = useRef<number | null>(null);
+  const didInitialScrollRef = useRef(false);
+  const forceImmediateBottomScrollRef = useRef(false);
+  const cachedMessageLimitRef = useRef(INITIAL_CACHED_MESSAGE_LIMIT);
+  const loadingOlderMessagesRef = useRef(false);
+  const preserveScrollRef = useRef<{ scrollTop: number; scrollHeight: number } | null>(null);
+  const suppressBottomScrollUntilRef = useRef(0);
+  const bottomScrollTimeoutsRef = useRef<number[]>([]);
+  const isIOSRef = useRef(false);
   const membersRef = useRef<FamilyMember[]>([]);
   useEffect(() => {
     membersRef.current = members;
   }, [members]);
+  const messagesRef = useRef<Message[]>([]);
+  const knownMessageIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    messagesRef.current = messages;
+    knownMessageIdsRef.current = new Set(messages.map((message) => message.id));
+  }, [messages]);
+  const pendingRealtimeMessageIdsRef = useRef<Set<string>>(new Set());
+  const realtimeBatchTimerRef = useRef<number | null>(null);
+  const pendingPushMessageIdsRef = useRef<Map<string, number>>(new Map());
+  const pendingDeliveredMessageIdsRef = useRef<Set<string>>(new Set());
+  const pendingReadMessageIdsRef = useRef<Set<string>>(new Set());
+  const reportedDeliveredMessageIdsRef = useRef<Set<string>>(new Set());
+  const reportedReadMessageIdsRef = useRef<Set<string>>(new Set());
+  const deliveredReportTimerRef = useRef<number | null>(null);
+  const readReportTimerRef = useRef<number | null>(null);
   const [effectShow, setEffectShow] = useState<{
     effect: Effect;
     key: string;
   } | null>(null);
   const triggeredEffectIdsRef = useRef<Set<string>>(new Set());
   const handleEffectDone = useCallback(() => setEffectShow(null), []);
+  const tryTriggerEffect = useCallback((messageId: string, eff: Effect | null) => {
+    if (!eff) return;
+    if (triggeredEffectIdsRef.current.has(messageId)) return;
+    triggeredEffectIdsRef.current.add(messageId);
+    // Unique key per trigger forces React to unmount the previous overlay
+    // so the CSS keyframes restart from 0.
+    setEffectShow({ effect: eff, key: `${messageId}-${Date.now()}` });
+  }, []);
 
-  // Notifications: in-app sound + title badge + browser notification.
+  const scrollToMessage = useCallback((messageId: string) => {
+    const el = messageRefs.current.get(messageId);
+    if (!el) return;
+    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    setHighlightedMessageId(messageId);
+    window.setTimeout(() => {
+      setHighlightedMessageId((current) =>
+        current === messageId ? null : current,
+      );
+    }, 3000);
+  }, []);
+
+  useEffect(() => {
+    const html = document.documentElement;
+    const body = document.body;
+    const previous = {
+      htmlOverflow: html.style.overflow,
+      htmlOverscrollBehavior: html.style.overscrollBehavior,
+      chatViewportHeight: html.style.getPropertyValue("--chat-viewport-height"),
+      bodyOverflow: body.style.overflow,
+      bodyHeight: body.style.height,
+      bodyOverscrollBehavior: body.style.overscrollBehavior,
+    };
+    const visualViewport = window.visualViewport;
+
+    isIOSRef.current =
+      /iP(ad|hone|od)/.test(window.navigator.userAgent) ||
+      (window.navigator.platform === "MacIntel" &&
+        window.navigator.maxTouchPoints > 1);
+
+    const updateViewportHeight = () => {
+      const height = visualViewport?.height ?? window.innerHeight;
+      html.style.setProperty("--chat-viewport-height", `${height}px`);
+    };
+
+    html.style.overflow = "hidden";
+    html.style.overscrollBehavior = "none";
+    body.style.overflow = "hidden";
+    body.style.height = "var(--chat-viewport-height, 100dvh)";
+    body.style.overscrollBehavior = "none";
+    updateViewportHeight();
+    visualViewport?.addEventListener("resize", updateViewportHeight);
+    window.addEventListener("orientationchange", updateViewportHeight);
+
+    return () => {
+      bottomScrollTimeoutsRef.current.forEach((id) => window.clearTimeout(id));
+      bottomScrollTimeoutsRef.current = [];
+      visualViewport?.removeEventListener("resize", updateViewportHeight);
+      window.removeEventListener("orientationchange", updateViewportHeight);
+      if (previous.chatViewportHeight) {
+        html.style.setProperty(
+          "--chat-viewport-height",
+          previous.chatViewportHeight,
+        );
+      } else {
+        html.style.removeProperty("--chat-viewport-height");
+      }
+      html.style.overflow = previous.htmlOverflow;
+      html.style.overscrollBehavior = previous.htmlOverscrollBehavior;
+      body.style.overflow = previous.bodyOverflow;
+      body.style.height = previous.bodyHeight;
+      body.style.overscrollBehavior = previous.bodyOverscrollBehavior;
+    };
+  }, []);
+
+  const handleReplayEffect = useCallback((m: Message) => {
+    const eff = effectFromColumns(m.effect_id, m.effect_caption);
+    if (!eff) return;
+    // Brand new key forces EffectOverlay to unmount + remount, restarting
+    // the CSS keyframes from frame 0 (same trick as the initial trigger).
+    setEffectShow({ effect: eff, key: `replay-${m.id}-${Date.now()}` });
+  }, []);
+
+  const push = usePushNotificationControls(session);
+
+  // Notifications: background sound + title badge, controlled by the PWA push switch.
   const [unreadCount, setUnreadCount] = useState(0);
-  const [notifPerm, setNotifPerm] = useState<NotificationPerm>("default");
+  const pushEnabledRef = useRef(false);
   const notifiedIdsRef = useRef<Set<string>>(new Set());
+  // Prune notifiedIdsRef periodically to prevent unbounded growth.
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      const set = notifiedIdsRef.current;
+      if (set.size > 200) {
+        const entries = [...set];
+        const keep = entries.slice(entries.length - 200);
+        notifiedIdsRef.current = new Set(keep);
+      }
+    }, 300_000);
+    return () => window.clearInterval(interval);
+  }, []);
   const sessionRef = useRef<LocalSession | null>(null);
   useEffect(() => {
     sessionRef.current = session;
+  }, [session]);
+  useEffect(() => {
+    pushEnabledRef.current = push.enabled;
+  }, [push.enabled]);
+
+  const handleIncomingMessageSideEffects = useCallback(
+    (incoming: Message) => {
+      const eff =
+        effectFromColumns(incoming.effect_id, incoming.effect_caption) ??
+        (incoming.message_type === "text" ? detectEffect(incoming.content) : null);
+      tryTriggerEffect(incoming.id, eff);
+
+      const activeSession = sessionRef.current;
+      if (
+        activeSession &&
+        incoming.sender_member_id &&
+        !membersRef.current.some((m) => m.id === incoming.sender_member_id)
+      ) {
+        listMembers(activeSession, { includeRemoved: true })
+          .then(setMembers)
+          .catch(() => undefined);
+      }
+
+      if (
+        activeSession &&
+        incoming.sender_member_id &&
+        incoming.sender_member_id !== activeSession.member_id &&
+        incoming.message_type !== "system" &&
+        !incoming.deleted_at &&
+        pushEnabledRef.current &&
+        !notifiedIdsRef.current.has(incoming.id)
+      ) {
+        notifiedIdsRef.current.add(incoming.id);
+        if (typeof document !== "undefined" && document.hidden) {
+          playNotificationSound();
+          setUnreadCount((c) => c + 1);
+          vibrate(120);
+        }
+      }
+    },
+    [tryTriggerEffect],
+  );
+
+  const handleSyncedMessages = useCallback(
+    (next: Message[]) => {
+      const activeSession = sessionRef.current;
+      const visible = activeSession
+        ? filterVisibleMessages(next, activeSession)
+        : next;
+      const knownIds = knownMessageIdsRef.current;
+      const unseenMessages = visible.filter((message) => !knownIds.has(message.id));
+      setMessages((prev) => mergeMessagesById(prev, visible));
+      unseenMessages.forEach(handleIncomingMessageSideEffects);
+    },
+    [handleIncomingMessageSideEffects],
+  );
+
+  const flushDeliveredReports = useCallback(async () => {
+    const activeSession = sessionRef.current;
+    if (!activeSession) return;
+
+    const ids = [...pendingDeliveredMessageIdsRef.current].slice(0, 300);
+    ids.forEach((id) => pendingDeliveredMessageIdsRef.current.delete(id));
+    if (ids.length === 0) return;
+
+    try {
+      await markMessagesDelivered(activeSession, ids);
+    } catch {
+      ids.forEach((id) => reportedDeliveredMessageIdsRef.current.delete(id));
+    } finally {
+      if (
+        pendingDeliveredMessageIdsRef.current.size > 0 &&
+        !deliveredReportTimerRef.current
+      ) {
+        deliveredReportTimerRef.current = window.setTimeout(() => {
+          deliveredReportTimerRef.current = null;
+          flushDeliveredReports().catch(() => undefined);
+        }, MESSAGE_DELIVERED_REPORT_DELAY_MS);
+      }
+    }
+  }, []);
+
+  const scheduleDeliveredReports = useCallback(
+    (candidates: Message[]) => {
+      const activeSession = sessionRef.current;
+      if (!activeSession) return;
+
+      candidates.forEach((message) => {
+        if (message.sender_member_id === activeSession.member_id) return;
+        if (reportedDeliveredMessageIdsRef.current.has(message.id)) return;
+        if (!isMessageVisibleToSession(message, activeSession)) return;
+        reportedDeliveredMessageIdsRef.current.add(message.id);
+        pendingDeliveredMessageIdsRef.current.add(message.id);
+      });
+
+      if (
+        pendingDeliveredMessageIdsRef.current.size === 0 ||
+        deliveredReportTimerRef.current
+      ) {
+        return;
+      }
+
+      deliveredReportTimerRef.current = window.setTimeout(() => {
+        deliveredReportTimerRef.current = null;
+        flushDeliveredReports().catch(() => undefined);
+      }, MESSAGE_DELIVERED_REPORT_DELAY_MS);
+    },
+    [flushDeliveredReports],
+  );
+
+  const flushReadReports = useCallback(async () => {
+    const activeSession = sessionRef.current;
+    if (!activeSession) return;
+
+    const ids = [...pendingReadMessageIdsRef.current].slice(0, 300);
+    ids.forEach((id) => pendingReadMessageIdsRef.current.delete(id));
+    if (ids.length === 0) return;
+
+    try {
+      await markMessagesRead(activeSession, ids);
+    } catch {
+      ids.forEach((id) => reportedReadMessageIdsRef.current.delete(id));
+    } finally {
+      if (pendingReadMessageIdsRef.current.size > 0 && !readReportTimerRef.current) {
+        readReportTimerRef.current = window.setTimeout(() => {
+          readReportTimerRef.current = null;
+          flushReadReports().catch(() => undefined);
+        }, MESSAGE_READ_REPORT_DELAY_MS);
+      }
+    }
+  }, []);
+
+  const scheduleReadReports = useCallback(
+    (candidates: Message[]) => {
+      const activeSession = sessionRef.current;
+      if (!activeSession) return;
+      if (document.visibilityState !== "visible") return;
+      if (window.location.pathname !== "/chat") return;
+
+      candidates.forEach((message) => {
+        if (message.sender_member_id === activeSession.member_id) return;
+        if (reportedReadMessageIdsRef.current.has(message.id)) return;
+        if (!isMessageVisibleToSession(message, activeSession)) return;
+        reportedReadMessageIdsRef.current.add(message.id);
+        pendingReadMessageIdsRef.current.add(message.id);
+      });
+
+      if (pendingReadMessageIdsRef.current.size === 0 || readReportTimerRef.current) {
+        return;
+      }
+
+      readReportTimerRef.current = window.setTimeout(() => {
+        readReportTimerRef.current = null;
+        flushReadReports().catch(() => undefined);
+      }, MESSAGE_READ_REPORT_DELAY_MS);
+    },
+    [flushReadReports],
+  );
+
+  useEffect(() => {
+    if (!session || messages.length === 0) return;
+    scheduleDeliveredReports(messages);
+    scheduleReadReports(messages);
+  }, [messages, scheduleDeliveredReports, scheduleReadReports, session]);
+
+  useEffect(() => {
+    if (!session) return;
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== "visible") return;
+      scheduleReadReports(messagesRef.current);
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [scheduleReadReports, session]);
+
+  useEffect(() => {
+    const pendingDeliveredMessageIds = pendingDeliveredMessageIdsRef.current;
+    const pendingReadMessageIds = pendingReadMessageIdsRef.current;
+    return () => {
+      if (deliveredReportTimerRef.current) {
+        window.clearTimeout(deliveredReportTimerRef.current);
+        deliveredReportTimerRef.current = null;
+      }
+      if (readReportTimerRef.current) {
+        window.clearTimeout(readReportTimerRef.current);
+        readReportTimerRef.current = null;
+      }
+      pendingDeliveredMessageIds.clear();
+      pendingReadMessageIds.clear();
+    };
+  }, []);
+
+  const fetchRealtimeMessage = useCallback(
+    async (messageId: string): Promise<boolean> => {
+      const activeSession = sessionRef.current;
+      if (!activeSession) return false;
+      const incoming = await getMessageById(activeSession, messageId);
+      if (!incoming) return false;
+      if (!isMessageVisibleToSession(incoming, activeSession)) return false;
+      const next = await mergeRealtimeMessage(activeSession, incoming);
+      handleSyncedMessages(next);
+      return true;
+    },
+    [handleSyncedMessages],
+  );
+
+  const flushRealtimeMessages = useCallback(async () => {
+    const activeSession = sessionRef.current;
+    if (!activeSession) return;
+
+    const pendingIds = pendingRealtimeMessageIdsRef.current;
+    const messageIds = [...pendingIds].slice(0, 100);
+    messageIds.forEach((id) => pendingIds.delete(id));
+    if (messageIds.length === 0) return;
+
+    try {
+      const incoming = await getMessagesByIds(activeSession, messageIds);
+      const visible = incoming.filter((message) =>
+        isMessageVisibleToSession(message, activeSession),
+      );
+      if (visible.length === 0) return;
+
+      const next = await mergeRealtimeMessages(activeSession, visible);
+      handleSyncedMessages(next);
+    } catch {
+      if (document.visibilityState !== "visible") return;
+      await syncMessages(activeSession, { onMessages: handleSyncedMessages }).catch(
+        () => undefined,
+      );
+    } finally {
+      if (pendingIds.size > 0 && !realtimeBatchTimerRef.current) {
+        realtimeBatchTimerRef.current = window.setTimeout(() => {
+          realtimeBatchTimerRef.current = null;
+          flushRealtimeMessages().catch(() => undefined);
+        }, REALTIME_BATCH_FLUSH_MS);
+      }
+    }
+  }, [handleSyncedMessages]);
+
+  const scheduleRealtimeBatchFetch = useCallback(
+    (messageId: string) => {
+      pendingRealtimeMessageIdsRef.current.add(messageId);
+      if (realtimeBatchTimerRef.current) {
+        window.clearTimeout(realtimeBatchTimerRef.current);
+      }
+      realtimeBatchTimerRef.current = window.setTimeout(() => {
+        realtimeBatchTimerRef.current = null;
+        flushRealtimeMessages().catch(() => undefined);
+      }, REALTIME_BATCH_FLUSH_MS);
+    },
+    [flushRealtimeMessages],
+  );
+
+  const fetchPushMessageNow = useCallback(
+    async (messageId: string, scrollAfterFetch = false) => {
+      const activeSession = sessionRef.current;
+      if (!activeSession) return;
+
+      const now = Date.now();
+      const pending = pendingPushMessageIdsRef.current;
+      pending.forEach((expiresAt, id) => {
+        if (expiresAt <= now) pending.delete(id);
+      });
+
+      const existing = pending.get(messageId);
+      if (existing && existing > now) return;
+      pending.set(messageId, now + PUSH_MESSAGE_DEDUPE_MS);
+
+      try {
+        const fetched = await fetchRealtimeMessage(messageId);
+        if (!fetched) {
+          await syncMessages(activeSession, { onMessages: handleSyncedMessages });
+        }
+        if (scrollAfterFetch) {
+          window.setTimeout(() => scrollToMessage(messageId), 120);
+        }
+      } finally {
+        window.setTimeout(() => {
+          const expiresAt = pending.get(messageId);
+          if (expiresAt && expiresAt <= Date.now()) pending.delete(messageId);
+        }, PUSH_MESSAGE_DEDUPE_MS);
+      }
+    },
+    [fetchRealtimeMessage, handleSyncedMessages, scrollToMessage],
+  );
+
+  useEffect(() => {
+    if (!session) return;
+    if (!("serviceWorker" in navigator)) return;
+
+    const syncVisibleMessages = () => {
+      if (document.visibilityState !== "visible") return;
+      syncMessages(session, { onMessages: handleSyncedMessages }).catch(
+        () => undefined,
+      );
+    };
+
+    const handleServiceWorkerMessage = (event: MessageEvent) => {
+      const data = event.data as PushReceivedMessage | null;
+      if (!data) return;
+
+      if (data.type === "family-chat:subscription-changed") {
+        void checkPushSubscriptionHealth(session).catch(() => undefined);
+        return;
+      }
+      if (data.type === "family-chat:subscription-expired") {
+        void checkPushSubscriptionHealth(session).catch(() => undefined);
+        return;
+      }
+      if (data.type !== "family-chat:push-received") return;
+      if (data.familyId !== session.family_id) return;
+      if (window.location.pathname !== "/chat") return;
+
+      if (data.messageId) {
+        fetchPushMessageNow(data.messageId).catch(syncVisibleMessages);
+        return;
+      }
+
+      syncVisibleMessages();
+    };
+
+    navigator.serviceWorker.addEventListener(
+      "message",
+      handleServiceWorkerMessage,
+    );
+    return () => {
+      navigator.serviceWorker.removeEventListener(
+        "message",
+        handleServiceWorkerMessage,
+      );
+    };
+  }, [fetchPushMessageNow, handleSyncedMessages, session]);
+
+  useEffect(() => {
+    if (!session) return;
+
+    const markCurrentPresence = (keepalive = false) => {
+      updatePushPresence(
+        session,
+        document.visibilityState === "visible",
+        keepalive,
+        "chat",
+      );
+    };
+    const markActive = () => {
+      if (document.visibilityState !== "visible") return;
+      updatePushPresence(session, true, false, "chat");
+    };
+
+    markCurrentPresence();
+    const interval = window.setInterval(() => {
+      markCurrentPresence();
+    }, 30_000);
+
+    const markVisibility = () => {
+      markCurrentPresence(document.visibilityState !== "visible");
+    };
+    const markInactive = () => {
+      updatePushPresence(session, false, true, "chat");
+    };
+
+    document.addEventListener("visibilitychange", markVisibility);
+    window.addEventListener("focus", markActive);
+    window.addEventListener("online", markActive);
+    window.addEventListener("pagehide", markInactive);
+    window.addEventListener("beforeunload", markInactive);
+    return () => {
+      window.clearInterval(interval);
+      markInactive();
+      document.removeEventListener("visibilitychange", markVisibility);
+      window.removeEventListener("focus", markActive);
+      window.removeEventListener("online", markActive);
+      window.removeEventListener("pagehide", markInactive);
+      window.removeEventListener("beforeunload", markInactive);
+    };
+  }, [session]);
+
+  useEffect(() => {
+    if (!session) {
+      setChatBackgroundUrl(null);
+      return;
+    }
+
+    const syncBackground = () => {
+      setChatBackgroundUrl(getChatBackground(session.family_id));
+    };
+
+    syncBackground();
+    window.addEventListener("focus", syncBackground);
+    window.addEventListener(CHAT_BACKGROUND_CHANGED, syncBackground);
+    return () => {
+      window.removeEventListener("focus", syncBackground);
+      window.removeEventListener(CHAT_BACKGROUND_CHANGED, syncBackground);
+    };
   }, [session]);
 
   // Unlock AudioContext on the first user interaction so later pings can play.
   useEffect(() => installAudioUnlock(), []);
 
-  // Sync notification permission state on mount and when the tab regains focus.
+  // Clear the title badge when the tab regains focus.
   useEffect(() => {
-    setNotifPerm(getNotificationPermission());
     function onVisibility() {
       if (!document.hidden) {
         setUnreadCount(0);
-        setNotifPerm(getNotificationPermission());
       }
     }
     document.addEventListener("visibilitychange", onVisibility);
@@ -84,22 +748,167 @@ export default function ChatPage() {
     };
   }, []);
 
+  const refreshImportantNotifications = useCallback(async (activeSession: LocalSession) => {
+    const rows = await listImportantNotifications(activeSession);
+    setImportantNotifications(rows);
+  }, []);
+
+  useEffect(() => {
+    if (!session) {
+      setRealtimeConnected(true);
+      return;
+    }
+
+    let disconnectTimer = 0;
+    const clearDisconnectTimer = () => {
+      if (!disconnectTimer) return;
+      window.clearTimeout(disconnectTimer);
+      disconnectTimer = 0;
+    };
+
+    const syncVisibleChatData = () => {
+      if (document.visibilityState !== "visible") return;
+      syncMessages(session, { onMessages: handleSyncedMessages }).catch(
+        () => undefined,
+      );
+      refreshImportantNotifications(session).catch(() => undefined);
+    };
+
+    const activateRealtime = () => {
+      clearDisconnectTimer();
+      setRealtimeConnected(true);
+      syncVisibleChatData();
+    };
+
+    const scheduleBackgroundDisconnect = () => {
+      clearDisconnectTimer();
+      if (document.visibilityState === "visible") {
+        activateRealtime();
+        return;
+      }
+      disconnectTimer = window.setTimeout(() => {
+        if (document.visibilityState !== "visible") {
+          setRealtimeConnected(false);
+        }
+      }, REALTIME_BACKGROUND_DISCONNECT_MS);
+    };
+
+    scheduleBackgroundDisconnect();
+    document.addEventListener("visibilitychange", scheduleBackgroundDisconnect);
+    window.addEventListener("focus", activateRealtime);
+    window.addEventListener("online", activateRealtime);
+    return () => {
+      clearDisconnectTimer();
+      document.removeEventListener(
+        "visibilitychange",
+        scheduleBackgroundDisconnect,
+      );
+      window.removeEventListener("focus", activateRealtime);
+      window.removeEventListener("online", activateRealtime);
+    };
+  }, [handleSyncedMessages, refreshImportantNotifications, session]);
+
+  const refreshChatData = useCallback(async (forceFullRefresh = false) => {
+    if (!session) return;
+    try {
+      const [syncResult, mems, important] = await Promise.all([
+        forceFullRefresh
+          ? forceRefreshMessages(session, handleSyncedMessages)
+          : syncMessages(session, { onMessages: handleSyncedMessages }),
+        listMembers(session, { includeRemoved: true }),
+        listImportantNotifications(session),
+      ]);
+      if (syncResult.messages.length > 0) handleSyncedMessages(syncResult.messages);
+      setMembers(mems);
+      setImportantNotifications(important);
+      setError(null);
+    } catch (err) {
+      setError(humanizeError(err, language));
+    }
+  }, [handleSyncedMessages, language, session]);
+
+  const loadOlderCachedMessages = useCallback(async () => {
+    const activeSession = sessionRef.current;
+    const scroller = scrollRef.current;
+    if (!activeSession || !scroller || loadingOlderMessagesRef.current) return;
+
+    const nextLimit = cachedMessageLimitRef.current + CACHED_MESSAGE_PAGE_SIZE;
+    loadingOlderMessagesRef.current = true;
+    setLoadingOlderMessages(true);
+    preserveScrollRef.current = {
+      scrollTop: scroller.scrollTop,
+      scrollHeight: scroller.scrollHeight,
+    };
+    suppressBottomScrollUntilRef.current = Date.now() + 1200;
+
+    try {
+      const cached = await loadCachedMessagesForSession(activeSession, nextLimit);
+      const visible = filterVisibleMessages(cached, activeSession);
+      const currentMessages = messagesRef.current;
+      const merged = mergeMessagesById(visible, currentMessages);
+      if (merged.length <= currentMessages.length) {
+        preserveScrollRef.current = null;
+        return;
+      }
+      cachedMessageLimitRef.current = nextLimit;
+      setMessages(merged);
+    } catch {
+      preserveScrollRef.current = null;
+    } finally {
+      loadingOlderMessagesRef.current = false;
+      setLoadingOlderMessages(false);
+    }
+  }, []);
+
+  function isHeaderActionTarget(target: EventTarget | null): boolean {
+    return target instanceof Element && !!target.closest("a,button");
+  }
+
+  function handleHeaderDoubleClick(e: React.MouseEvent<HTMLElement>) {
+    if (isHeaderActionTarget(e.target)) return;
+    void refreshChatData(true);
+  }
+
+  function handleHeaderTouchEnd(e: React.TouchEvent<HTMLElement>) {
+    if (isHeaderActionTarget(e.target)) return;
+    const now = Date.now();
+    if (now - lastHeaderTapRef.current < 320) {
+      e.preventDefault();
+      lastHeaderTapRef.current = 0;
+      void refreshChatData(true);
+      return;
+    }
+    lastHeaderTapRef.current = now;
+  }
+
   // Title badge for unread count.
   useEffect(() => {
     if (typeof document === "undefined") return;
-    const base = "家人聊天室";
+    const base = t("appTitle");
     document.title = unreadCount > 0 ? `(${unreadCount}) ${base}` : base;
-  }, [unreadCount]);
+  }, [t, unreadCount]);
 
-  async function handleEnableNotifications() {
-    const perm = await requestNotificationPermission();
-    setNotifPerm(perm);
-    if (perm === "granted") {
-      alert("已开启浏览器通知，新消息会在标签页隐藏时弹出提醒。");
-    } else if (perm === "denied") {
-      alert("浏览器已拒绝通知权限，请在浏览器设置中手动允许。");
-    } else if (perm === "unsupported") {
-      alert("当前浏览器不支持网页通知。");
+  async function handleToggleNotifications() {
+    if (!session) return;
+    if (push.busy) return;
+
+    if (push.enabled) {
+      await push.disable().catch(() => undefined);
+      setUnreadCount(0);
+      return;
+    }
+
+    if (push.support?.reason === "ios_not_standalone") {
+      toast.info(t("settingsPushIosGuideTitle"));
+      router.push("/settings");
+      return;
+    }
+
+    try {
+      await push.enable();
+      toast.success(t("settingsPushEnabledAlert"));
+    } catch (err) {
+      toast.error(pushNotificationErrorMessage(err, t));
     }
   }
 
@@ -107,35 +916,96 @@ export default function ChatPage() {
   useEffect(() => {
     let cancelled = false;
     async function run() {
+      setLoading(true);
+      setError(null);
+      setLoadError(null);
       if (!isSupabaseConfigured()) {
         setLoading(false);
         return;
       }
       const local = loadSession();
       if (!local) {
+        setLoading(false);
         router.replace("/");
         return;
       }
+      let fresh: LocalSession | null = null;
       try {
-        const fresh = await validateMember(local.member_id, local.member_token);
+        const restored = await safeRestoreSession(local.member_id, local.member_token);
         if (cancelled) return;
-        if (!fresh) {
+        if (restored.status === "expired") {
           clearSession();
-          router.replace("/");
+          setSession(null);
+          setLoadError(t("chatSessionExpired"));
+          setLoading(false);
           return;
         }
+        if (restored.status === "recoverable_error") {
+          setLoadError(
+            humanizeError(restored.error, language) || t("chatLoadFailed"),
+          );
+          setLoading(false);
+          return;
+        }
+        fresh = restored.session;
         saveSession(fresh);
         setSession(fresh);
-
-        const [msgs, mems] = await Promise.all([
-          listMessages(fresh.family_id),
-          listMembers(fresh.family_id),
-        ]);
-        if (cancelled) return;
-        setMessages(msgs);
-        setMembers(mems);
+        cachedMessageLimitRef.current = INITIAL_CACHED_MESSAGE_LIMIT;
+        noteMessageCacheOpen(fresh).catch(() => undefined);
       } catch (err) {
-        if (!cancelled) setError(humanizeError(err));
+        if (!cancelled) {
+          setLoadError(humanizeError(err, language) || t("chatLoadFailed"));
+          setLoading(false);
+        }
+        return;
+      }
+
+      let hadCachedMessages = false;
+      try {
+        const cached = await loadCachedMessagesForSession(fresh).catch(() => []);
+        if (cancelled) return;
+        hadCachedMessages = cached.length > 0;
+        if (hadCachedMessages) {
+          setMessages(filterVisibleMessages(cached, fresh));
+          setLoading(false);
+        }
+
+        const [mems, important] = await withTimeout(
+          Promise.all([
+            listMembers(fresh, { includeRemoved: true }),
+            listImportantNotifications(fresh),
+          ]),
+          CHAT_BOOTSTRAP_DATA_TIMEOUT_MS,
+          "chat_bootstrap_timeout",
+        );
+        if (cancelled) return;
+        setMembers(mems);
+        setImportantNotifications(important);
+        setDismissedImportantIds(
+          getDismissedImportantIds(fresh.family_id, fresh.member_id),
+        );
+
+        const syncResult = await withTimeout(
+          syncMessages(fresh, {
+            forceFullRefresh: cached.length === 0,
+            onMessages: (next) => {
+              if (!cancelled) setMessages(filterVisibleMessages(next, fresh));
+            },
+          }),
+          CHAT_BOOTSTRAP_DATA_TIMEOUT_MS,
+          "chat_bootstrap_timeout",
+        );
+        if (cancelled) return;
+        if (syncResult.messages.length > 0) {
+          setMessages(filterVisibleMessages(syncResult.messages, fresh));
+        }
+        setLoadError(null);
+      } catch (err) {
+        if (!cancelled) {
+          if (!hadCachedMessages) {
+            setLoadError(humanizeError(err, language) || t("chatLoadFailed"));
+          }
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -144,105 +1014,71 @@ export default function ChatPage() {
     return () => {
       cancelled = true;
     };
-  }, [router]);
+  }, [language, retryNonce, router, t]);
 
-  // Realtime subscription for new messages.
+  // Realtime subscription for lightweight message events.
   useEffect(() => {
-    if (!session) return;
+    if (!session || !realtimeConnected) return;
     const sb = getSupabase();
+    let active = true;
 
-    const messagesChannel = sb
-      .channel(`messages:${session.family_id}`)
+    const messageEventsChannel = sb
+      .channel(`message_events:${session.family_id}`)
       .on(
         "postgres_changes",
         {
           event: "INSERT",
           schema: "public",
-          table: "messages",
-          filter: `family_id=eq.${session.family_id}`,
+          table: "message_realtime_events",
+          filter: `recipient_member_id=eq.${session.member_id}`,
         },
         (payload) => {
-          const incoming = payload.new as Message;
-          setMessages((prev) => {
-            if (prev.some((m) => m.id === incoming.id)) return prev;
-            return [...prev, incoming];
-          });
-          // Always attempt the effect — tryTriggerEffect dedupes by id via
-          // the ref, so re-runs (Realtime echo, polling) are safe. Doing
-          // this OUTSIDE the setMessages updater avoids React 18's batched
-          // updater scheduling, which kept the previous "isNew" closure
-          // false for subsequent triggers.
-          const eff =
-            effectFromColumns(
-              incoming.effect_id,
-              incoming.effect_caption,
-            ) ??
-            (incoming.message_type === "text"
-              ? detectEffect(incoming.content)
-              : null);
-          tryTriggerEffect(incoming.id, eff);
-          // If the sender isn't in our member map yet (e.g. they just joined
-          // and the family_members realtime event hasn't landed), refresh.
-          if (
-            incoming.sender_member_id &&
-            !membersRef.current.some((m) => m.id === incoming.sender_member_id)
-          ) {
-            listMembers(session.family_id)
-              .then(setMembers)
-              .catch(() => undefined);
-          }
-          // Notification path — once per message id, only for inbound,
-          // non-system, non-deleted messages.
-          const me = sessionRef.current;
-          if (
-            me &&
-            incoming.sender_member_id &&
-            incoming.sender_member_id !== me.member_id &&
-            incoming.message_type !== "system" &&
-            !incoming.deleted_at &&
-            !notifiedIdsRef.current.has(incoming.id)
-          ) {
-            notifiedIdsRef.current.add(incoming.id);
-            playNotificationSound();
-            if (typeof document !== "undefined" && document.hidden) {
-              setUnreadCount((c) => c + 1);
-              vibrate(120);
-              const sender = membersRef.current.find(
-                (m) => m.id === incoming.sender_member_id,
-              );
-              const senderName = sender?.nickname ?? "家人";
-              const previewMap: Record<string, string> = {
-                image: "[图片]",
-                audio: "[语音]",
-                location: "[位置]",
-              };
-              const preview =
-                previewMap[incoming.message_type] ??
-                (incoming.content ?? "").slice(0, 80);
-              showBrowserNotification(senderName, preview);
-            }
-          }
-        },
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "messages",
-          filter: `family_id=eq.${session.family_id}`,
-        },
-        (payload) => {
-          const updated = payload.new as Message;
-          setMessages((prev) =>
-            prev.map((m) => (m.id === updated.id ? { ...m, ...updated } : m)),
-          );
+          if (!active) return;
+          const event = payload.new as MessageRealtimeEvent;
+          if (event.family_id !== session.family_id) return;
+          scheduleRealtimeBatchFetch(event.message_id);
         },
       )
       .subscribe((status) => {
         if (typeof window !== "undefined") {
           // eslint-disable-next-line no-console
-          console.log(`[realtime messages] ${status}`);
+          console.log(`[realtime message events] ${status}`);
+        }
+        if (
+          active &&
+          isRealtimeProblemStatus(status) &&
+          document.visibilityState === "visible"
+        ) {
+          syncMessages(session, { onMessages: handleSyncedMessages }).catch(
+            () => undefined,
+          );
+        }
+      });
+
+    const importantEventsChannel = sb
+      .channel(`important_notification_events:${session.family_id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "important_notification_realtime_events",
+          filter: `family_id=eq.${session.family_id}`,
+        },
+        (payload) => {
+          if (!active) return;
+          const event = payload.new as ImportantNotificationRealtimeEvent;
+          if (event.family_id !== session.family_id) return;
+          refreshImportantNotifications(session).catch(() => undefined);
+        },
+      )
+      .subscribe((status) => {
+        if (
+          active &&
+          isRealtimeProblemStatus(status) &&
+          document.visibilityState === "visible"
+        ) {
+          refreshImportantNotifications(session).catch(() => undefined);
         }
       });
 
@@ -257,7 +1093,8 @@ export default function ChatPage() {
           filter: `family_id=eq.${session.family_id}`,
         },
         (payload) => {
-          listMembers(session.family_id)
+          if (!active) return;
+          listMembers(session, { includeRemoved: true })
             .then(setMembers)
             .catch(() => undefined);
           // If my own row got flipped to status='removed', kick myself out.
@@ -269,50 +1106,163 @@ export default function ChatPage() {
             newRow.status === "removed"
           ) {
             clearSession();
-            alert("你已被移出该家庭");
+            toast.info(t("chatRemoved"));
             router.replace("/");
           }
         },
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (
+          active &&
+          isRealtimeProblemStatus(status) &&
+          document.visibilityState === "visible"
+        ) {
+          listMembers(session, { includeRemoved: true })
+            .then(setMembers)
+            .catch(() => undefined);
+        }
+      });
 
-    // Fallback: poll messages every 8s in case Realtime drops events or the
-    // table is not in the supabase_realtime publication. Optimistic dedup
-    // by id keeps this safe.
-    const interval = window.setInterval(() => {
+    const syncVisibleMessages = () => {
       if (document.visibilityState !== "visible") return;
-      listMessages(session.family_id)
-        .then((rows) => {
-          setMessages((prev) => {
-            const seen = new Set(prev.map((m) => m.id));
-            const merged = [...prev];
-            for (const r of rows) {
-              if (!seen.has(r.id)) merged.push(r);
-            }
-            merged.sort(
-              (a, b) =>
-                new Date(a.created_at).getTime() -
-                new Date(b.created_at).getTime(),
-            );
-            return merged;
-          });
+      syncMessages(session, { onMessages: handleSyncedMessages }).catch(
+        () => undefined,
+      );
+    };
+    const refreshVisibleImportantNotifications = () => {
+      if (document.visibilityState !== "visible") return;
+      refreshImportantNotifications(session).catch(() => undefined);
+    };
+
+    const messagePoll = window.setInterval(
+      syncVisibleMessages,
+      MESSAGE_FALLBACK_POLL_MS,
+    );
+    const importantPoll = window.setInterval(
+      refreshVisibleImportantNotifications,
+      IMPORTANT_FALLBACK_POLL_MS,
+    );
+
+    const metadataPoll = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      listMembers(session, { includeRemoved: true })
+        .then((mems) => {
+          setMembers(mems);
         })
         .catch(() => undefined);
-    }, 8000);
+    }, METADATA_FALLBACK_POLL_MS);
+
+    const pendingRealtimeMessageIds = pendingRealtimeMessageIdsRef.current;
 
     return () => {
-      sb.removeChannel(messagesChannel);
+      active = false;
+      sb.removeChannel(messageEventsChannel);
+      sb.removeChannel(importantEventsChannel);
       sb.removeChannel(membersChannel);
-      window.clearInterval(interval);
+      window.clearInterval(messagePoll);
+      window.clearInterval(importantPoll);
+      window.clearInterval(metadataPoll);
+      if (realtimeBatchTimerRef.current) {
+        window.clearTimeout(realtimeBatchTimerRef.current);
+        realtimeBatchTimerRef.current = null;
+      }
+      pendingRealtimeMessageIds.clear();
     };
-  }, [session, router]);
+  }, [
+    handleSyncedMessages,
+    refreshImportantNotifications,
+    realtimeConnected,
+    router,
+    scheduleRealtimeBatchFetch,
+    session,
+    t,
+    toast,
+  ]);
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    bottomScrollTimeoutsRef.current.forEach((id) => window.clearTimeout(id));
+    bottomScrollTimeoutsRef.current = [];
+
+    const primaryBehavior: ScrollBehavior =
+      isIOSRef.current && behavior === "smooth" ? "auto" : behavior;
+
+    const scroll = (mode: ScrollBehavior = "auto") => {
+      const scroller = scrollRef.current;
+      if (!scroller) return;
+      scroller.scrollTo({
+        top: scroller.scrollHeight,
+        behavior: mode,
+      });
+    };
+
+    requestAnimationFrame(() => {
+      scroll(primaryBehavior);
+      requestAnimationFrame(() => scroll("auto"));
+    });
+    [180, 520].forEach((delay) => {
+      const id = window.setTimeout(() => scroll("auto"), delay);
+      bottomScrollTimeoutsRef.current.push(id);
+    });
+  }, []);
 
   // Auto scroll to bottom on new messages.
+  useLayoutEffect(() => {
+    if (loading || messages.length === 0) return;
+    const preserve = preserveScrollRef.current;
+    if (preserve) {
+      preserveScrollRef.current = null;
+      const scroller = scrollRef.current;
+      if (scroller) {
+        scroller.scrollTop =
+          scroller.scrollHeight - preserve.scrollHeight + preserve.scrollTop;
+      }
+      didInitialScrollRef.current = true;
+      return;
+    }
+    const shouldScrollImmediately =
+      !didInitialScrollRef.current ||
+      forceImmediateBottomScrollRef.current ||
+      isIOSRef.current;
+    scrollToBottom(shouldScrollImmediately ? "auto" : "smooth");
+    forceImmediateBottomScrollRef.current = false;
+    didInitialScrollRef.current = true;
+  }, [loading, messages.length, scrollToBottom]);
+
   useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, [messages.length]);
+    if (loading || messages.length === 0) return;
+    const content = messagesContentRef.current;
+    if (!content || typeof ResizeObserver === "undefined") return;
+
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        if (Date.now() < suppressBottomScrollUntilRef.current) return;
+        scrollToBottom("auto");
+      });
+    });
+
+    observer.observe(content);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, [loading, messages.length, scrollToBottom]);
+
+  // Scroll to the message targeted by a notification click (?mid=xxx).
+  const hasScrolledToNotifiedRef = useRef(false);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const mid = params.get("mid");
+    if (!mid || hasScrolledToNotifiedRef.current) return;
+    if (messages.some((m) => m.id === mid)) {
+      hasScrolledToNotifiedRef.current = true;
+      window.setTimeout(() => scrollToMessage(mid), 300);
+      return;
+    }
+    fetchPushMessageNow(mid, true).catch(() => undefined);
+  }, [fetchPushMessageNow, messages, scrollToMessage]);
 
   const memberMap = useMemo(() => {
     const m = new Map<string, FamilyMember>();
@@ -320,61 +1270,298 @@ export default function ChatPage() {
     return m;
   }, [members]);
 
+  const whisperTarget = useMemo(() => {
+    if (!whisperTargetId) return null;
+    const target = memberMap.get(whisperTargetId) ?? null;
+    if (!target || target.status !== "active" || target.id === session?.member_id) {
+      return null;
+    }
+    return target;
+  }, [memberMap, session?.member_id, whisperTargetId]);
+
+  useEffect(() => {
+    if (!session || members.length === 0 || typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    const targetId = url.searchParams.get("whisper");
+    if (!targetId) {
+      setWhisperTargetId(null);
+      return;
+    }
+
+    const target = members.find(
+      (member) =>
+        member.id === targetId &&
+        member.status === "active" &&
+        member.id !== session.member_id,
+    );
+    if (!target) {
+      setWhisperTargetId(null);
+      removeWhisperParamFromUrl();
+      toast.info(t("whisperTargetUnavailable"));
+      return;
+    }
+
+    setWhisperTargetId(target.id);
+  }, [members, session, t, toast]);
+
+  function exitWhisperMode() {
+    setWhisperTargetId(null);
+    removeWhisperParamFromUrl();
+  }
+
+  function enterWhisperMode(memberId: string) {
+    if (!session) return;
+    const target = members.find(
+      (member) =>
+        member.id === memberId &&
+        member.status === "active" &&
+        member.id !== session.member_id,
+    );
+    if (!target) {
+      setWhisperTargetId(null);
+      removeWhisperParamFromUrl();
+      toast.info(t("whisperTargetUnavailable"));
+      return;
+    }
+
+    setWhisperTargetId(target.id);
+    setWhisperParamInUrl(target.id);
+  }
+
+  const importantByMessageId = useMemo(() => {
+    const m = new Map<string, ImportantNotification>();
+    importantNotifications.forEach((notification) => {
+      if (!notification.removed_at && !notification.message?.recipient_member_id) {
+        m.set(notification.message_id, notification);
+      }
+    });
+    return m;
+  }, [importantNotifications]);
+
+  const visibleImportantNotifications = useMemo(
+    () =>
+      importantNotifications.filter(
+        (notification) =>
+          !notification.removed_at &&
+          !notification.message?.recipient_member_id &&
+          !dismissedImportantIds.has(notification.id),
+      ),
+    [dismissedImportantIds, importantNotifications],
+  );
+
+  const visibleImportantByMessageId = useMemo(() => {
+    const m = new Map<string, ImportantNotification>();
+    visibleImportantNotifications.forEach((notification) => {
+      m.set(notification.message_id, notification);
+    });
+    return m;
+  }, [visibleImportantNotifications]);
+
+  const selectedActionMessage = messageActionMenu
+    ? messages.find((m) => m.id === messageActionMenu.messageId) ?? null
+    : null;
+  const selectedActionNotification = selectedActionMessage
+    ? visibleImportantByMessageId.get(selectedActionMessage.id) ?? null
+    : null;
+
   function pushOptimistic(
     partial: Pick<Message, "id" | "message_type"> & Partial<Message>,
   ) {
     if (!session) return;
+    forceImmediateBottomScrollRef.current = true;
+    const now = new Date().toISOString();
+    const optimistic: Message = {
+      id: partial.id,
+      family_id: session.family_id,
+      family_seq: partial.family_seq ?? null,
+      sender_member_id: session.member_id,
+      recipient_member_id: partial.recipient_member_id ?? null,
+      message_type: partial.message_type,
+      content: partial.content ?? null,
+      image_url: partial.image_url ?? null,
+      audio_url: partial.audio_url ?? null,
+      audio_duration_ms: partial.audio_duration_ms ?? null,
+      latitude: partial.latitude ?? null,
+      longitude: partial.longitude ?? null,
+      address: partial.address ?? null,
+      map_url: partial.map_url ?? null,
+      effect_id: partial.effect_id ?? null,
+      effect_caption: partial.effect_caption ?? null,
+      system_event_type: null,
+      system_event_payload: null,
+      deleted_at: null,
+      deleted_by_member_id: null,
+      updated_at: now,
+      created_at: now,
+    };
     setMessages((prev) => {
       if (prev.some((m) => m.id === partial.id)) return prev;
-      const optimistic: Message = {
-        id: partial.id,
-        family_id: session.family_id,
-        sender_member_id: session.member_id,
-        message_type: partial.message_type,
-        content: partial.content ?? null,
-        image_url: partial.image_url ?? null,
-        audio_url: partial.audio_url ?? null,
-        audio_duration_ms: partial.audio_duration_ms ?? null,
-        latitude: partial.latitude ?? null,
-        longitude: partial.longitude ?? null,
-        address: partial.address ?? null,
-        map_url: partial.map_url ?? null,
-        effect_id: partial.effect_id ?? null,
-        effect_caption: partial.effect_caption ?? null,
-        deleted_at: null,
-        deleted_by_member_id: null,
-        created_at: new Date().toISOString(),
-      };
       return [...prev, optimistic];
     });
+    mergeRealtimeMessage(session, optimistic)
+      .then(setMessages)
+      .catch(() => undefined);
+    scrollToBottom("auto");
   }
 
   async function handleDeleteMessage(messageId: string) {
     if (!session) return;
-    const ok = window.confirm("删除这条消息？所有家人将看到「消息已撤回」。");
+    const ok = await dialog.confirm({
+      title: t("importantRecallMessage"),
+      message: t("chatDeleteConfirm"),
+    });
     if (!ok) return;
     try {
       await deleteMessage(session, messageId);
+      const updatedAt = new Date().toISOString();
+      const current = messages.find((m) => m.id === messageId);
+      const patched: Message | null = current
+        ? {
+            ...current,
+            deleted_at: updatedAt,
+            deleted_by_member_id: session.member_id,
+            updated_at: updatedAt,
+          }
+        : null;
       setMessages((prev) =>
-        prev.map((m) =>
-          m.id === messageId
-            ? { ...m, deleted_at: new Date().toISOString(), deleted_by_member_id: session.member_id }
-            : m,
-        ),
+        prev.map((m) => {
+          if (m.id !== messageId || !patched) return m;
+          return patched;
+        }),
       );
+      if (patched) {
+        mergeRealtimeMessage(session, patched)
+          .then(setMessages)
+          .catch(() => undefined);
+      }
     } catch (err) {
-      alert(humanizeError(err));
+      toast.error(humanizeError(err, language));
     }
   }
 
-  function tryTriggerEffect(messageId: string, eff: Effect | null) {
-    if (!eff) return;
-    if (triggeredEffectIdsRef.current.has(messageId)) return;
-    triggeredEffectIdsRef.current.add(messageId);
-    // Unique key per trigger forces React to unmount the previous overlay
-    // so the CSS keyframes restart from 0 — otherwise the second hit would
-    // reuse particles that have already animated off-screen.
-    setEffectShow({ effect: eff, key: `${messageId}-${Date.now()}` });
+  function openMessageActions(
+    message: Message,
+    point: { x: number; y: number },
+  ) {
+    if (!session) return;
+    const menuWidth = 180;
+    const menuHeight = 200;
+    const x =
+      typeof window === "undefined"
+        ? point.x
+        : Math.min(Math.max(8, point.x), window.innerWidth - menuWidth - 8);
+    const y =
+      typeof window === "undefined"
+        ? point.y
+        : Math.min(Math.max(8, point.y), window.innerHeight - menuHeight - 8);
+    setMessageActionMenu({ messageId: message.id, x, y });
+  }
+
+  async function handleSetMessageImageBackground(message: Message) {
+    if (!session || !message.image_url) return;
+    setMessageActionMenu(null);
+    const ok = await dialog.confirm({
+      title: t("previewSetBackground"),
+      message: t("previewSetBackgroundConfirm"),
+    });
+    if (!ok) return;
+    setChatBackground(session.family_id, message.image_url);
+    toast.success(t("previewBackgroundSet"));
+  }
+
+  async function handleAddImportant(messageId: string) {
+    if (!session) return;
+    setMessageActionMenu(null);
+    try {
+      const notificationId = await addImportantNotification(session, messageId);
+      setDismissedImportantIds((prev) => {
+        if (!prev.has(notificationId)) return prev;
+        const next = new Set(prev);
+        next.delete(notificationId);
+        saveDismissedImportantIds(session.family_id, session.member_id, next);
+        return next;
+      });
+      await refreshImportantNotifications(session);
+    } catch (err) {
+      toast.error(
+        t("importantSetFailed", {
+          message: humanizeError(err, language),
+        }),
+      );
+    }
+  }
+
+  async function handleRemoveImportant(notificationId: string) {
+    if (!session) return;
+    setMessageActionMenu(null);
+    try {
+      await removeImportantNotification(session, notificationId);
+      await refreshImportantNotifications(session);
+      setDismissedImportantIds((prev) => {
+        const next = new Set(prev);
+        next.delete(notificationId);
+        saveDismissedImportantIds(session.family_id, session.member_id, next);
+        return next;
+      });
+    } catch (err) {
+      toast.error(
+        t("importantRemoveFailed", {
+          message: humanizeError(err, language),
+        }),
+      );
+    }
+  }
+
+  function handleMessagesTouchStart(e: React.TouchEvent<HTMLDivElement>) {
+    const scroller = scrollRef.current;
+    if (!scroller || scroller.scrollTop > 4) {
+      pullStartYRef.current = null;
+      return;
+    }
+    pullStartYRef.current = e.touches[0]?.clientY ?? null;
+  }
+
+  function handleMessagesTouchEnd(e: React.TouchEvent<HTMLDivElement>) {
+    const startY = pullStartYRef.current;
+    pullStartYRef.current = null;
+    if (startY == null) return;
+    const endY = e.changedTouches[0]?.clientY ?? startY;
+    if (endY - startY > 72) {
+      void refreshChatData(true);
+    }
+  }
+
+  function handleMessagesScroll() {
+    const scroller = scrollRef.current;
+    if (!scroller || scroller.scrollTop > 32) return;
+    void loadOlderCachedMessages();
+  }
+
+  function handleSelectImportant(notification: ImportantNotification) {
+    if (!session) return;
+    const next = dismissImportantNotification(
+      session.family_id,
+      session.member_id,
+      notification.id,
+    );
+    setDismissedImportantIds(next);
+
+    if (notification.message && !messages.some((m) => m.id === notification.message_id)) {
+      mergeRealtimeMessage(session, notification.message as Message)
+        .then(setMessages)
+        .catch(() => undefined);
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === notification.message_id)) return prev;
+        return [...prev, notification.message as Message].sort(
+          (a, b) =>
+            new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+        );
+      });
+      window.setTimeout(() => scrollToMessage(notification.message_id), 60);
+      return;
+    }
+
+    scrollToMessage(notification.message_id);
   }
 
   async function handleSendText(text: string) {
@@ -387,6 +1574,7 @@ export default function ChatPage() {
         content,
         effect_id: eff?.id ?? null,
         effect_caption: eff?.caption ?? null,
+        recipient_member_id: whisperTarget?.id ?? null,
       });
       pushOptimistic({
         id,
@@ -394,10 +1582,12 @@ export default function ChatPage() {
         content,
         effect_id: eff?.id ?? null,
         effect_caption: eff?.caption ?? null,
+        recipient_member_id: whisperTarget?.id ?? null,
       });
+      requestMessagePush(session, id);
       tryTriggerEffect(id, eff);
     } catch (err) {
-      alert(humanizeError(err));
+      toast.error(humanizeError(err, language));
     } finally {
       setSending(false);
     }
@@ -405,26 +1595,25 @@ export default function ChatPage() {
 
   async function handlePickImage(file: File) {
     if (!session) return;
-    if (file.size > 8 * 1024 * 1024) {
-      alert("图片不能超过 8MB");
-      return;
-    }
     setSending(true);
     try {
-      const url = await uploadChatImage(session.family_id, file);
+      const url = await uploadChatImage(session, file);
       const id = await sendMessage(session, {
         type: "image",
         image_url: url,
-        content: "图片消息",
+        content: t("chatImageMessage"),
+        recipient_member_id: whisperTarget?.id ?? null,
       });
       pushOptimistic({
         id,
         message_type: "image",
         image_url: url,
-        content: "图片消息",
+        content: t("chatImageMessage"),
+        recipient_member_id: whisperTarget?.id ?? null,
       });
+      requestMessagePush(session, id);
     } catch (err) {
-      alert(humanizeError(err));
+      toast.error(humanizeError(err, language));
     } finally {
       setSending(false);
     }
@@ -432,14 +1621,13 @@ export default function ChatPage() {
 
   async function handleSendAudio(result: RecordingResult) {
     if (!session) return;
-    if (result.blob.size > 12 * 1024 * 1024) {
-      alert("语音文件太大");
-      return;
+    if (result.blob.size > 2 * 1024 * 1024) {
+      throw new Error("audio_too_large");
     }
     setSending(true);
     try {
       const url = await uploadChatAudio(
-        session.family_id,
+        session,
         result.blob,
         result.mimeType,
       );
@@ -447,17 +1635,18 @@ export default function ChatPage() {
         type: "audio",
         audio_url: url,
         audio_duration_ms: result.durationMs,
-        content: "语音消息",
+        content: t("chatAudioMessage"),
+        recipient_member_id: whisperTarget?.id ?? null,
       });
       pushOptimistic({
         id,
         message_type: "audio",
         audio_url: url,
         audio_duration_ms: result.durationMs,
-        content: "语音消息",
+        content: t("chatAudioMessage"),
+        recipient_member_id: whisperTarget?.id ?? null,
       });
-    } catch (err) {
-      alert(humanizeError(err));
+      requestMessagePush(session, id);
     } finally {
       setSending(false);
     }
@@ -471,21 +1660,24 @@ export default function ChatPage() {
       const mapUrl = createGoogleMapUrl(fix.latitude, fix.longitude);
       const id = await sendMessage(session, {
         type: "location",
-        content: "发送了当前位置",
+        content: t("chatLocationMessage"),
         latitude: fix.latitude,
         longitude: fix.longitude,
         map_url: mapUrl,
+        recipient_member_id: whisperTarget?.id ?? null,
       });
       pushOptimistic({
         id,
         message_type: "location",
-        content: "发送了当前位置",
+        content: t("chatLocationMessage"),
         latitude: fix.latitude,
         longitude: fix.longitude,
         map_url: mapUrl,
+        recipient_member_id: whisperTarget?.id ?? null,
       });
+      requestMessagePush(session, id);
     } catch (err) {
-      alert(humanizeError(err) || "无法获取位置，请确认浏览器定位权限已开启");
+      toast.error(humanizeError(err, language) || t("chatLocationError"));
     } finally {
       setSending(false);
     }
@@ -502,7 +1694,41 @@ export default function ChatPage() {
   if (loading) {
     return (
       <div className="flex flex-1 items-center justify-center text-slate-500">
-        加载中…
+        {t("commonLoading")}
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="flex flex-1 items-center justify-center px-5 py-8">
+        <div className="card w-full max-w-md text-center">
+          <h1 className="text-lg font-bold text-slate-900">
+            {t("chatLoadFailedTitle")}
+          </h1>
+          <p className="mt-2 text-sm leading-relaxed text-slate-500">
+            {loadError}
+          </p>
+          <div className="mt-5 grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => setRetryNonce((value) => value + 1)}
+            >
+              {t("chatRetry")}
+            </button>
+            <button
+              type="button"
+              className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-600 shadow-sm transition hover:bg-slate-50"
+              onClick={() => {
+                clearSession();
+                router.replace("/");
+              }}
+            >
+              {t("chatBackHome")}
+            </button>
+          </div>
+        </div>
       </div>
     );
   }
@@ -512,7 +1738,10 @@ export default function ChatPage() {
   }
 
   return (
-    <div className="flex h-[100dvh] flex-col">
+    <div
+      className="flex overflow-hidden flex-col"
+      style={{ height: "var(--chat-viewport-height, 100dvh)" }}
+    >
       {effectShow ? (
         <EffectOverlay
           key={effectShow.key}
@@ -520,78 +1749,238 @@ export default function ChatPage() {
           onDone={handleEffectDone}
         />
       ) : null}
-      <header className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3">
-        <div>
-          <div className="text-sm text-slate-500">家庭</div>
-          <div className="text-base font-semibold">{session.family_name}</div>
+      {messageActionMenu && selectedActionMessage ? (
+        <>
+          <button
+            type="button"
+            aria-label={t("commonCancel")}
+            className="fixed inset-0 z-40 cursor-default bg-transparent"
+            onClick={() => setMessageActionMenu(null)}
+          />
+          <div
+            className="fixed z-50 min-w-44 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 text-sm shadow-xl"
+            style={{ left: messageActionMenu.x, top: messageActionMenu.y }}
+          >
+            {selectedActionMessage.recipient_member_id ? null : selectedActionNotification ? (
+              <button
+                type="button"
+                className="block w-full px-4 py-2 text-left text-slate-700 hover:bg-slate-50"
+                onClick={() => handleRemoveImportant(selectedActionNotification.id)}
+              >
+                {t("importantUnset")}
+              </button>
+            ) : !selectedActionMessage.deleted_at ? (
+              <button
+                type="button"
+                className="block w-full px-4 py-2 text-left text-slate-700 hover:bg-slate-50"
+                onClick={() => handleAddImportant(selectedActionMessage.id)}
+              >
+                {t("importantSet")}
+              </button>
+            ) : null}
+            {selectedActionMessage.message_type === "image" &&
+            selectedActionMessage.image_url &&
+            !selectedActionMessage.deleted_at ? (
+              <button
+                type="button"
+                className="block w-full px-4 py-2 text-left text-slate-700 hover:bg-slate-50"
+                onClick={() => handleSetMessageImageBackground(selectedActionMessage)}
+              >
+                {t("previewSetBackground")}
+              </button>
+            ) : null}
+            {selectedActionMessage.message_type !== "system" &&
+            !selectedActionMessage.deleted_at &&
+            (selectedActionMessage.sender_member_id === session.member_id ||
+              (!selectedActionMessage.recipient_member_id && session.is_admin)) ? (
+              <button
+                type="button"
+                className="block w-full px-4 py-2 text-left text-rose-600 hover:bg-rose-50"
+                onClick={() => {
+                  setMessageActionMenu(null);
+                  void handleDeleteMessage(selectedActionMessage.id);
+                }}
+              >
+                {t("importantRecallMessage")}
+              </button>
+            ) : null}
+          </div>
+        </>
+      ) : null}
+      <header
+        className="flex min-h-14 items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 py-2 sm:px-5"
+        onDoubleClick={handleHeaderDoubleClick}
+        onTouchEnd={handleHeaderTouchEnd}
+      >
+        <div className="min-w-0">
+          <div className="text-[12px] leading-4 text-slate-500">{t("chatFamily")}</div>
+          <div className="truncate text-lg font-bold leading-6 text-slate-900">
+            {session.family_name}
+          </div>
         </div>
-        <div className="flex items-center gap-1">
-          {notifPerm !== "unsupported" ? (
-            <button
-              type="button"
-              className="btn-ghost h-9 px-2 text-base"
-              aria-label={
-                notifPerm === "granted" ? "已开启系统通知" : "开启系统通知"
-              }
-              title={
-                notifPerm === "granted"
-                  ? "已开启系统通知"
-                  : notifPerm === "denied"
-                    ? "通知被拒绝，请在浏览器设置中允许"
-                    : "开启系统通知"
-              }
-              onClick={handleEnableNotifications}
-            >
-              {notifPerm === "granted" ? "🔔" : "🔕"}
-            </button>
-          ) : null}
-          <Link href="/members" className="btn-ghost h-9 px-3 text-sm">
-            成员
-          </Link>
-          <Link href="/settings" className="btn-ghost h-9 px-3 text-sm">
-            设置
-          </Link>
+        <div className="flex shrink-0 items-center gap-1 sm:gap-2">
+          <button
+            type="button"
+            className="inline-flex h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-cover bg-center bg-no-repeat shadow-sm ring-1 ring-slate-200/70 transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+            style={{
+              backgroundImage: `url(${
+                push.enabled ? "/ui-icons/notify-on.png" : "/ui-icons/notify-off.png"
+              })`,
+            }}
+            aria-label={push.enabled ? t("chatNotifyOff") : t("chatNotifyOn")}
+            title={
+              push.enabled
+                ? t("chatNotifyOff")
+                : push.support?.permission === "denied"
+                  ? t("chatNotifyDenied")
+                  : t("chatNotifyOn")
+            }
+            disabled={push.busy}
+            onClick={handleToggleNotifications}
+          />
+          <Link
+            href="/schedule"
+            className="inline-flex h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-cover bg-center bg-no-repeat shadow-sm ring-1 ring-slate-200/70 transition hover:brightness-95 active:brightness-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+            style={{ backgroundImage: "url(/ui-icons/schedule.png)" }}
+            aria-label={t("scheduleTitle")}
+            title={t("scheduleTitle")}
+          />
+          <Link
+            href="/me"
+            className="inline-flex h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-cover bg-center bg-no-repeat shadow-sm ring-1 ring-slate-200/70 transition hover:brightness-95 active:brightness-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+            style={{ backgroundImage: "url(/ui-icons/me.png)" }}
+            aria-label={t("meTitle")}
+            title={t("meTitle")}
+          />
+          <Link
+            href="/members"
+            className="inline-flex h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-cover bg-center bg-no-repeat shadow-sm ring-1 ring-slate-200/70 transition hover:brightness-95 active:brightness-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+            style={{ backgroundImage: "url(/ui-icons/members.png)" }}
+            aria-label={t("chatMembers")}
+            title={t("chatMembers")}
+          />
+          <Link
+            href="/settings"
+            className="inline-flex h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-cover bg-center bg-no-repeat shadow-sm ring-1 ring-slate-200/70 transition hover:brightness-95 active:brightness-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+            style={{ backgroundImage: "url(/ui-icons/settings.png)" }}
+            aria-label={t("chatSettings")}
+            title={t("chatSettings")}
+          />
         </div>
       </header>
 
       {error ? (
-        <div className="border-b border-rose-100 bg-rose-50 px-4 py-2 text-sm text-rose-700">
+        <div className="border-b border-rose-100 bg-rose-50 px-4 py-2 text-sm leading-6 text-rose-700">
           {error}
         </div>
       ) : null}
+      <ImportantNoticeBar
+        notifications={visibleImportantNotifications}
+        members={memberMap}
+        onSelect={handleSelectImportant}
+        onRemove={(notification) => handleRemoveImportant(notification.id)}
+      />
 
       <div
         ref={scrollRef}
-        className="flex-1 min-h-0 space-y-4 overflow-y-auto overscroll-contain bg-slate-50 px-3 py-4 sm:px-5"
+        onScroll={handleMessagesScroll}
+        onTouchStart={handleMessagesTouchStart}
+        onTouchEnd={handleMessagesTouchEnd}
+        className="no-scrollbar flex-1 min-h-0 overflow-y-auto overscroll-contain bg-slate-50 bg-cover bg-center bg-no-repeat px-3 pt-4 sm:px-5"
+        style={{
+          ...(chatBackgroundUrl
+            ? {
+                backgroundImage: `linear-gradient(rgba(248, 250, 252, 0.82), rgba(248, 250, 252, 0.82)), url("${chatBackgroundUrl}")`,
+              }
+            : {}),
+        }}
       >
-        {messages.length === 0 ? (
-          <div className="py-10 text-center text-sm text-slate-400">
-            还没有消息，发个招呼吧 👋
-          </div>
-        ) : (
-          messages.map((m) => {
-            const isMine = m.sender_member_id === session.member_id;
-            const canDelete =
-              m.message_type !== "system" &&
-              !m.deleted_at &&
-              (isMine || session.is_admin);
-            return (
-              <ChatMessage
-                key={m.id}
-                message={m}
-                sender={
-                  m.sender_member_id
-                    ? memberMap.get(m.sender_member_id) ?? null
-                    : null
-                }
-                isMine={isMine}
-                canDelete={canDelete}
-                onRequestDelete={canDelete ? handleDeleteMessage : undefined}
-              />
-            );
-          })
-        )}
+        <div ref={messagesContentRef} className="space-y-4">
+          {loadingOlderMessages ? (
+            <div className="flex justify-center pb-1">
+              <span className="h-1.5 w-10 rounded-full bg-slate-300/80" />
+            </div>
+          ) : null}
+          {messages.length === 0 ? (
+            <div className="py-10 text-center text-sm text-slate-400">
+              {t("chatEmpty")}
+            </div>
+          ) : (
+            messages.map((m) => {
+              const isMine = m.sender_member_id === session.member_id;
+              const canOpenActions = !m.deleted_at || importantByMessageId.has(m.id);
+              return (
+                <div
+                  key={m.id}
+                  ref={(el) => {
+                    if (el) {
+                      messageRefs.current.set(m.id, el);
+                    } else {
+                      messageRefs.current.delete(m.id);
+                    }
+                  }}
+                  className="scroll-mb-28 rounded-3xl"
+                  style={{
+                    scrollMarginBottom:
+                      "calc(104px + env(safe-area-inset-bottom))",
+                  }}
+                >
+                  <ChatMessage
+                    message={m}
+                    sender={
+                      m.sender_member_id
+                        ? memberMap.get(m.sender_member_id) ?? null
+                        : null
+                    }
+                    recipient={
+                      m.recipient_member_id
+                        ? memberMap.get(m.recipient_member_id) ?? null
+                        : null
+                    }
+                    isMine={isMine}
+                    highlighted={highlightedMessageId === m.id}
+                    onRequestActions={canOpenActions ? openMessageActions : undefined}
+                    onReplayEffect={handleReplayEffect}
+                  />
+                </div>
+              );
+            })
+          )}
+          <div
+            ref={messagesEndRef}
+            aria-hidden
+            style={{
+              height: `calc(${whisperTarget ? 140 : 96}px + env(safe-area-inset-bottom))`,
+            }}
+          />
+        </div>
       </div>
+
+      {whisperTarget ? (
+        <div
+          className="fixed inset-x-0 z-40 mx-auto flex h-10 w-full max-w-3xl items-center justify-between gap-2 border-t border-violet-100 bg-violet-50/95 px-3 text-sm text-violet-800 shadow-sm backdrop-blur sm:px-4"
+          style={{ bottom: "calc(61px + env(safe-area-inset-bottom))" }}
+        >
+          <div className="flex min-w-0 items-center gap-2">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/ui-icons/whisper-lock.png"
+              alt=""
+              className="h-5 w-5 shrink-0 rounded-md"
+            />
+            <span className="truncate font-semibold">
+              {t("whisperModeLabel", { nickname: whisperTarget.nickname })}
+            </span>
+          </div>
+          <button
+            type="button"
+            className="shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold text-violet-700 transition hover:bg-violet-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-200"
+            onClick={exitWhisperMode}
+          >
+            {t("whisperExit")}
+          </button>
+        </div>
+      ) : null}
 
       <ChatInput
         sending={sending}
@@ -599,6 +1988,10 @@ export default function ChatPage() {
         onPickImage={handlePickImage}
         onSendLocation={handleSendLocation}
         onSendAudio={handleSendAudio}
+        members={members}
+        currentMemberId={session.member_id}
+        whisperTargetId={whisperTarget?.id ?? null}
+        onSelectWhisper={enterWhisperMode}
       />
     </div>
   );

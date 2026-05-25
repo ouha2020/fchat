@@ -1,13 +1,29 @@
 "use client";
 
+import Image from "next/image";
+
 import { ROLE_OPTIONS, type FamilyRole } from "@/types/family";
+import { useLanguage } from "@/components/LanguageProvider";
 
 interface Props {
   value: FamilyRole | null;
   onChange: (role: FamilyRole) => void;
 }
 
+const ROLE_ICONS: Record<FamilyRole, string> = {
+  father: "/ui-icons/role-father.png",
+  mother: "/ui-icons/role-mother.png",
+  child: "/ui-icons/role-child.png",
+};
+
+const ROLE_KEYS: Record<FamilyRole, "roleFather" | "roleMother" | "roleChild"> = {
+  father: "roleFather",
+  mother: "roleMother",
+  child: "roleChild",
+};
+
 export default function RoleSelect({ value, onChange }: Props) {
+  const { t } = useLanguage();
   return (
     <div className="grid grid-cols-3 gap-3">
       {ROLE_OPTIONS.map((opt) => {
@@ -23,8 +39,14 @@ export default function RoleSelect({ value, onChange }: Props) {
                 : "border-slate-200 bg-white text-slate-700 hover:border-brand-200"
             }`}
           >
-            <span className="text-2xl">{opt.emoji}</span>
-            <span className="text-sm font-medium">{opt.label}</span>
+            <Image
+              src={ROLE_ICONS[opt.value]}
+              alt=""
+              width={56}
+              height={56}
+              className="h-14 w-14 object-contain"
+            />
+            <span className="text-sm font-medium">{t(ROLE_KEYS[opt.value])}</span>
           </button>
         );
       })}

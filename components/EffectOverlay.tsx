@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef } from "react";
 
+import { useLanguage } from "@/components/LanguageProvider";
 import type { Effect, EffectId } from "@/lib/effects";
 
 interface VisualConfig {
@@ -81,6 +82,7 @@ export default function EffectOverlay({
   effect: Effect;
   onDone: () => void;
 }) {
+  const { t } = useLanguage();
   const cfg = VISUALS[effect.id];
 
   const particles = useMemo<Particle[]>(() => {
@@ -114,7 +116,7 @@ export default function EffectOverlay({
     <button
       type="button"
       onClick={onDone}
-      aria-label="关闭动画"
+      aria-label={t("effectCloseAnimation")}
       className={`fixed inset-0 z-[60] flex items-center justify-center overflow-hidden ${cfg.background} backdrop-blur-[2px] transition-opacity`}
     >
       {particles.map((p) => (

@@ -5,8 +5,10 @@ import { getSupabase } from "@/lib/supabaseClient";
 import { uuidSchema } from "@/lib/validation";
 import type {
   CreateScheduleItemInput,
+  CreateScheduleContextEventInput,
   ScheduleAssigneeResponseStatus,
   ScheduleCollaboration,
+  ScheduleContextEvent,
   ScheduleRecurrenceScope,
   ScheduleRecurrenceRule,
   ScheduleReminderHealth,
@@ -244,6 +246,77 @@ export async function getScheduleCollaboration(
   });
   if (error) throw error;
   return normalizeCollaboration(data);
+}
+
+export async function listScheduleContextEvents(
+  session: LocalSession,
+  scheduleItemId: string,
+): Promise<ScheduleContextEvent[]> {
+  uuidSchema.parse(scheduleItemId);
+  const sb = getSupabase();
+  const { data, error } = await sb.rpc("list_schedule_context_events_for_member", {
+    p_member_id: session.member_id,
+    p_member_token: session.member_token,
+    p_schedule_item_id: scheduleItemId,
+  });
+  if (error) throw error;
+  return Array.isArray(data) ? (data as ScheduleContextEvent[]) : [];
+}
+
+export async function createScheduleContextEvent(
+  session: LocalSession,
+  input: CreateScheduleContextEventInput,
+): Promise<string> {
+  uuidSchema.parse(input.schedule_item_id);
+  if (!["text", "audio", "location"].includes(input.event_type)) {
+    throw new Error("invalid_schedule_context_event_type");
+  }
+  if (input.visibility !== "family" && input.visibility !== "private") {
+    throw new Error("invalid_schedule_context_visibility");
+  }
+  const text = input.text_content?.trim() ?? null;
+  if (input.event_type === "text") {
+    if (!text) throw new Error("schedule_context_text_required");
+    if (text.length > 300) throw new Error("schedule_context_text_too_long");
+  }
+  if (input.visibility === "private") {
+    if (!input.recipient_member_id) {
+      throw new Error("schedule_context_recipient_required");
+    }
+    uuidSchema.parse(input.recipient_member_id);
+  }
+
+  const sb = getSupabase();
+  const { data, error } = await sb.rpc("create_schedule_context_event", {
+    p_member_id: session.member_id,
+    p_member_token: session.member_token,
+    p_schedule_item_id: input.schedule_item_id,
+    p_event_type: input.event_type,
+    p_text_content: text,
+    p_visibility: input.visibility,
+    p_recipient_member_id: input.recipient_member_id ?? null,
+    p_audio_url: input.audio_url ?? null,
+    p_audio_duration_ms: input.audio_duration_ms ?? null,
+    p_latitude: input.latitude ?? null,
+    p_longitude: input.longitude ?? null,
+    p_location_label: input.location_label ?? null,
+  });
+  if (error) throw error;
+  return data as string;
+}
+
+export async function deleteScheduleContextEvent(
+  session: LocalSession,
+  eventId: string,
+): Promise<void> {
+  uuidSchema.parse(eventId);
+  const sb = getSupabase();
+  const { error } = await sb.rpc("delete_schedule_context_event", {
+    p_member_id: session.member_id,
+    p_member_token: session.member_token,
+    p_event_id: eventId,
+  });
+  if (error) throw error;
 }
 
 export async function getScheduleReminderStatus(

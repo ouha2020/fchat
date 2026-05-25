@@ -3,7 +3,6 @@
 -- new browser/device and no longer has the local token for that nickname.
 
 drop function if exists rejoin_family_member(text, text, text);
-
 create or replace function rejoin_family_member(
   p_family_code text,
   p_nickname text,

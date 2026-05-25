@@ -36,6 +36,13 @@ export async function GET(request: Request) {
       sb.rpc("schema_health_ping"),
     ]);
 
+    const environment = {
+      systemHealthSecretConfigured: Boolean(process.env.SYSTEM_HEALTH_SECRET),
+      pushFlushSecretConfigured: Boolean(process.env.PUSH_FLUSH_SECRET),
+      scheduleReminderSecretConfigured: Boolean(process.env.SCHEDULE_REMINDER_SECRET),
+      cronSecretConfigured: Boolean(process.env.CRON_SECRET),
+    };
+
     if (catalogError) {
       const missingCatalogRpc = /get_system_health_catalog|schema cache|function/i.test(
         catalogError.message,
@@ -55,11 +62,11 @@ export async function GET(request: Request) {
                 status: "fail",
                 severity: "critical",
                 message: missingCatalogRpc
-                  ? "Production database is missing the health catalog RPC, or Supabase schema cache has not refreshed."
+                  ? "生产库缺少健康检查 catalog RPC，或 Supabase schema cache 还没有刷新。"
                   : catalogError.message,
-                impact: "Cannot inspect production schema or migration state.",
+                impact: "无法检查生产库 schema、migration、Realtime、Storage 和 trigger 状态。",
                 suggestedFix:
-                  "Run migration 20260523_app_schema_health.sql, then wait for Supabase schema cache refresh.",
+                  "先执行 app_schema_health / system_health_consistency_checks migration，再等待 Supabase schema cache 刷新。",
                 migrationName: "app_schema_health",
               },
             ],
@@ -69,7 +76,9 @@ export async function GET(request: Request) {
     }
 
     const schemaCacheError = ping.error ? ping.error.message : null;
-    return NextResponse.json(buildSystemHealthReport(catalog ?? {}, schemaCacheError));
+    return NextResponse.json(
+      buildSystemHealthReport(catalog ?? {}, schemaCacheError, environment),
+    );
   } catch (error) {
     await auditSecurityEvent(request, {
       action: "system_health.denied",

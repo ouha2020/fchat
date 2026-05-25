@@ -99,6 +99,56 @@ export interface ScheduleCollaboration {
   assignee_response: ScheduleAssigneeResponse;
 }
 
+export type ScheduleContextEventType =
+  | "text"
+  | "audio"
+  | "location"
+  | "system"
+  | "created"
+  | "updated"
+  | "assigned"
+  | "accepted"
+  | "declined"
+  | "completed"
+  | "restored"
+  | "deleted"
+  | "reminder_updated";
+
+export type ScheduleContextVisibility = "family" | "private";
+
+export interface ScheduleContextEvent {
+  id: string;
+  family_id: string;
+  schedule_item_id: string;
+  sender_type: "member" | "keeper" | "system";
+  sender_member_id: string | null;
+  sender_nickname: string | null;
+  recipient_member_id: string | null;
+  recipient_nickname: string | null;
+  event_type: ScheduleContextEventType;
+  visibility: ScheduleContextVisibility;
+  text_content: string | null;
+  audio_url: string | null;
+  audio_duration_ms: number | null;
+  latitude: number | null;
+  longitude: number | null;
+  location_label: string | null;
+  created_at: string;
+}
+
+export interface CreateScheduleContextEventInput {
+  schedule_item_id: string;
+  event_type: ScheduleContextEventType;
+  visibility: ScheduleContextVisibility;
+  text_content?: string | null;
+  recipient_member_id?: string | null;
+  audio_url?: string | null;
+  audio_duration_ms?: number | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  location_label?: string | null;
+}
+
 export interface ScheduleReminderDelivery {
   id: string;
   member_id: string;

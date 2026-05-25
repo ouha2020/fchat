@@ -9,10 +9,22 @@ import ChatMessage from "@/components/ChatMessage";
 import EffectOverlay from "@/components/EffectOverlay";
 import EnvWarning from "@/components/EnvWarning";
 import ImportantNoticeBar from "@/components/ImportantNoticeBar";
+import KeeperRequestSheet from "@/components/KeeperRequestSheet";
 import { useLanguage } from "@/components/LanguageProvider";
 import { useDialog } from "@/components/Dialog";
 import { useToast } from "@/components/Toast";
 import { clearSession, loadSession, saveSession, type LocalSession } from "@/lib/authLocal";
+import {
+  cancelAssistantActionCard,
+  confirmAssistantActionCard,
+  createAssistantActionCard,
+  listAssistantActionCards,
+} from "@/lib/assistantActionService";
+import {
+  isAssistantCreateDraft,
+  parseAssistantIntent,
+  type ScheduleLookupIntent,
+} from "@/lib/assistantIntentParser";
 import {
   CHAT_BACKGROUND_CHANGED,
   getChatBackground,
@@ -21,6 +33,7 @@ import {
 import { effectFromColumns, transformForSending, type Effect, detectEffect } from "@/lib/effects";
 import { humanizeError } from "@/lib/errors";
 import { safeRestoreSession } from "@/lib/familyService";
+import { createKeeperRequest } from "@/lib/keeperService";
 import {
   dismissImportantNotification,
   getDismissedImportantIds,
@@ -28,6 +41,7 @@ import {
 } from "@/lib/importantNotificationPreference";
 import {
   addImportantNotification,
+  getImportantNotificationReadState,
   listImportantNotifications,
   removeImportantNotification,
 } from "@/lib/importantNotificationService";
@@ -60,13 +74,30 @@ import {
   requestMessagePush,
   updatePushPresence,
 } from "@/lib/pushNotificationService";
+import { safeGoogleMapsUrl } from "@/lib/security";
 import type { RecordingResult } from "@/lib/recordingService";
+import {
+  getScheduleReminderStatus,
+  respondScheduleAssignment,
+  searchScheduleItems,
+  setScheduleItemStatus,
+  snoozeScheduleReminder,
+} from "@/lib/scheduleService";
 import { getSupabase, isSupabaseConfigured } from "@/lib/supabaseClient";
 import { withTimeout } from "@/lib/timeout";
 import { usePushNotificationControls } from "@/lib/usePushNotificationControls";
-import type { ImportantNotification } from "@/types/importantNotification";
+import type {
+  ImportantNotification,
+  ImportantNotificationReadState,
+} from "@/types/importantNotification";
+import type {
+  AssistantActionCard,
+  CreateAssistantActionCardInput,
+} from "@/types/assistant";
+import type { CreateKeeperRequestInput } from "@/types/keeper";
 import type { FamilyMember } from "@/types/member";
 import type { Message } from "@/types/message";
+import type { ScheduleItem } from "@/types/schedule";
 
 const MESSAGE_FALLBACK_POLL_MS = 30_000;
 const IMPORTANT_FALLBACK_POLL_MS = 30_000;
@@ -79,6 +110,11 @@ const REALTIME_BATCH_FLUSH_MS = 150;
 const MESSAGE_DELIVERED_REPORT_DELAY_MS = 500;
 const MESSAGE_READ_REPORT_DELAY_MS = 700;
 const CHAT_BOOTSTRAP_DATA_TIMEOUT_MS = 15_000;
+const ASSISTANT_REPLY_DELAY_MS = 850;
+const chatHeaderIconClass =
+  "native-icon-button native-press inline-flex h-11 w-11 shrink-0 overflow-hidden rounded-[15px] bg-white bg-cover bg-center bg-no-repeat ring-1 ring-white/80 hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200";
+const chatActionMenuButtonClass =
+  "block min-h-11 w-full px-4 py-2.5 text-left text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset";
 
 interface MessageRealtimeEvent {
   id: string;
@@ -98,13 +134,56 @@ interface ImportantNotificationRealtimeEvent {
   created_at: string;
 }
 
+interface AssistantReplyPending {
+  sourceMessageId: string;
+  startedAt: number;
+}
+
+interface ScheduleRealtimeEvent {
+  id: string;
+  family_id: string;
+  schedule_item_id: string;
+  recipient_member_id: string;
+  event_type: "created" | "updated" | "status_changed" | "deleted" | "reminder_updated";
+  created_at: string;
+}
+
 interface PushReceivedMessage {
   type?: string;
   familyId?: string | null;
   messageId?: string | null;
+  scheduleItemId?: string | null;
   oldEndpoint?: string | null;
   newEndpoint?: string | null;
   endpoint?: string | null;
+}
+
+function scheduleAttentionStorageKey(session: Pick<LocalSession, "family_id" | "member_id">): string {
+  return `family-chat:schedule-attention:${session.family_id}:${session.member_id}`;
+}
+
+function readScheduleAttentionDot(session: Pick<LocalSession, "family_id" | "member_id">): boolean {
+  try {
+    return window.localStorage.getItem(scheduleAttentionStorageKey(session)) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeScheduleAttentionDot(
+  session: Pick<LocalSession, "family_id" | "member_id">,
+  active: boolean,
+) {
+  try {
+    const key = scheduleAttentionStorageKey(session);
+    if (active) {
+      window.localStorage.setItem(key, "1");
+    } else {
+      window.localStorage.removeItem(key);
+    }
+  } catch {
+    // Local attention state is only a visual hint.
+  }
 }
 
 function isMessageVisibleToSession(
@@ -127,6 +206,40 @@ function filterVisibleMessages(
   );
 }
 
+function closeMessageNotifications({
+  familyId,
+  messageIds,
+  closeAllForFamily = false,
+}: {
+  familyId: string;
+  messageIds?: string[];
+  closeAllForFamily?: boolean;
+}): void {
+  if (typeof navigator === "undefined") return;
+  if (!("serviceWorker" in navigator)) return;
+  const cleanMessageIds = (messageIds ?? []).filter(Boolean);
+  if (!closeAllForFamily && cleanMessageIds.length === 0) return;
+
+  const payload = {
+    type: "family-chat:close-notifications",
+    familyId,
+    messageIds: cleanMessageIds,
+    closeAllForFamily,
+  };
+
+  const controller = navigator.serviceWorker.controller;
+  if (controller) {
+    controller.postMessage(payload);
+    return;
+  }
+
+  navigator.serviceWorker.ready
+    .then((registration) => {
+      registration.active?.postMessage(payload);
+    })
+    .catch(() => undefined);
+}
+
 function sortMessagesByCreatedAt(rows: Message[]): Message[] {
   return [...rows].sort(
     (a, b) =>
@@ -145,6 +258,69 @@ function mergeMessagesById(existing: Message[], incoming: Message[]): Message[] 
   return sortMessagesByCreatedAt([...byId.values()]);
 }
 
+function hasAssistantCardMessage(rows: Message[]): boolean {
+  return rows.some((message) => {
+    const payload = message.system_event_payload ?? {};
+    return (
+      message.message_type === "system" &&
+      (message.system_event_type === "assistant_card_created" ||
+        message.system_event_type === "assistant_card_confirmed" ||
+        message.system_event_type === "assistant_card_cancelled" ||
+        payload.actor_type === "assistant")
+    );
+  });
+}
+
+function latestOrdinaryVisibleMessage(rows: Message[], currentMessageId?: string): Message | null {
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    const message = rows[index];
+    if (!message || message.id === currentMessageId) continue;
+    if (message.deleted_at) continue;
+    if (message.recipient_member_id) continue;
+    if (message.message_type === "system") continue;
+    return message;
+  }
+  return null;
+}
+
+function getCopyableMessageText(message: Message): string | null {
+  if (message.deleted_at) return null;
+  if (message.message_type === "text") {
+    const text = message.content?.trim();
+    return text || null;
+  }
+  if (message.message_type === "location") {
+    const mapUrl =
+      safeGoogleMapsUrl(message.map_url) ??
+      (message.latitude != null && message.longitude != null
+        ? createGoogleMapUrl(message.latitude, message.longitude)
+        : null);
+    const parts = [message.address?.trim(), mapUrl].filter(Boolean);
+    return parts.length > 0 ? parts.join("\n") : null;
+  }
+  return null;
+}
+
+async function copyTextToClipboard(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  const copied = document.execCommand("copy");
+  document.body.removeChild(textarea);
+  if (!copied) throw new Error("copy_failed");
+}
+
 function removeWhisperParamFromUrl(): void {
   if (typeof window === "undefined") return;
   const url = new URL(window.location.href);
@@ -159,6 +335,294 @@ function setWhisperParamInUrl(memberId: string): void {
   window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
 }
 
+function removeKeeperParamFromUrl(): void {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  url.searchParams.delete("keeper");
+  window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+}
+
+function setKeeperParamInUrl(): void {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  url.searchParams.set("keeper", "1");
+  url.searchParams.delete("whisper");
+  window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+}
+
+function keeperDraftFromText(text: string): string | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  const triggers = [
+    "@家庭助理",
+    "家庭助理",
+    "@おうちアシスタント",
+    "おうちアシスタント",
+    "@Home Assistant",
+    "Home Assistant",
+    "@おうち係",
+    "おうち係",
+    "小管家",
+    "家庭管家",
+  ];
+  const trigger = triggers.find((item) => trimmed.startsWith(item));
+  if (!trigger) return null;
+  return trimmed.slice(trigger.length).replace(/^[\s,，、:：]+/, "").trim();
+}
+
+function assistantDraftFromText(text: string): string | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  const triggers = [
+    "@家庭助理",
+    "家庭助理",
+    "@家庭管家",
+    "家庭管家",
+    "@小管家",
+    "小管家",
+    "@おうちアシスタント",
+    "おうちアシスタント",
+    "@ホームアシスタント",
+    "ホームアシスタント",
+    "@Home Assistant",
+    "Home Assistant",
+  ];
+  const trigger = triggers.find((item) => trimmed.startsWith(item));
+  if (!trigger) return null;
+  return trimmed.slice(trigger.length).replace(/^[\s,，、。:：]+/, "").trim();
+}
+
+function buildScheduleChangeCardInput(
+  item: ScheduleItem,
+  lookup: ScheduleLookupIntent,
+  language: string,
+  t: (key: string, vars?: Record<string, string | number>) => string,
+): CreateAssistantActionCardInput {
+  if (lookup.action === "cancel") {
+    return {
+      card_type: "schedule_cancel",
+      title: item.title,
+      summary: t("assistantScheduleCancelSummary", { title: item.title }),
+      payload: {
+        action: "cancel",
+        schedule_item_id: item.id,
+        original_text: lookup.originalText,
+        source: "rule-parser",
+        visibility: item.visibility,
+      },
+    };
+  }
+
+  const newStartsAt = lookup.newStartsAt ?? item.starts_at;
+  const newEndsAt = shiftEndTime(item.starts_at, item.ends_at, newStartsAt);
+  const newRemindAt = shiftReminderTime(item.starts_at, item.remind_at, newStartsAt);
+  return {
+    card_type: "schedule_update",
+    title: item.title,
+    summary: t("assistantScheduleUpdateSummary", {
+      from: formatAssistantDateTime(item.starts_at, language),
+      to: formatAssistantDateTime(newStartsAt, language),
+    }),
+    payload: {
+      action: "update",
+      schedule_item_id: item.id,
+      title: item.title,
+      note: item.note,
+      item_type: item.item_type,
+      visibility: item.visibility,
+      assignee_member_id: item.assignee_member_id,
+      starts_at: newStartsAt,
+      ends_at: newEndsAt,
+      remind_at: newRemindAt,
+      original_text: lookup.originalText,
+      source: "rule-parser",
+    },
+  };
+}
+
+function shiftEndTime(
+  oldStartsAt: string,
+  oldEndsAt: string | null,
+  newStartsAt: string,
+): string | null {
+  if (!oldEndsAt) return null;
+  const duration = new Date(oldEndsAt).getTime() - new Date(oldStartsAt).getTime();
+  if (!Number.isFinite(duration) || duration <= 0) return null;
+  return new Date(new Date(newStartsAt).getTime() + duration).toISOString();
+}
+
+function shiftReminderTime(
+  oldStartsAt: string,
+  oldRemindAt: string | null,
+  newStartsAt: string,
+): string | null {
+  if (!oldRemindAt) return null;
+  const offset = new Date(oldStartsAt).getTime() - new Date(oldRemindAt).getTime();
+  if (!Number.isFinite(offset) || offset < 0) return null;
+  return new Date(new Date(newStartsAt).getTime() - offset).toISOString();
+}
+
+function formatAssistantDateTime(value: string, language: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(language === "zh" ? "zh-CN" : language, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function assistantScheduleItemId(card: AssistantActionCard): string | null {
+  if (card.result_schedule_item_id) return card.result_schedule_item_id;
+  const payloadItemId = card.payload.schedule_item_id;
+  return typeof payloadItemId === "string" && payloadItemId ? payloadItemId : null;
+}
+
+function AssistantReplyPendingBubble() {
+  const { t } = useLanguage();
+  return (
+    <div className="flex w-full gap-2 py-1" aria-live="polite">
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-sm font-semibold text-emerald-700 shadow-sm ring-1 ring-white/80 sm:h-9 sm:w-9 sm:text-base">
+        家
+      </div>
+      <div className="flex min-w-0 max-w-[78%] flex-col items-start gap-1 sm:max-w-md">
+        <div className="flex max-w-full min-w-0 flex-wrap items-center gap-1.5 text-[11px] leading-4 text-slate-500">
+          <span className="truncate font-medium text-slate-700">
+            {t("assistantName")}
+          </span>
+        </div>
+        <div className="min-h-[112px] min-w-[11rem] rounded-[22px] bg-white/95 px-3.5 py-2.5 text-sm text-slate-700 shadow-[0_10px_26px_rgba(47,83,67,0.08)] ring-1 ring-white/80">
+          <div className="flex items-center gap-2">
+            <span className="font-medium">{t("assistantThinking")}</span>
+            <span className="flex items-center gap-1" aria-hidden>
+              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-emerald-400 [animation-delay:-0.2s]" />
+              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-emerald-400 [animation-delay:-0.1s]" />
+              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-emerald-400" />
+            </span>
+          </div>
+          <div className="mt-4 space-y-2" aria-hidden>
+            <span className="block h-2 w-28 animate-pulse rounded-full bg-emerald-100" />
+            <span className="block h-2 w-20 animate-pulse rounded-full bg-slate-100" />
+            <span className="block h-8 w-32 animate-pulse rounded-full bg-slate-50 ring-1 ring-slate-100" />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ChatLoadingState() {
+  const { t } = useLanguage();
+  return (
+    <div
+      className="chat-paper-bg flex flex-col items-center justify-center px-6 text-center"
+      style={{ height: "var(--chat-viewport-height, 100dvh)" }}
+      role="status"
+      aria-live="polite"
+    >
+      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white/95 text-base font-black text-emerald-700 shadow-sm ring-1 ring-white/80">
+        家
+      </div>
+      <p className="mt-4 text-sm font-semibold text-slate-700">
+        {t("commonLoading")}
+      </p>
+      <div className="mt-3 flex items-center justify-center gap-1.5" aria-hidden>
+        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-emerald-400 [animation-delay:-0.2s]" />
+        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-emerald-400 [animation-delay:-0.1s]" />
+        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-emerald-400" />
+      </div>
+    </div>
+  );
+}
+
+function ChatLoadErrorState({
+  message,
+  onRetry,
+  onBackHome,
+}: {
+  message: string;
+  onRetry: () => void;
+  onBackHome: () => void;
+}) {
+  const { t } = useLanguage();
+  return (
+    <div
+      className="chat-paper-bg flex items-center justify-center px-5 py-8"
+      style={{ minHeight: "var(--chat-viewport-height, 100dvh)" }}
+    >
+      <section
+        className="w-full max-w-sm rounded-[28px] bg-white/[0.92] p-5 text-center shadow-[0_18px_44px_rgba(70,62,48,0.12)] ring-1 ring-white/80"
+        role="alert"
+      >
+        <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-rose-50 text-base font-black text-rose-600 ring-1 ring-rose-100">
+          !
+        </div>
+        <h1 className="mt-3 text-lg font-bold leading-7 text-slate-950">
+          {t("chatLoadFailedTitle")}
+        </h1>
+        <p className="mt-2 break-words text-sm leading-6 text-slate-600">
+          {message}
+        </p>
+        <div className="mt-5 flex flex-col gap-2">
+          <button
+            type="button"
+            className="btn-primary native-press min-h-11 w-full"
+            onClick={onRetry}
+          >
+            {t("chatRetry")}
+          </button>
+          <button
+            type="button"
+            className="btn-secondary native-press min-h-11 w-full"
+            onClick={onBackHome}
+          >
+            {t("chatBackHome")}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ChatEmptyState() {
+  const { t } = useLanguage();
+  return (
+    <div
+      className="mx-auto flex w-full max-w-xs flex-col items-center justify-center px-5 py-10 text-center"
+      role="status"
+    >
+      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white/90 text-base font-black text-emerald-700 shadow-sm ring-1 ring-white/80">
+        家
+      </div>
+      <p className="mt-3 text-sm font-semibold leading-6 text-slate-600">
+        {t("chatEmpty")}
+      </p>
+    </div>
+  );
+}
+
+function OlderMessagesLoadingIndicator() {
+  const { t } = useLanguage();
+  return (
+    <div
+      className="flex justify-center pb-2"
+      role="status"
+      aria-label={t("commonLoading")}
+    >
+      <span className="inline-flex h-6 items-center gap-1 rounded-full bg-white/80 px-3 shadow-sm ring-1 ring-white/70">
+        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-slate-400" />
+        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-slate-300 [animation-delay:120ms]" />
+        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-slate-300 [animation-delay:240ms]" />
+      </span>
+    </div>
+  );
+}
+
 export default function ChatPage() {
   const router = useRouter();
   const { language, t } = useLanguage();
@@ -168,9 +632,21 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [members, setMembers] = useState<FamilyMember[]>([]);
   const [whisperTargetId, setWhisperTargetId] = useState<string | null>(null);
+  const [keeperMode, setKeeperMode] = useState(false);
+  const [keeperDraftText, setKeeperDraftText] = useState<string | null>(null);
+  const [keeperSubmitting, setKeeperSubmitting] = useState(false);
   const [importantNotifications, setImportantNotifications] = useState<
     ImportantNotification[]
   >([]);
+  const [importantReadStates, setImportantReadStates] = useState<
+    Map<string, ImportantNotificationReadState>
+  >(() => new Map());
+  const [assistantCards, setAssistantCards] = useState<AssistantActionCard[]>([]);
+  const [assistantSubmittingCardId, setAssistantSubmittingCardId] =
+    useState<string | null>(null);
+  const [assistantReplyPending, setAssistantReplyPending] =
+    useState<AssistantReplyPending | null>(null);
+  const [scheduleAttentionDot, setScheduleAttentionDot] = useState(false);
   const [dismissedImportantIds, setDismissedImportantIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -220,6 +696,7 @@ export default function ChatPage() {
   const pendingDeliveredMessageIdsRef = useRef<Set<string>>(new Set());
   const pendingReadMessageIdsRef = useRef<Set<string>>(new Set());
   const reportedDeliveredMessageIdsRef = useRef<Set<string>>(new Set());
+  const loadingImportantReadStateIdsRef = useRef<Set<string>>(new Set());
   const reportedReadMessageIdsRef = useRef<Set<string>>(new Set());
   const deliveredReportTimerRef = useRef<number | null>(null);
   const readReportTimerRef = useRef<number | null>(null);
@@ -268,9 +745,28 @@ export default function ChatPage() {
       (window.navigator.platform === "MacIntel" &&
         window.navigator.maxTouchPoints > 1);
 
-    const updateViewportHeight = () => {
-      const height = visualViewport?.height ?? window.innerHeight;
+    let viewportFrame = 0;
+    let orientationTimer = 0;
+    let lastViewportHeight = 0;
+
+    const applyViewportHeight = () => {
+      viewportFrame = 0;
+      const rawHeight = visualViewport?.height ?? window.innerHeight;
+      const height = Math.max(320, Math.round(rawHeight));
+      if (height === lastViewportHeight) return;
+      lastViewportHeight = height;
       html.style.setProperty("--chat-viewport-height", `${height}px`);
+    };
+
+    const updateViewportHeight = () => {
+      if (viewportFrame) window.cancelAnimationFrame(viewportFrame);
+      viewportFrame = window.requestAnimationFrame(applyViewportHeight);
+    };
+
+    const updateAfterOrientationChange = () => {
+      updateViewportHeight();
+      if (orientationTimer) window.clearTimeout(orientationTimer);
+      orientationTimer = window.setTimeout(updateViewportHeight, 250);
     };
 
     html.style.overflow = "hidden";
@@ -280,13 +776,22 @@ export default function ChatPage() {
     body.style.overscrollBehavior = "none";
     updateViewportHeight();
     visualViewport?.addEventListener("resize", updateViewportHeight);
-    window.addEventListener("orientationchange", updateViewportHeight);
+    visualViewport?.addEventListener("scroll", updateViewportHeight);
+    window.addEventListener("resize", updateViewportHeight);
+    window.addEventListener("orientationchange", updateAfterOrientationChange);
 
     return () => {
       bottomScrollTimeoutsRef.current.forEach((id) => window.clearTimeout(id));
       bottomScrollTimeoutsRef.current = [];
+      if (viewportFrame) window.cancelAnimationFrame(viewportFrame);
+      if (orientationTimer) window.clearTimeout(orientationTimer);
       visualViewport?.removeEventListener("resize", updateViewportHeight);
-      window.removeEventListener("orientationchange", updateViewportHeight);
+      visualViewport?.removeEventListener("scroll", updateViewportHeight);
+      window.removeEventListener("resize", updateViewportHeight);
+      window.removeEventListener(
+        "orientationchange",
+        updateAfterOrientationChange,
+      );
       if (previous.chatViewportHeight) {
         html.style.setProperty(
           "--chat-viewport-height",
@@ -334,8 +839,29 @@ export default function ChatPage() {
     sessionRef.current = session;
   }, [session]);
   useEffect(() => {
+    if (!session) {
+      setScheduleAttentionDot(false);
+      return;
+    }
+    setScheduleAttentionDot(readScheduleAttentionDot(session));
+  }, [session]);
+  useEffect(() => {
     pushEnabledRef.current = push.enabled;
   }, [push.enabled]);
+
+  const markScheduleAttention = useCallback((activeSession?: LocalSession | null) => {
+    const targetSession = activeSession ?? sessionRef.current;
+    if (!targetSession) return;
+    setScheduleAttentionDot(true);
+    writeScheduleAttentionDot(targetSession, true);
+  }, []);
+
+  const clearScheduleAttention = useCallback(() => {
+    const targetSession = sessionRef.current;
+    if (!targetSession) return;
+    setScheduleAttentionDot(false);
+    writeScheduleAttentionDot(targetSession, false);
+  }, []);
 
   const handleIncomingMessageSideEffects = useCallback(
     (incoming: Message) => {
@@ -385,6 +911,11 @@ export default function ChatPage() {
       const unseenMessages = visible.filter((message) => !knownIds.has(message.id));
       setMessages((prev) => mergeMessagesById(prev, visible));
       unseenMessages.forEach(handleIncomingMessageSideEffects);
+      if (activeSession && hasAssistantCardMessage(visible)) {
+        listAssistantActionCards(activeSession)
+          .then(setAssistantCards)
+          .catch(() => undefined);
+      }
     },
     [handleIncomingMessageSideEffects],
   );
@@ -452,6 +983,10 @@ export default function ChatPage() {
 
     try {
       await markMessagesRead(activeSession, ids);
+      closeMessageNotifications({
+        familyId: activeSession.family_id,
+        messageIds: ids,
+      });
     } catch {
       ids.forEach((id) => reportedReadMessageIdsRef.current.delete(id));
     } finally {
@@ -508,6 +1043,30 @@ export default function ChatPage() {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [scheduleReadReports, session]);
+
+  useEffect(() => {
+    if (!session) return;
+
+    const closeCurrentFamilyNotifications = () => {
+      if (document.visibilityState !== "visible") return;
+      if (window.location.pathname !== "/chat") return;
+      closeMessageNotifications({
+        familyId: session.family_id,
+        closeAllForFamily: true,
+      });
+    };
+
+    closeCurrentFamilyNotifications();
+    document.addEventListener("visibilitychange", closeCurrentFamilyNotifications);
+    window.addEventListener("focus", closeCurrentFamilyNotifications);
+    return () => {
+      document.removeEventListener(
+        "visibilitychange",
+        closeCurrentFamilyNotifications,
+      );
+      window.removeEventListener("focus", closeCurrentFamilyNotifications);
+    };
+  }, [session]);
 
   useEffect(() => {
     const pendingDeliveredMessageIds = pendingDeliveredMessageIdsRef.current;
@@ -643,6 +1202,11 @@ export default function ChatPage() {
         void checkPushSubscriptionHealth(session).catch(() => undefined);
         return;
       }
+      if (data.type === "family-chat:schedule-reminder") {
+        if (data.familyId && data.familyId !== session.family_id) return;
+        markScheduleAttention(session);
+        return;
+      }
       if (data.type !== "family-chat:push-received") return;
       if (data.familyId !== session.family_id) return;
       if (window.location.pathname !== "/chat") return;
@@ -665,7 +1229,7 @@ export default function ChatPage() {
         handleServiceWorkerMessage,
       );
     };
-  }, [fetchPushMessageNow, handleSyncedMessages, session]);
+  }, [fetchPushMessageNow, handleSyncedMessages, markScheduleAttention, session]);
 
   useEffect(() => {
     if (!session) return;
@@ -751,6 +1315,19 @@ export default function ChatPage() {
   const refreshImportantNotifications = useCallback(async (activeSession: LocalSession) => {
     const rows = await listImportantNotifications(activeSession);
     setImportantNotifications(rows);
+    setImportantReadStates((prev) => {
+      if (prev.size === 0) return prev;
+      const validIds = new Set(rows.map((row) => row.id));
+      const next = new Map(
+        [...prev.entries()].filter(([notificationId]) => validIds.has(notificationId)),
+      );
+      return next.size === prev.size ? prev : next;
+    });
+  }, []);
+
+  const refreshAssistantCards = useCallback(async (activeSession: LocalSession) => {
+    const rows = await listAssistantActionCards(activeSession);
+    setAssistantCards(rows);
   }, []);
 
   useEffect(() => {
@@ -772,6 +1349,7 @@ export default function ChatPage() {
         () => undefined,
       );
       refreshImportantNotifications(session).catch(() => undefined);
+      refreshAssistantCards(session).catch(() => undefined);
     };
 
     const activateRealtime = () => {
@@ -806,21 +1384,67 @@ export default function ChatPage() {
       window.removeEventListener("focus", activateRealtime);
       window.removeEventListener("online", activateRealtime);
     };
-  }, [handleSyncedMessages, refreshImportantNotifications, session]);
+  }, [handleSyncedMessages, refreshAssistantCards, refreshImportantNotifications, session]);
+
+  useEffect(() => {
+    if (!session) return;
+
+    const syncVisibleMessages = () => {
+      if (document.visibilityState !== "visible") return;
+      syncMessages(session, { onMessages: handleSyncedMessages }).catch(
+        () => undefined,
+      );
+    };
+    const refreshVisibleImportantNotifications = () => {
+      if (document.visibilityState !== "visible") return;
+      refreshImportantNotifications(session).catch(() => undefined);
+      refreshAssistantCards(session).catch(() => undefined);
+    };
+
+    const messagePoll = window.setInterval(
+      syncVisibleMessages,
+      MESSAGE_FALLBACK_POLL_MS,
+    );
+    const importantPoll = window.setInterval(
+      refreshVisibleImportantNotifications,
+      IMPORTANT_FALLBACK_POLL_MS,
+    );
+    const metadataPoll = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      listMembers(session, { includeRemoved: true })
+        .then((mems) => {
+          setMembers(mems);
+        })
+        .catch(() => undefined);
+    }, METADATA_FALLBACK_POLL_MS);
+
+    return () => {
+      window.clearInterval(messagePoll);
+      window.clearInterval(importantPoll);
+      window.clearInterval(metadataPoll);
+    };
+  }, [
+    handleSyncedMessages,
+    refreshAssistantCards,
+    refreshImportantNotifications,
+    session,
+  ]);
 
   const refreshChatData = useCallback(async (forceFullRefresh = false) => {
     if (!session) return;
     try {
-      const [syncResult, mems, important] = await Promise.all([
+      const [syncResult, mems, important, cards] = await Promise.all([
         forceFullRefresh
           ? forceRefreshMessages(session, handleSyncedMessages)
           : syncMessages(session, { onMessages: handleSyncedMessages }),
         listMembers(session, { includeRemoved: true }),
         listImportantNotifications(session),
+        listAssistantActionCards(session).catch(() => []),
       ]);
       if (syncResult.messages.length > 0) handleSyncedMessages(syncResult.messages);
       setMembers(mems);
       setImportantNotifications(important);
+      setAssistantCards(cards);
       setError(null);
     } catch (err) {
       setError(humanizeError(err, language));
@@ -970,10 +1594,11 @@ export default function ChatPage() {
           setLoading(false);
         }
 
-        const [mems, important] = await withTimeout(
+        const [mems, important, cards] = await withTimeout(
           Promise.all([
             listMembers(fresh, { includeRemoved: true }),
             listImportantNotifications(fresh),
+            listAssistantActionCards(fresh).catch(() => []),
           ]),
           CHAT_BOOTSTRAP_DATA_TIMEOUT_MS,
           "chat_bootstrap_timeout",
@@ -981,6 +1606,7 @@ export default function ChatPage() {
         if (cancelled) return;
         setMembers(mems);
         setImportantNotifications(important);
+        setAssistantCards(cards);
         setDismissedImportantIds(
           getDismissedImportantIds(fresh.family_id, fresh.member_id),
         );
@@ -1082,6 +1708,25 @@ export default function ChatPage() {
         }
       });
 
+    const scheduleEventsChannel = sb
+      .channel(`schedule-events-chat:${session.member_id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "family_schedule_events",
+          filter: `recipient_member_id=eq.${session.member_id}`,
+        },
+        (payload) => {
+          if (!active) return;
+          const event = payload.new as ScheduleRealtimeEvent;
+          if (event.family_id !== session.family_id) return;
+          markScheduleAttention(session);
+        },
+      )
+      .subscribe();
+
     const membersChannel = sb
       .channel(`members:${session.family_id}`)
       .on(
@@ -1123,45 +1768,14 @@ export default function ChatPage() {
         }
       });
 
-    const syncVisibleMessages = () => {
-      if (document.visibilityState !== "visible") return;
-      syncMessages(session, { onMessages: handleSyncedMessages }).catch(
-        () => undefined,
-      );
-    };
-    const refreshVisibleImportantNotifications = () => {
-      if (document.visibilityState !== "visible") return;
-      refreshImportantNotifications(session).catch(() => undefined);
-    };
-
-    const messagePoll = window.setInterval(
-      syncVisibleMessages,
-      MESSAGE_FALLBACK_POLL_MS,
-    );
-    const importantPoll = window.setInterval(
-      refreshVisibleImportantNotifications,
-      IMPORTANT_FALLBACK_POLL_MS,
-    );
-
-    const metadataPoll = window.setInterval(() => {
-      if (document.visibilityState !== "visible") return;
-      listMembers(session, { includeRemoved: true })
-        .then((mems) => {
-          setMembers(mems);
-        })
-        .catch(() => undefined);
-    }, METADATA_FALLBACK_POLL_MS);
-
     const pendingRealtimeMessageIds = pendingRealtimeMessageIdsRef.current;
 
     return () => {
       active = false;
       sb.removeChannel(messageEventsChannel);
       sb.removeChannel(importantEventsChannel);
+      sb.removeChannel(scheduleEventsChannel);
       sb.removeChannel(membersChannel);
-      window.clearInterval(messagePoll);
-      window.clearInterval(importantPoll);
-      window.clearInterval(metadataPoll);
       if (realtimeBatchTimerRef.current) {
         window.clearTimeout(realtimeBatchTimerRef.current);
         realtimeBatchTimerRef.current = null;
@@ -1170,6 +1784,8 @@ export default function ChatPage() {
     };
   }, [
     handleSyncedMessages,
+    markScheduleAttention,
+    refreshAssistantCards,
     refreshImportantNotifications,
     realtimeConnected,
     router,
@@ -1229,6 +1845,11 @@ export default function ChatPage() {
   }, [loading, messages.length, scrollToBottom]);
 
   useEffect(() => {
+    if (loading || !assistantReplyPending) return;
+    scrollToBottom(isIOSRef.current ? "auto" : "smooth");
+  }, [assistantReplyPending, loading, scrollToBottom]);
+
+  useEffect(() => {
     if (loading || messages.length === 0) return;
     const content = messagesContentRef.current;
     if (!content || typeof ResizeObserver === "undefined") return;
@@ -1248,6 +1869,40 @@ export default function ChatPage() {
       observer.disconnect();
     };
   }, [loading, messages.length, scrollToBottom]);
+
+  useEffect(() => {
+    if (loading || typeof ResizeObserver === "undefined") return;
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+
+    let frame = 0;
+    let wasNearBottom = true;
+    const rememberBottomProximity = () => {
+      const distanceFromBottom =
+        scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+      wasNearBottom = distanceFromBottom < 120;
+    };
+    const observer = new ResizeObserver(() => {
+      const shouldStickToBottom = wasNearBottom;
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        if (Date.now() < suppressBottomScrollUntilRef.current) return;
+        if (shouldStickToBottom) scrollToBottom("auto");
+        rememberBottomProximity();
+      });
+    });
+
+    rememberBottomProximity();
+    observer.observe(scroller);
+    scroller.addEventListener("scroll", rememberBottomProximity, {
+      passive: true,
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+      scroller.removeEventListener("scroll", rememberBottomProximity);
+    };
+  }, [loading, scrollToBottom]);
 
   // Scroll to the message targeted by a notification click (?mid=xxx).
   const hasScrolledToNotifiedRef = useRef(false);
@@ -1304,6 +1959,12 @@ export default function ChatPage() {
     setWhisperTargetId(target.id);
   }, [members, session, t, toast]);
 
+  useEffect(() => {
+    if (!session || typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    setKeeperMode(url.searchParams.get("keeper") === "1");
+  }, [session]);
+
   function exitWhisperMode() {
     setWhisperTargetId(null);
     removeWhisperParamFromUrl();
@@ -1325,7 +1986,26 @@ export default function ChatPage() {
     }
 
     setWhisperTargetId(target.id);
+    setKeeperMode(false);
+    setKeeperDraftText(null);
+    removeKeeperParamFromUrl();
     setWhisperParamInUrl(target.id);
+  }
+
+  function enterKeeperMode(initialText = "") {
+    setWhisperTargetId(null);
+    removeWhisperParamFromUrl();
+    setKeeperMode(true);
+    setKeeperParamInUrl();
+    if (initialText.trim()) {
+      setKeeperDraftText(initialText.trim());
+    }
+  }
+
+  function exitKeeperMode() {
+    setKeeperMode(false);
+    setKeeperDraftText(null);
+    removeKeeperParamFromUrl();
   }
 
   const importantByMessageId = useMemo(() => {
@@ -1363,6 +2043,16 @@ export default function ChatPage() {
   const selectedActionNotification = selectedActionMessage
     ? visibleImportantByMessageId.get(selectedActionMessage.id) ?? null
     : null;
+  const selectedActionCopyText = selectedActionMessage
+    ? getCopyableMessageText(selectedActionMessage)
+    : null;
+  const assistantCardsByMessageId = useMemo(() => {
+    const map = new Map<string, AssistantActionCard>();
+    assistantCards.forEach((card) => {
+      if (card.card_message_id) map.set(card.card_message_id, card);
+    });
+    return map;
+  }, [assistantCards]);
 
   function pushOptimistic(
     partial: Pick<Message, "id" | "message_type"> & Partial<Message>,
@@ -1439,6 +2129,18 @@ export default function ChatPage() {
     }
   }
 
+  async function handleCopyMessage(message: Message) {
+    const text = getCopyableMessageText(message);
+    if (!text) return;
+    setMessageActionMenu(null);
+    try {
+      await copyTextToClipboard(text);
+      toast.success(t("messageCopied"));
+    } catch {
+      toast.error(t("messageCopyFailed"));
+    }
+  }
+
   function openMessageActions(
     message: Message,
     point: { x: number; y: number },
@@ -1512,6 +2214,159 @@ export default function ChatPage() {
     }
   }
 
+  async function loadImportantReadState(notificationId: string) {
+    if (!session) return;
+    if (importantReadStates.has(notificationId)) return;
+    if (loadingImportantReadStateIdsRef.current.has(notificationId)) return;
+    loadingImportantReadStateIdsRef.current.add(notificationId);
+    try {
+      const state = await getImportantNotificationReadState(session, notificationId);
+      setImportantReadStates((prev) => {
+        const next = new Map(prev);
+        next.set(notificationId, state);
+        return next;
+      });
+    } catch {
+      // Read-state is supplemental; the important notice itself remains usable.
+    } finally {
+      loadingImportantReadStateIdsRef.current.delete(notificationId);
+    }
+  }
+
+  async function createScheduleChangeAssistantCard(
+    sourceMessageId: string,
+    lookup: ScheduleLookupIntent,
+  ) {
+    if (!session) return;
+    const matches = await searchScheduleItems(session, {
+      rangeStart: new Date(lookup.rangeStart),
+      rangeEnd: new Date(lookup.rangeEnd),
+      query: lookup.query,
+      limit: 5,
+    });
+    const activeMatches = matches.filter((item) => item.status === "active");
+    if (activeMatches.length === 0) {
+      toast.info(t("assistantScheduleMatchMissing"));
+      return;
+    }
+    if (activeMatches.length > 1) {
+      toast.info(t("assistantScheduleMatchMultiple"));
+      return;
+    }
+
+    const item = activeMatches[0];
+    const input = buildScheduleChangeCardInput(item, lookup, language, t);
+    const result = await createAssistantActionCard(session, {
+      ...input,
+      source_message_id: sourceMessageId,
+    });
+    await refreshAssistantCards(session).catch(() => undefined);
+    if (result.message_id) {
+      const fetched = await fetchRealtimeMessage(result.message_id).catch(() => false);
+      if (!fetched) {
+        await syncMessages(session, { onMessages: handleSyncedMessages }).catch(
+          () => undefined,
+        );
+      }
+    }
+  }
+
+  function handleOpenAssistantSchedule(card: AssistantActionCard) {
+    const scheduleItemId = assistantScheduleItemId(card);
+    if (!scheduleItemId) return;
+    router.push(`/schedule?item=${encodeURIComponent(scheduleItemId)}`);
+  }
+
+  async function handleAssistantTaskAction(
+    card: AssistantActionCard,
+    action: "accept" | "complete" | "snooze",
+  ) {
+    if (!session || !card.result_schedule_item_id) return;
+    setAssistantSubmittingCardId(card.id);
+    try {
+      if (action === "accept") {
+        await respondScheduleAssignment(
+          session,
+          card.result_schedule_item_id,
+          "accepted",
+        );
+        toast.success(t("assistantTaskAccepted"));
+      } else if (action === "complete") {
+        await setScheduleItemStatus(session, card.result_schedule_item_id, "done");
+        toast.success(t("assistantTaskCompleted"));
+      } else {
+        const status = await getScheduleReminderStatus(
+          session,
+          card.result_schedule_item_id,
+        );
+        const delivery = status.current_member_delivery;
+        if (!delivery) throw new Error("schedule_reminder_not_found");
+        await snoozeScheduleReminder(session, delivery.id, 10);
+        toast.success(t("assistantTaskSnoozed"));
+      }
+    } catch (err) {
+      toast.error(
+        t("assistantTaskActionFailed", {
+          message: humanizeError(err, language),
+        }),
+      );
+    } finally {
+      setAssistantSubmittingCardId(null);
+    }
+  }
+
+  async function handleConfirmAssistantCard(card: AssistantActionCard) {
+    if (!session) return;
+    setAssistantSubmittingCardId(card.id);
+    try {
+      const result = await confirmAssistantActionCard(session, card.id);
+      await refreshAssistantCards(session);
+      if (result.message_id) {
+        await fetchRealtimeMessage(result.message_id).catch(() => false);
+      }
+      if (result.result_message_id) {
+        await fetchRealtimeMessage(result.result_message_id).catch(() => false);
+      }
+      if (card.card_type === "important") {
+        await refreshImportantNotifications(session).catch(() => undefined);
+      }
+      toast.success(t("assistantConfirmed"));
+    } catch (err) {
+      toast.error(
+        t("assistantConfirmFailed", {
+          message: humanizeError(err, language),
+        }),
+      );
+    } finally {
+      setAssistantSubmittingCardId(null);
+    }
+  }
+
+  async function handleCancelAssistantCard(card: AssistantActionCard) {
+    if (!session) return;
+    setAssistantSubmittingCardId(card.id);
+    try {
+      const result = await cancelAssistantActionCard(session, card.id);
+      await refreshAssistantCards(session);
+      if (result.message_id) {
+        await fetchRealtimeMessage(result.message_id).catch(() => false);
+      }
+      toast.success(t("assistantCancelled"));
+    } catch (err) {
+      toast.error(
+        t("assistantCancelFailed", {
+          message: humanizeError(err, language),
+        }),
+      );
+    } finally {
+      setAssistantSubmittingCardId(null);
+    }
+  }
+
+  function handleModifyAssistantCard() {
+    toast.info(t("assistantModifyUnavailable"));
+  }
+
   function handleMessagesTouchStart(e: React.TouchEvent<HTMLDivElement>) {
     const scroller = scrollRef.current;
     if (!scroller || scroller.scrollTop > 4) {
@@ -1564,8 +2419,38 @@ export default function ChatPage() {
     scrollToMessage(notification.message_id);
   }
 
+  async function runAssistantReplyAfterPause(
+    sourceMessageId: string,
+    work: () => Promise<void>,
+  ) {
+    setAssistantReplyPending({
+      sourceMessageId,
+      startedAt: Date.now(),
+    });
+    try {
+      await delay(ASSISTANT_REPLY_DELAY_MS);
+      await work();
+    } finally {
+      setAssistantReplyPending((prev) =>
+        prev?.sourceMessageId === sourceMessageId ? null : prev,
+      );
+    }
+  }
+
   async function handleSendText(text: string) {
     if (!session) return;
+    const explicitAssistantText = assistantDraftFromText(text) ?? keeperDraftFromText(text);
+    const assistantText = keeperMode ? text.trim() : explicitAssistantText ?? text;
+    const latestTarget = latestOrdinaryVisibleMessage(messagesRef.current);
+    const assistantDraft =
+      !whisperTarget && assistantText.trim()
+        ? parseAssistantIntent(assistantText, {
+            members: membersRef.current,
+            currentMemberId: session.member_id,
+            latestVisibleMessage: latestTarget,
+          })
+        : null;
+
     setSending(true);
     try {
       const { content, effect: eff } = transformForSending(text);
@@ -1586,10 +2471,79 @@ export default function ChatPage() {
       });
       requestMessagePush(session, id);
       tryTriggerEffect(id, eff);
+      if (assistantDraft?.reason === "schedule_lookup") {
+        await runAssistantReplyAfterPause(id, async () => {
+          try {
+            await createScheduleChangeAssistantCard(id, assistantDraft.scheduleLookup);
+          } catch (assistantErr) {
+            toast.error(
+              t("assistantCreateFailed", {
+                message: humanizeError(assistantErr, language),
+              }),
+            );
+          }
+        });
+      } else if (assistantDraft?.reason === "missing_time") {
+        toast.info(t("assistantNeedTimeExample"));
+      } else if (assistantDraft?.reason === "missing_target") {
+        toast.info(t("assistantNeedTarget"));
+      } else if (isAssistantCreateDraft(assistantDraft)) {
+        await runAssistantReplyAfterPause(id, async () => {
+          try {
+            const result = await createAssistantActionCard(session, {
+              ...assistantDraft,
+              source_message_id: id,
+            });
+            await refreshAssistantCards(session).catch(() => undefined);
+            if (result.message_id) {
+              const fetched = await fetchRealtimeMessage(result.message_id).catch(
+                () => false,
+              );
+              if (!fetched) {
+                await syncMessages(session, { onMessages: handleSyncedMessages }).catch(
+                  () => undefined,
+                );
+              }
+            }
+          } catch (assistantErr) {
+            toast.error(
+              t("assistantCreateFailed", {
+                message: humanizeError(assistantErr, language),
+              }),
+            );
+          }
+        });
+        if (keeperMode) {
+          setKeeperMode(false);
+          removeKeeperParamFromUrl();
+        }
+      }
     } catch (err) {
       toast.error(humanizeError(err, language));
     } finally {
       setSending(false);
+    }
+  }
+
+  async function handleCreateKeeperRequest(input: CreateKeeperRequestInput) {
+    if (!session) return;
+    setKeeperSubmitting(true);
+    try {
+      const result = await createKeeperRequest(session, input);
+      setKeeperDraftText(null);
+      setKeeperMode(false);
+      removeKeeperParamFromUrl();
+      toast.success(t("keeperCreated"));
+      const fetched = await fetchRealtimeMessage(result.message_id).catch(() => false);
+      if (!fetched) {
+        await syncMessages(session, { onMessages: handleSyncedMessages }).catch(
+          () => undefined,
+        );
+      }
+    } catch (err) {
+      toast.error(humanizeError(err, language) || t("keeperCreateFailed"));
+    } finally {
+      setKeeperSubmitting(false);
     }
   }
 
@@ -1692,44 +2646,19 @@ export default function ChatPage() {
   }
 
   if (loading) {
-    return (
-      <div className="flex flex-1 items-center justify-center text-slate-500">
-        {t("commonLoading")}
-      </div>
-    );
+    return <ChatLoadingState />;
   }
 
   if (loadError) {
     return (
-      <div className="flex flex-1 items-center justify-center px-5 py-8">
-        <div className="card w-full max-w-md text-center">
-          <h1 className="text-lg font-bold text-slate-900">
-            {t("chatLoadFailedTitle")}
-          </h1>
-          <p className="mt-2 text-sm leading-relaxed text-slate-500">
-            {loadError}
-          </p>
-          <div className="mt-5 grid grid-cols-2 gap-3">
-            <button
-              type="button"
-              className="btn-primary"
-              onClick={() => setRetryNonce((value) => value + 1)}
-            >
-              {t("chatRetry")}
-            </button>
-            <button
-              type="button"
-              className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-600 shadow-sm transition hover:bg-slate-50"
-              onClick={() => {
-                clearSession();
-                router.replace("/");
-              }}
-            >
-              {t("chatBackHome")}
-            </button>
-          </div>
-        </div>
-      </div>
+      <ChatLoadErrorState
+        message={loadError}
+        onRetry={() => setRetryNonce((value) => value + 1)}
+        onBackHome={() => {
+          clearSession();
+          router.replace("/");
+        }}
+      />
     );
   }
 
@@ -1739,7 +2668,7 @@ export default function ChatPage() {
 
   return (
     <div
-      className="flex overflow-hidden flex-col"
+      className="chat-paper-bg flex overflow-hidden flex-col"
       style={{ height: "var(--chat-viewport-height, 100dvh)" }}
     >
       {effectShow ? (
@@ -1758,13 +2687,24 @@ export default function ChatPage() {
             onClick={() => setMessageActionMenu(null)}
           />
           <div
-            className="fixed z-50 min-w-44 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 text-sm shadow-xl"
+            className="fixed z-50 min-w-44 overflow-hidden rounded-2xl border border-white/80 bg-white/95 py-1 text-sm shadow-[0_18px_42px_rgba(70,62,48,0.14)] backdrop-blur-xl"
             style={{ left: messageActionMenu.x, top: messageActionMenu.y }}
           >
+            {selectedActionCopyText ? (
+              <button
+                type="button"
+                className={`${chatActionMenuButtonClass} text-slate-700 hover:bg-slate-50 focus-visible:ring-brand-200`}
+                onClick={() => {
+                  void handleCopyMessage(selectedActionMessage);
+                }}
+              >
+                {t("messageCopy")}
+              </button>
+            ) : null}
             {selectedActionMessage.recipient_member_id ? null : selectedActionNotification ? (
               <button
                 type="button"
-                className="block w-full px-4 py-2 text-left text-slate-700 hover:bg-slate-50"
+                className={`${chatActionMenuButtonClass} text-slate-700 hover:bg-slate-50 focus-visible:ring-brand-200`}
                 onClick={() => handleRemoveImportant(selectedActionNotification.id)}
               >
                 {t("importantUnset")}
@@ -1772,7 +2712,7 @@ export default function ChatPage() {
             ) : !selectedActionMessage.deleted_at ? (
               <button
                 type="button"
-                className="block w-full px-4 py-2 text-left text-slate-700 hover:bg-slate-50"
+                className={`${chatActionMenuButtonClass} text-slate-700 hover:bg-slate-50 focus-visible:ring-brand-200`}
                 onClick={() => handleAddImportant(selectedActionMessage.id)}
               >
                 {t("importantSet")}
@@ -1783,7 +2723,7 @@ export default function ChatPage() {
             !selectedActionMessage.deleted_at ? (
               <button
                 type="button"
-                className="block w-full px-4 py-2 text-left text-slate-700 hover:bg-slate-50"
+                className={`${chatActionMenuButtonClass} text-slate-700 hover:bg-slate-50 focus-visible:ring-brand-200`}
                 onClick={() => handleSetMessageImageBackground(selectedActionMessage)}
               >
                 {t("previewSetBackground")}
@@ -1795,7 +2735,7 @@ export default function ChatPage() {
               (!selectedActionMessage.recipient_member_id && session.is_admin)) ? (
               <button
                 type="button"
-                className="block w-full px-4 py-2 text-left text-rose-600 hover:bg-rose-50"
+                className={`${chatActionMenuButtonClass} text-rose-600 hover:bg-rose-50 focus-visible:ring-rose-200`}
                 onClick={() => {
                   setMessageActionMenu(null);
                   void handleDeleteMessage(selectedActionMessage.id);
@@ -1807,12 +2747,21 @@ export default function ChatPage() {
           </div>
         </>
       ) : null}
+      <KeeperRequestSheet
+        open={keeperDraftText !== null}
+        initialText={keeperDraftText ?? ""}
+        members={members}
+        currentMemberId={session.member_id}
+        submitting={keeperSubmitting}
+        onCancel={() => setKeeperDraftText(null)}
+        onSubmit={handleCreateKeeperRequest}
+      />
       <header
-        className="flex min-h-14 items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 py-2 sm:px-5"
+        className="relative z-20 flex min-h-[60px] items-center justify-between gap-2 border-b border-white/70 bg-white/[0.86] px-3 py-2 shadow-[0_8px_22px_rgba(62,56,44,0.06)] backdrop-blur-xl sm:px-5"
         onDoubleClick={handleHeaderDoubleClick}
         onTouchEnd={handleHeaderTouchEnd}
       >
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1 pr-1">
           <div className="text-[12px] leading-4 text-slate-500">{t("chatFamily")}</div>
           <div className="truncate text-lg font-bold leading-6 text-slate-900">
             {session.family_name}
@@ -1821,7 +2770,7 @@ export default function ChatPage() {
         <div className="flex shrink-0 items-center gap-1 sm:gap-2">
           <button
             type="button"
-            className="inline-flex h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-cover bg-center bg-no-repeat shadow-sm ring-1 ring-slate-200/70 transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+            className={chatHeaderIconClass}
             style={{
               backgroundImage: `url(${
                 push.enabled ? "/ui-icons/notify-on.png" : "/ui-icons/notify-off.png"
@@ -1836,32 +2785,41 @@ export default function ChatPage() {
                   : t("chatNotifyOn")
             }
             disabled={push.busy}
+            aria-pressed={push.enabled}
             onClick={handleToggleNotifications}
           />
           <Link
             href="/schedule"
-            className="inline-flex h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-cover bg-center bg-no-repeat shadow-sm ring-1 ring-slate-200/70 transition hover:brightness-95 active:brightness-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+            className={`${chatHeaderIconClass} relative`}
             style={{ backgroundImage: "url(/ui-icons/schedule.png)" }}
             aria-label={t("scheduleTitle")}
             title={t("scheduleTitle")}
-          />
+            onClick={clearScheduleAttention}
+          >
+            {scheduleAttentionDot ? (
+              <span
+                aria-hidden="true"
+                className="absolute right-1 top-1 h-2.5 w-2.5 rounded-full bg-rose-500 shadow-sm ring-2 ring-white"
+              />
+            ) : null}
+          </Link>
           <Link
             href="/me"
-            className="inline-flex h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-cover bg-center bg-no-repeat shadow-sm ring-1 ring-slate-200/70 transition hover:brightness-95 active:brightness-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+            className={chatHeaderIconClass}
             style={{ backgroundImage: "url(/ui-icons/me.png)" }}
             aria-label={t("meTitle")}
             title={t("meTitle")}
           />
           <Link
             href="/members"
-            className="inline-flex h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-cover bg-center bg-no-repeat shadow-sm ring-1 ring-slate-200/70 transition hover:brightness-95 active:brightness-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+            className={chatHeaderIconClass}
             style={{ backgroundImage: "url(/ui-icons/members.png)" }}
             aria-label={t("chatMembers")}
             title={t("chatMembers")}
           />
           <Link
             href="/settings"
-            className="inline-flex h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-cover bg-center bg-no-repeat shadow-sm ring-1 ring-slate-200/70 transition hover:brightness-95 active:brightness-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+            className={chatHeaderIconClass}
             style={{ backgroundImage: "url(/ui-icons/settings.png)" }}
             aria-label={t("chatSettings")}
             title={t("chatSettings")}
@@ -1870,13 +2828,18 @@ export default function ChatPage() {
       </header>
 
       {error ? (
-        <div className="border-b border-rose-100 bg-rose-50 px-4 py-2 text-sm leading-6 text-rose-700">
+        <div
+          className="border-b border-rose-100 bg-rose-50 px-4 py-2 text-sm leading-6 text-rose-800"
+          role="alert"
+        >
           {error}
         </div>
       ) : null}
       <ImportantNoticeBar
         notifications={visibleImportantNotifications}
         members={memberMap}
+        readStates={importantReadStates}
+        onRequestReadState={loadImportantReadState}
         onSelect={handleSelectImportant}
         onRemove={(notification) => handleRemoveImportant(notification.id)}
       />
@@ -1886,25 +2849,32 @@ export default function ChatPage() {
         onScroll={handleMessagesScroll}
         onTouchStart={handleMessagesTouchStart}
         onTouchEnd={handleMessagesTouchEnd}
-        className="no-scrollbar flex-1 min-h-0 overflow-y-auto overscroll-contain bg-slate-50 bg-cover bg-center bg-no-repeat px-3 pt-4 sm:px-5"
+        className="native-scroll chat-paper-bg min-h-0 flex-1 overflow-y-auto bg-cover bg-center bg-no-repeat px-3 pt-3 sm:px-5"
+        role="log"
+        aria-label={`${session.family_name} ${t("chatFamily")}`}
+        aria-live="polite"
+        aria-relevant="additions"
         style={{
           ...(chatBackgroundUrl
             ? {
-                backgroundImage: `linear-gradient(rgba(248, 250, 252, 0.82), rgba(248, 250, 252, 0.82)), url("${chatBackgroundUrl}")`,
+                backgroundImage: `linear-gradient(rgba(247, 246, 242, 0.78), rgba(247, 246, 242, 0.78)), url("${chatBackgroundUrl}")`,
               }
             : {}),
         }}
       >
-        <div ref={messagesContentRef} className="space-y-4">
+        <div
+          ref={messagesContentRef}
+          className={
+            messages.length === 0 && !assistantReplyPending
+              ? "flex min-h-full flex-col justify-center pb-4"
+              : "space-y-3 pb-2"
+          }
+        >
           {loadingOlderMessages ? (
-            <div className="flex justify-center pb-1">
-              <span className="h-1.5 w-10 rounded-full bg-slate-300/80" />
-            </div>
+            <OlderMessagesLoadingIndicator />
           ) : null}
-          {messages.length === 0 ? (
-            <div className="py-10 text-center text-sm text-slate-400">
-              {t("chatEmpty")}
-            </div>
+          {messages.length === 0 && !assistantReplyPending ? (
+            <ChatEmptyState />
           ) : (
             messages.map((m) => {
               const isMine = m.sender_member_id === session.member_id;
@@ -1919,11 +2889,7 @@ export default function ChatPage() {
                       messageRefs.current.delete(m.id);
                     }
                   }}
-                  className="scroll-mb-28 rounded-3xl"
-                  style={{
-                    scrollMarginBottom:
-                      "calc(104px + env(safe-area-inset-bottom))",
-                  }}
+                  className="rounded-3xl"
                 >
                   <ChatMessage
                     message={m}
@@ -1939,6 +2905,25 @@ export default function ChatPage() {
                     }
                     isMine={isMine}
                     highlighted={highlightedMessageId === m.id}
+                    assistantCard={assistantCardsByMessageId.get(m.id) ?? null}
+                    assistantCardSubmitting={
+                      assistantSubmittingCardId ===
+                      assistantCardsByMessageId.get(m.id)?.id
+                    }
+                    currentMemberId={session.member_id}
+                    onConfirmAssistantCard={handleConfirmAssistantCard}
+                    onCancelAssistantCard={handleCancelAssistantCard}
+                    onModifyAssistantCard={handleModifyAssistantCard}
+                    onOpenAssistantSchedule={handleOpenAssistantSchedule}
+                    onAcceptAssistantTask={(card) =>
+                      handleAssistantTaskAction(card, "accept")
+                    }
+                    onCompleteAssistantTask={(card) =>
+                      handleAssistantTaskAction(card, "complete")
+                    }
+                    onSnoozeAssistantTask={(card) =>
+                      handleAssistantTaskAction(card, "snooze")
+                    }
                     onRequestActions={canOpenActions ? openMessageActions : undefined}
                     onReplayEffect={handleReplayEffect}
                   />
@@ -1946,20 +2931,33 @@ export default function ChatPage() {
               );
             })
           )}
-          <div
-            ref={messagesEndRef}
-            aria-hidden
-            style={{
-              height: `calc(${whisperTarget ? 140 : 96}px + env(safe-area-inset-bottom))`,
-            }}
-          />
+          {assistantReplyPending ? <AssistantReplyPendingBubble /> : null}
+          <div ref={messagesEndRef} aria-hidden className="h-4" />
         </div>
       </div>
 
-      {whisperTarget ? (
+      <div className="relative z-40 shrink-0">
+      {keeperMode && !whisperTarget ? (
         <div
-          className="fixed inset-x-0 z-40 mx-auto flex h-10 w-full max-w-3xl items-center justify-between gap-2 border-t border-violet-100 bg-violet-50/95 px-3 text-sm text-violet-800 shadow-sm backdrop-blur sm:px-4"
-          style={{ bottom: "calc(61px + env(safe-area-inset-bottom))" }}
+          className="mx-auto flex h-10 w-full max-w-3xl items-center justify-between gap-2 border-t border-emerald-100/70 bg-emerald-50/90 px-3 text-sm text-emerald-800 shadow-[0_-10px_24px_rgba(47,83,67,0.08)] backdrop-blur-xl sm:px-4"
+        >
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white text-xs font-black text-emerald-700 ring-1 ring-emerald-100">
+              家
+            </span>
+            <span className="truncate font-semibold">{t("keeperModeLabel")}</span>
+          </div>
+          <button
+            type="button"
+            className="native-press shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-200"
+            onClick={exitKeeperMode}
+          >
+            {t("whisperExit")}
+          </button>
+        </div>
+      ) : whisperTarget ? (
+        <div
+          className="mx-auto flex h-10 w-full max-w-3xl items-center justify-between gap-2 border-t border-violet-100/70 bg-violet-50/90 px-3 text-sm text-violet-800 shadow-[0_-10px_24px_rgba(88,70,118,0.08)] backdrop-blur-xl sm:px-4"
         >
           <div className="flex min-w-0 items-center gap-2">
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1974,7 +2972,7 @@ export default function ChatPage() {
           </div>
           <button
             type="button"
-            className="shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold text-violet-700 transition hover:bg-violet-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-200"
+            className="native-press shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold text-violet-700 hover:bg-violet-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-200"
             onClick={exitWhisperMode}
           >
             {t("whisperExit")}
@@ -1992,7 +2990,10 @@ export default function ChatPage() {
         currentMemberId={session.member_id}
         whisperTargetId={whisperTarget?.id ?? null}
         onSelectWhisper={enterWhisperMode}
+        keeperMode={keeperMode}
+        onOpenKeeper={() => enterKeeperMode()}
       />
+      </div>
     </div>
   );
 }

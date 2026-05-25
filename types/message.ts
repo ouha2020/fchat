@@ -8,7 +8,12 @@ export type SystemEventType =
   | "join_disabled"
   | "member_removed"
   | "member_left"
-  | "admin_password_changed";
+  | "admin_password_changed"
+  | "keeper_request_created"
+  | "assistant_card_created"
+  | "assistant_card_confirmed"
+  | "assistant_card_cancelled"
+  | "assistant_action_done";
 
 export interface Message {
   id: string;

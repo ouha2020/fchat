@@ -2,9 +2,14 @@
 
 import { getSupabase } from "./supabaseClient";
 import type { LocalSession } from "@/lib/authLocal";
-import type { ImportantNotification } from "@/types/importantNotification";
+import type {
+  ImportantNotification,
+  ImportantNotificationReadMember,
+  ImportantNotificationReadState,
+} from "@/types/importantNotification";
 import { normalizeMessage } from "@/lib/messageService";
 import type { MessageType, SystemEventType } from "@/types/message";
+import { uuidSchema } from "@/lib/validation";
 
 interface ImportantNotificationRow {
   id: string;
@@ -113,4 +118,37 @@ export async function removeImportantNotification(
     p_notification_id: notificationId,
   });
   if (error) throw error;
+}
+
+export async function getImportantNotificationReadState(
+  session: LocalSession,
+  notificationId: string,
+): Promise<ImportantNotificationReadState> {
+  uuidSchema.parse(notificationId);
+  const sb = getSupabase();
+  const { data, error } = await sb.rpc("get_important_notification_read_state", {
+    p_member_id: session.member_id,
+    p_member_token: session.member_token,
+    p_notification_id: notificationId,
+  });
+  if (error) throw error;
+  const members = ((data ?? []) as ImportantNotificationReadMember[]).map((row) => ({
+    notification_id: row.notification_id,
+    member_id: row.member_id,
+    nickname: row.nickname,
+    role: row.role,
+    delivered_at: row.delivered_at ?? null,
+    read_at: row.read_at ?? null,
+    is_read: Boolean(row.is_read),
+  }));
+  const unreadNicknames = members
+    .filter((member) => !member.is_read)
+    .map((member) => member.nickname);
+  return {
+    notificationId,
+    members,
+    readCount: members.length - unreadNicknames.length,
+    unreadCount: unreadNicknames.length,
+    unreadNicknames,
+  };
 }

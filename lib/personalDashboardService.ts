@@ -40,6 +40,7 @@ function normalizeDashboard(
     is_admin: session.is_admin,
     family_id: session.family_id,
     family_name: session.family_name,
+    avatar_url: null,
   };
 
   return {

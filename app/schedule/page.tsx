@@ -10,15 +10,17 @@ import { useToast } from "@/components/Toast";
 import { clearSession, loadSession, saveSession, type LocalSession } from "@/lib/authLocal";
 import { humanizeError } from "@/lib/errors";
 import { validateMember } from "@/lib/familyService";
+import { getJapanHoliday, type JapanHoliday } from "@/lib/japanHolidays";
 import { listMembers } from "@/lib/memberService";
 import {
+  createScheduleContextEvent,
   createScheduleItem,
+  deleteScheduleContextEvent,
   deleteScheduleItem,
-  deleteScheduleComment,
   getScheduleItem,
   getScheduleCollaboration,
   getScheduleReminderStatus,
-  addScheduleComment,
+  listScheduleContextEvents,
   listScheduleItems,
   respondScheduleAssignment,
   replaceScheduleItemRecurrence,
@@ -32,6 +34,8 @@ import type { FamilyMember } from "@/types/member";
 import type {
   ScheduleItem,
   ScheduleCollaboration,
+  ScheduleContextEvent,
+  ScheduleContextVisibility,
   ScheduleRecurrenceScope,
   ScheduleRecurrenceRule,
   ScheduleReminderOffset,
@@ -45,6 +49,7 @@ type ScheduleAssigneeFilter = "all" | string;
 type ScheduleTypeFilter = "all" | ScheduleItemType;
 type ScheduleVisibilityFilter = "all" | ScheduleVisibility;
 const REMINDER_OFFSETS: ScheduleReminderOffset[] = [0, 10, 30, 60, 1440];
+const SCHEDULE_FALLBACK_POLL_MS = 30_000;
 
 interface ScheduleReminderMessage {
   type: "family-chat:schedule-reminder";
@@ -74,7 +79,7 @@ interface ScheduleFormState {
   recurrenceRule: ScheduleRecurrenceRule;
 }
 
-const VIEW_MODES: ScheduleViewMode[] = ["day", "week", "month"];
+const VIEW_MODES: ScheduleViewMode[] = ["month", "week", "day"];
 const TYPE_FILTERS: ScheduleTypeFilter[] = [
   "all",
   "schedule",
@@ -97,7 +102,7 @@ export default function SchedulePage() {
   const [members, setMembers] = useState<FamilyMember[]>([]);
   const [items, setItems] = useState<ScheduleItem[]>([]);
   const [myTodayItems, setMyTodayItems] = useState<ScheduleItem[]>([]);
-  const [viewMode, setViewMode] = useState<ScheduleViewMode>("day");
+  const [viewMode, setViewMode] = useState<ScheduleViewMode>("month");
   const [queryItemId, setQueryItemId] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState<Date>(() =>
     startOfDay(new Date()),
@@ -122,10 +127,15 @@ export default function SchedulePage() {
   const [collaboration, setCollaboration] =
     useState<ScheduleCollaboration | null>(null);
   const [collaborationLoading, setCollaborationLoading] = useState(false);
+  const [contextEvents, setContextEvents] = useState<ScheduleContextEvent[]>([]);
+  const [contextEventsLoading, setContextEventsLoading] = useState(false);
   const [reminderStatus, setReminderStatus] =
     useState<ScheduleReminderStatus | null>(null);
   const [reminderStatusLoading, setReminderStatusLoading] = useState(false);
   const [commentText, setCommentText] = useState("");
+  const [contextVisibility, setContextVisibility] =
+    useState<ScheduleContextVisibility>("family");
+  const [contextRecipientId, setContextRecipientId] = useState("");
   const [declineNote, setDeclineNote] = useState("");
   const [showDeclineNote, setShowDeclineNote] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -398,8 +408,25 @@ export default function SchedulePage() {
     [language, session, t, toast],
   );
 
-  const refreshReminderStatus = useCallback(
+  const refreshContextEvents = useCallback(
     async (scheduleItemId: string) => {
+      if (!session || !scheduleItemId || !isUuid(scheduleItemId)) return;
+      setContextEventsLoading(true);
+      try {
+        const rows = await listScheduleContextEvents(session, scheduleItemId);
+        setContextEvents(rows);
+      } catch (err) {
+        setContextEvents([]);
+        toast.error(humanizeError(err, language) || t("scheduleItemUnavailable"));
+      } finally {
+        setContextEventsLoading(false);
+      }
+    },
+    [language, session, t, toast],
+  );
+
+  const refreshReminderStatus = useCallback(
+    async (scheduleItemId: string, options?: { silent?: boolean }) => {
       if (!session || !scheduleItemId || !isUuid(scheduleItemId)) return;
       setReminderStatusLoading(true);
       try {
@@ -407,7 +434,9 @@ export default function SchedulePage() {
         setReminderStatus(data);
       } catch (err) {
         setReminderStatus(null);
-        toast.error(humanizeError(err, language));
+        if (!options?.silent) {
+          toast.error(humanizeError(err, language));
+        }
       } finally {
         setReminderStatusLoading(false);
       }
@@ -449,10 +478,13 @@ export default function SchedulePage() {
         setSelectedItem(fresh);
         setEditForm(formStateFromItem(fresh));
         setCommentText("");
+        setContextVisibility("family");
+        setContextRecipientId("");
         setDeclineNote("");
         setShowDeclineNote(false);
         await Promise.all([
           refreshCollaboration(fresh.id),
+          refreshContextEvents(fresh.id),
           refreshReminderStatus(fresh.id),
         ]);
         setEditScope("single");
@@ -471,6 +503,7 @@ export default function SchedulePage() {
       language,
       myTodayItems,
       refreshCollaboration,
+      refreshContextEvents,
       refreshReminderStatus,
       session,
       t,
@@ -481,10 +514,32 @@ export default function SchedulePage() {
   const closeDetails = useCallback(() => {
     setSelectedItem(null);
     setCollaboration(null);
+    setContextEvents([]);
     setReminderStatus(null);
     setEditMode(false);
     clearItemParam();
   }, [clearItemParam]);
+
+  const refreshSelectedScheduleDetail = useCallback(
+    async (scheduleItemId: string) => {
+      if (!session || !scheduleItemId || !isUuid(scheduleItemId)) return;
+      try {
+        const fresh = await getScheduleItem(session, scheduleItemId);
+        if (!fresh) {
+          setSelectedItem(null);
+          setReminderStatus(null);
+          setEditMode(false);
+          clearItemParam();
+          return;
+        }
+        setSelectedItem(fresh);
+        await refreshReminderStatus(fresh.id, { silent: true });
+      } catch {
+        // Background fallback refresh should not interrupt the schedule UI.
+      }
+    },
+    [clearItemParam, refreshReminderStatus, session],
+  );
 
   const scheduleRefresh = useCallback(
     (force = false) => {
@@ -506,9 +561,13 @@ export default function SchedulePage() {
         pendingScheduleRefreshRef.current = false;
         scheduleRefreshTimerRef.current = null;
         void refreshItems();
+        const currentSelectedId = selectedItemIdRef.current;
+        if (currentSelectedId) {
+          void refreshSelectedScheduleDetail(currentSelectedId);
+        }
       }, 180);
     },
-    [refreshItems],
+    [refreshItems, refreshSelectedScheduleDetail],
   );
 
   useEffect(() => {
@@ -607,6 +666,7 @@ export default function SchedulePage() {
         ) {
           syncWarningShownRef.current = true;
           toast.error(t("scheduleSyncUnavailable"));
+          scheduleRefresh(true);
         }
       });
 
@@ -619,7 +679,7 @@ export default function SchedulePage() {
     if (!session) return;
     const interval = window.setInterval(() => {
       if (document.visibilityState === "visible") scheduleRefresh(false);
-    }, 60_000);
+    }, SCHEDULE_FALLBACK_POLL_MS);
     return () => window.clearInterval(interval);
   }, [scheduleRefresh, session]);
 
@@ -772,9 +832,29 @@ export default function SchedulePage() {
     if (!session || !selectedItem) return;
     setBusy(`comment:${selectedItem.id}`);
     try {
-      await addScheduleComment(session, selectedItem.id, commentText);
+      const fallbackRecipient =
+        contextRecipientId ||
+        activeMembers.find((member) => {
+          if (member.id === session.member_id || member.status !== "active") {
+            return false;
+          }
+          if (selectedItem.visibility === "family") return true;
+          return (
+            member.id === selectedItem.creator_member_id ||
+            member.id === selectedItem.assignee_member_id
+          );
+        })?.id ||
+        null;
+      await createScheduleContextEvent(session, {
+        schedule_item_id: selectedItem.id,
+        event_type: "text",
+        visibility: contextVisibility,
+        recipient_member_id:
+          contextVisibility === "private" ? fallbackRecipient : null,
+        text_content: commentText.trim(),
+      });
       setCommentText("");
-      await refreshCollaboration(selectedItem.id);
+      await refreshContextEvents(selectedItem.id);
       notifyScheduleCollaboration(selectedItem.id, "commented");
       toast.success(t("scheduleCommentSuccess"));
     } catch (err) {
@@ -795,8 +875,8 @@ export default function SchedulePage() {
 
     setBusy(`comment-delete:${commentId}`);
     try {
-      await deleteScheduleComment(session, commentId);
-      await refreshCollaboration(selectedItem.id);
+      await deleteScheduleContextEvent(session, commentId);
+      await refreshContextEvents(selectedItem.id);
       toast.success(t("scheduleCommentDeleted"));
     } catch (err) {
       toast.error(humanizeError(err, language));
@@ -1198,9 +1278,13 @@ export default function SchedulePage() {
           detailLoading={detailLoading}
           collaboration={collaboration}
           collaborationLoading={collaborationLoading}
+          contextEvents={contextEvents}
+          contextEventsLoading={contextEventsLoading}
           reminderStatus={reminderStatus}
           reminderStatusLoading={reminderStatusLoading}
           commentText={commentText}
+          contextVisibility={contextVisibility}
+          contextRecipientId={contextRecipientId}
           declineNote={declineNote}
           showDeclineNote={showDeclineNote}
           editMode={editMode}
@@ -1211,6 +1295,8 @@ export default function SchedulePage() {
           language={language}
           onClose={closeDetails}
           onCommentTextChange={setCommentText}
+          onContextVisibilityChange={setContextVisibility}
+          onContextRecipientChange={setContextRecipientId}
           onDeclineNoteChange={setDeclineNote}
           onShowDeclineNoteChange={setShowDeclineNote}
           onAddComment={handleAddComment}
@@ -1405,9 +1491,13 @@ function ScheduleDetailPanel({
   detailLoading,
   collaboration,
   collaborationLoading,
+  contextEvents,
+  contextEventsLoading,
   reminderStatus,
   reminderStatusLoading,
   commentText,
+  contextVisibility,
+  contextRecipientId,
   declineNote,
   showDeclineNote,
   editMode,
@@ -1418,6 +1508,8 @@ function ScheduleDetailPanel({
   language,
   onClose,
   onCommentTextChange,
+  onContextVisibilityChange,
+  onContextRecipientChange,
   onDeclineNoteChange,
   onShowDeclineNoteChange,
   onAddComment,
@@ -1440,9 +1532,13 @@ function ScheduleDetailPanel({
   detailLoading: boolean;
   collaboration: ScheduleCollaboration | null;
   collaborationLoading: boolean;
+  contextEvents: ScheduleContextEvent[];
+  contextEventsLoading: boolean;
   reminderStatus: ScheduleReminderStatus | null;
   reminderStatusLoading: boolean;
   commentText: string;
+  contextVisibility: ScheduleContextVisibility;
+  contextRecipientId: string;
   declineNote: string;
   showDeclineNote: boolean;
   editMode: boolean;
@@ -1453,6 +1549,8 @@ function ScheduleDetailPanel({
   language: ReturnType<typeof useLanguage>["language"];
   onClose: () => void;
   onCommentTextChange: (value: string) => void;
+  onContextVisibilityChange: (value: ScheduleContextVisibility) => void;
+  onContextRecipientChange: (value: string) => void;
   onDeclineNoteChange: (value: string) => void;
   onShowDeclineNoteChange: (value: boolean) => void;
   onAddComment: () => void;
@@ -1484,10 +1582,55 @@ function ScheduleDetailPanel({
   };
   const isAssignee = item.assignee_member_id === session.member_id;
   const canComment = item.status !== "cancelled";
+  const contextRecipientOptions = members.filter((member) => {
+    if (member.id === session.member_id || member.status !== "active") return false;
+    if (item.visibility === "family") return true;
+    return (
+      member.id === item.creator_member_id ||
+      member.id === item.assignee_member_id
+    );
+  });
+  const selectedContextRecipient =
+    contextRecipientOptions.find((member) => member.id === contextRecipientId) ??
+    contextRecipientOptions[0] ??
+    null;
+  const sendDisabled =
+    commentBusy ||
+    commentText.trim().length === 0 ||
+    (contextVisibility === "private" && !selectedContextRecipient);
+  const recordRows = contextEvents
+    .map((event) => ({
+      id: `event:${event.id}`,
+      event,
+      created_at: event.created_at,
+    }))
+    .sort((a, b) =>
+      a.created_at.localeCompare(b.created_at),
+  );
+  const deliveries = reminderStatus?.deliveries ?? [];
+  const deliveryCounts = deliveries.reduce<Record<string, number>>((acc, delivery) => {
+    acc[delivery.status] = (acc[delivery.status] ?? 0) + 1;
+    return acc;
+  }, {});
+  const highlightedDeliveries = deliveries
+    .filter((delivery) => delivery.status === "failed" || delivery.status === "gone")
+    .slice(0, 3);
+  const scheduleTimeRange = `${formatDate(item.starts_at, language)} ${formatTime(
+    item.starts_at,
+    language,
+  )}${
+    item.ends_at
+      ? ` - ${formatTime(item.ends_at, language)}`
+      : ""
+  }`;
+  const reminderTimeLabel = item.remind_at
+    ? `${formatDate(item.remind_at, language)} ${formatTime(item.remind_at, language)}`
+    : t("scheduleReminderNone");
 
   return (
     <div className="fixed inset-0 z-50 flex items-end bg-slate-950/35 px-0 sm:items-center sm:px-6">
-      <div className="max-h-[92dvh] w-full overflow-y-auto rounded-t-3xl bg-slate-50 p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-2xl sm:mx-auto sm:max-w-2xl sm:rounded-3xl sm:p-5">
+      <div className="flex h-[92dvh] max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-3xl bg-slate-50 shadow-2xl sm:mx-auto sm:max-w-2xl sm:rounded-3xl">
+        <div className="shrink-0 p-4 pb-3 sm:p-5 sm:pb-3">
         <div className="mb-4 flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-xs font-semibold uppercase tracking-wide text-brand-600">
@@ -1507,9 +1650,10 @@ function ScheduleDetailPanel({
             {t("commonLoading")}
           </div>
         ) : null}
+        </div>
 
         {editMode ? (
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-3 overflow-y-auto px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:px-5">
             <ScheduleEditFields
               form={editForm}
               members={members}
@@ -1545,98 +1689,85 @@ function ScheduleDetailPanel({
             </div>
           </div>
         ) : (
-          <>
-            <div className="grid gap-2 rounded-2xl bg-white p-4 text-sm text-slate-700 ring-1 ring-slate-100">
-              <DetailRow label={t("scheduleType")} value={itemTypeLabel(item.item_type, t)} />
-              <DetailRow
-                label={t("scheduleVisibility")}
-                value={
-                  item.visibility === "family"
-                    ? t("scheduleVisibilityFamily")
-                    : t("scheduleVisibilityPrivate")
-                }
-              />
-              <DetailRow label={t("scheduleAssignee")} value={item.assignee_nickname} />
-              <DetailRow label={t("scheduleCreator")} value={item.creator_nickname} />
-              <DetailRow
-                label={t("scheduleStartTime")}
-                value={`${formatDate(item.starts_at, language)} ${formatTime(
-                  item.starts_at,
-                  language,
-                )}`}
-              />
-              <DetailRow
-                label={t("scheduleEndTime")}
-                value={
-                  item.ends_at
-                    ? `${formatDate(item.ends_at, language)} ${formatTime(
-                        item.ends_at,
-                        language,
-                      )}`
-                    : t("scheduleNoEndTime")
-                }
-              />
-              <DetailRow
-                label={t("scheduleReminder")}
-                value={
-                  item.remind_at
-                    ? `${formatDate(item.remind_at, language)} ${formatTime(
-                        item.remind_at,
-                        language,
-                      )}`
-                    : t("scheduleReminderNone")
-                }
-              />
-              <DetailRow
-                label={t("scheduleRepeat")}
-                value={recurrenceLabel(item.recurrence_rule ?? "none", t)}
-              />
-              <DetailRow
-                label={t("scheduleStatus")}
-                value={item.status === "done" ? t("scheduleStatusDone") : t("scheduleStatusActive")}
-              />
-              {item.completed_at ? (
-                <DetailRow
-                  label={t("scheduleCompletedAt")}
-                  value={`${formatDate(item.completed_at, language)} ${formatTime(
-                    item.completed_at,
-                    language,
-                  )}`}
+          <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:px-5">
+            <div className="shrink-0 rounded-2xl bg-white p-3 text-sm text-slate-700 ring-1 ring-slate-100">
+              <div className="flex flex-wrap gap-2">
+                <DetailPill
+                  label={t("scheduleType")}
+                  value={itemTypeLabel(item.item_type, t)}
                 />
-              ) : null}
+                <DetailPill
+                  label={t("scheduleVisibility")}
+                  value={
+                    item.visibility === "family"
+                      ? t("scheduleVisibilityFamily")
+                      : t("scheduleVisibilityPrivate")
+                  }
+                />
+                <DetailPill
+                  label={t("scheduleAssignee")}
+                  value={item.assignee_nickname}
+                />
+                <DetailPill
+                  label={t("scheduleRepeat")}
+                  value={recurrenceLabel(item.recurrence_rule ?? "none", t)}
+                />
+                <DetailPill
+                  label={t("scheduleStatus")}
+                  value={
+                    item.status === "done"
+                      ? t("scheduleStatusDone")
+                      : t("scheduleStatusActive")
+                  }
+                />
+                <DetailPill
+                  label={t("scheduleStartTime")}
+                  value={scheduleTimeRange}
+                />
+                <DetailPill
+                  label={t("scheduleReminder")}
+                  value={reminderTimeLabel}
+                />
+              </div>
             </div>
 
             {item.note ? (
-              <div className="mt-3 rounded-2xl bg-white p-4 text-sm leading-6 text-slate-700 ring-1 ring-slate-100">
-                <div className="mb-1 text-xs font-semibold text-slate-500">
+              <details className="shrink-0 rounded-2xl bg-white px-3 py-2 text-sm text-slate-700 ring-1 ring-slate-100">
+                <summary className="cursor-pointer list-none text-xs font-semibold text-slate-500">
                   {t("scheduleNote")}
-                </div>
-                <p className="whitespace-pre-wrap break-words">{item.note}</p>
-              </div>
+                </summary>
+                <p className="mt-2 max-h-24 overflow-y-auto whitespace-pre-wrap break-words leading-6">
+                  {item.note}
+                </p>
+              </details>
             ) : null}
 
-            <section className="mt-3 rounded-2xl bg-white p-4 ring-1 ring-slate-100">
-              <div className="mb-3 flex items-center justify-between gap-2">
-                <h3 className="text-base font-semibold text-slate-900">
+            <details className="shrink-0 rounded-2xl bg-white p-3 ring-1 ring-slate-100">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-sm">
+                <span className="font-semibold text-slate-900">
                   {t("scheduleReminderStatus")}
-                </h3>
+                </span>
                 {reminderStatusLoading ? (
                   <span className="text-xs text-slate-400">
                     {t("commonLoading")}
                   </span>
+                ) : deliveries.length ? (
+                  <span className="rounded-full bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-700 ring-1 ring-amber-100">
+                    {deliveries.length}
+                  </span>
                 ) : null}
-              </div>
+              </summary>
               {!reminderStatus?.configured && !item.remind_at ? (
-                <p className="rounded-2xl bg-slate-50 p-3 text-sm text-slate-500">
+                <p className="mt-2 rounded-2xl bg-slate-50 p-3 text-sm text-slate-500">
                   {t("scheduleReminderNotSet")}
                 </p>
               ) : (
-                <div className="space-y-3">
-                  <div className="rounded-2xl bg-amber-50 p-3 text-sm text-amber-800 ring-1 ring-amber-100">
-                    <div className="font-medium">
-                      {t("scheduleReminderWillSendAt")}
-                    </div>
-                    <div className="mt-2 flex flex-wrap gap-2">
+                <div className="mt-2 max-h-[28dvh] space-y-2 overflow-y-auto pr-1">
+                  <div className="rounded-2xl bg-amber-50 px-3 py-2 text-sm text-amber-800 ring-1 ring-amber-100">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium">
+                        {t("scheduleReminderWillSendAt")}
+                      </span>
                       {reminderStatus?.rules?.length ? (
                         reminderStatus.rules.map((offset) => (
                           <span
@@ -1647,7 +1778,7 @@ function ScheduleDetailPanel({
                           </span>
                         ))
                       ) : item.remind_at ? (
-                        <span>
+                        <span className="text-xs font-semibold">
                           {formatDate(item.remind_at, language)}{" "}
                           {formatTime(item.remind_at, language)}
                         </span>
@@ -1663,31 +1794,50 @@ function ScheduleDetailPanel({
                     onSnooze={onSnoozeReminder}
                   />
                   {(reminderStatus?.deliveries.length ?? 0) > 1 ? (
-                    <div>
-                      <h4 className="mb-2 text-sm font-semibold text-slate-900">
-                        {t("scheduleReminderDeliveryMembers")}
-                      </h4>
-                      <div className="grid gap-2">
-                        {reminderStatus?.deliveries.map((delivery) => (
-                          <ReminderDeliveryCard
-                            key={delivery.id}
-                            delivery={delivery}
-                            t={t}
-                            language={language}
-                            compact
-                          />
-                        ))}
+                    <div className="rounded-2xl bg-slate-50 p-3">
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <h4 className="text-sm font-semibold text-slate-900">
+                          {t("scheduleReminderDeliveryMembers")}
+                        </h4>
+                        <span className="text-xs text-slate-400">
+                          {deliveries.length}
+                        </span>
                       </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {["pending", "sent", "failed", "gone", "skipped"].map((status) =>
+                          deliveryCounts[status] ? (
+                            <span
+                              key={status}
+                              className="rounded-full bg-white px-2 py-1 text-xs font-semibold text-slate-600 ring-1 ring-slate-100"
+                            >
+                              {reminderDeliveryLabel(status, t)} {deliveryCounts[status]}
+                            </span>
+                          ) : null,
+                        )}
+                      </div>
+                      {highlightedDeliveries.length ? (
+                        <div className="mt-2 grid gap-1.5">
+                          {highlightedDeliveries.map((delivery) => (
+                            <ReminderDeliveryCard
+                              key={delivery.id}
+                              delivery={delivery}
+                              t={t}
+                              language={language}
+                              compact
+                            />
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
                 </div>
               )}
-            </section>
+            </details>
 
-            <section className="mt-3 rounded-2xl bg-white p-4 ring-1 ring-slate-100">
-              <div className="mb-3 flex items-center justify-between gap-2">
+            <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[28px] bg-slate-100/80 ring-1 ring-slate-200">
+              <div className="flex shrink-0 items-center justify-between gap-2 px-4 py-3">
                 <h3 className="text-base font-semibold text-slate-900">
-                  {t("scheduleCollaboration")}
+                  {t("scheduleConversation")}
                 </h3>
                 {collaborationLoading ? (
                   <span className="text-xs text-slate-400">
@@ -1696,9 +1846,12 @@ function ScheduleDetailPanel({
                 ) : null}
               </div>
 
-              <div className="rounded-2xl bg-slate-50 p-3 text-sm text-slate-700">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-medium">
+              <div className="mx-3 mb-2 rounded-[22px] bg-white/80 p-3 text-sm text-slate-700 shadow-sm ring-1 ring-slate-100">
+                <div className="flex flex-wrap items-center justify-center gap-2 text-center">
+                  <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-100">
+                    {t("keeperName")}
+                  </span>
+                  <span className="text-xs font-medium text-slate-500">
                     {t("scheduleAssigneeResponse")}
                   </span>
                   <span className={responseBadgeClass(response.status)}>
@@ -1706,7 +1859,7 @@ function ScheduleDetailPanel({
                   </span>
                 </div>
                 {response.note ? (
-                  <p className="mt-2 whitespace-pre-wrap break-words text-slate-500">
+                  <p className="mt-2 whitespace-pre-wrap break-words text-center text-slate-500">
                     {response.note}
                   </p>
                 ) : null}
@@ -1751,107 +1904,202 @@ function ScheduleDetailPanel({
                 ) : null}
               </div>
 
-              <div className="mt-4">
-                <h4 className="mb-2 text-sm font-semibold text-slate-900">
-                  {t("scheduleComments")}
-                </h4>
-                {collaboration?.comments.length ? (
-                  <div className="flex flex-col gap-2">
-                    {collaboration.comments.map((comment) => {
-                      const canDeleteComment =
-                        comment.member_id === session.member_id ||
-                        item.creator_member_id === session.member_id ||
-                        (session.is_admin && item.visibility === "family");
-                      return (
-                        <div
-                          key={comment.id}
-                          className="rounded-2xl bg-slate-50 p-3 text-sm text-slate-700"
-                        >
-                          <div className="mb-1 flex items-center justify-between gap-2">
-                            <div className="min-w-0">
-                              <span className="font-semibold text-slate-900">
-                                {comment.nickname}
-                              </span>
-                              <span className="ml-2 text-xs text-slate-400">
-                                {formatDate(comment.created_at, language)}{" "}
-                                {formatTime(comment.created_at, language)}
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                {contextEventsLoading ? (
+                  <div className="mx-3 flex min-h-0 flex-1 items-center justify-center rounded-[24px] bg-slate-50 text-sm text-slate-500">
+                    {t("commonLoading")}
+                  </div>
+                ) : recordRows.length ? (
+                  <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3">
+                    {recordRows.map((row) => {
+                      const event = row.event;
+                      const senderMemberId = event.sender_member_id ?? null;
+                      const isMine = senderMemberId === session.member_id;
+                      const isSystem = isScheduleTimelineSystemEvent(event);
+                      const nickname = event.sender_nickname ?? t("keeperName");
+                      const createdAt = event.created_at ?? row.created_at;
+                      const text = isSystem
+                        ? scheduleTimelineFallback(event, t)
+                        : event.text_content ?? scheduleTimelineFallback(event, t);
+                      const isPrivate = event.visibility === "private";
+                      const avatarLabel = (isMine ? t("membersMe") : nickname).slice(0, 1);
+                      const canDeleteRecord =
+                        isMine && ["text", "audio", "location"].includes(event.event_type);
+                      if (isSystem) {
+                        return (
+                          <div key={row.id} className="flex justify-center px-3">
+                            <div className="max-w-[90%] rounded-full bg-white px-3 py-1.5 text-center text-[11px] font-medium text-slate-500 ring-1 ring-slate-100">
+                              <span className="break-words">{text}</span>
+                              <span className="ml-1 text-slate-400">
+                                {formatTime(createdAt, language)}
                               </span>
                             </div>
-                            {canDeleteComment ? (
-                              <button
-                                type="button"
-                                className="shrink-0 text-xs font-medium text-rose-600"
-                                disabled={busy === `comment-delete:${comment.id}`}
-                                onClick={() => onDeleteComment(comment.id)}
-                              >
-                                {t("scheduleDelete")}
-                              </button>
+                          </div>
+                        );
+                      }
+                      return (
+                        <div key={row.id}>
+                          <div
+                            className={`mb-1 flex items-center gap-1 text-[11px] text-slate-500 ${
+                              isMine ? "justify-end pr-10" : "pl-10"
+                            }`}
+                          >
+                            <span className="max-w-28 truncate">
+                              {isMine ? t("membersMe") : nickname}
+                            </span>
+                            <span aria-hidden="true">/</span>
+                            <span>{formatTime(createdAt, language)}</span>
+                            {canDeleteRecord ? (
+                              <>
+                                <span aria-hidden="true">/</span>
+                                <button
+                                  type="button"
+                                  className="font-semibold text-slate-400 hover:text-rose-500 disabled:opacity-50"
+                                  disabled={busy === `comment-delete:${event.id}`}
+                                  onClick={() => onDeleteComment(event.id)}
+                                >
+                                  {t("scheduleDelete")}
+                                </button>
+                              </>
                             ) : null}
                           </div>
-                          <p className="whitespace-pre-wrap break-words leading-6">
-                            {comment.content}
-                          </p>
+                          <div
+                            className={`flex items-end gap-2 ${
+                              isMine ? "justify-end" : "justify-start"
+                            }`}
+                          >
+                            {!isMine ? (
+                              <div
+                                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                                  event.sender_type === "keeper"
+                                    ? "bg-emerald-100 text-emerald-700"
+                                    : "bg-slate-200 text-slate-700"
+                                }`}
+                              >
+                                {avatarLabel}
+                              </div>
+                            ) : null}
+                            <div
+                              className={`max-w-[76%] rounded-[18px] px-3 py-2 text-sm shadow-sm ${
+                                isMine
+                                  ? "rounded-br-md bg-brand-600 text-white"
+                                  : event.sender_type === "keeper"
+                                    ? "rounded-bl-md bg-emerald-50 text-slate-800 ring-1 ring-emerald-100"
+                                    : "rounded-bl-md bg-white text-slate-800 ring-1 ring-slate-100"
+                              }`}
+                            >
+                              {isPrivate ? (
+                                <div
+                                  className={`mb-1 inline-flex rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+                                    isMine
+                                      ? "bg-white/20 text-white"
+                                      : "bg-violet-100 text-violet-700"
+                                  }`}
+                                >
+                                  {t("messageWhisperLabel")}
+                                </div>
+                              ) : null}
+                              {isPrivate && isMine && event.recipient_nickname ? (
+                                <p className="mb-1 text-[11px] text-white/80">
+                                  {t("messageWhisperTo", {
+                                    nickname: event.recipient_nickname,
+                                  })}
+                                </p>
+                              ) : null}
+                              <p className="whitespace-pre-wrap break-words leading-6">
+                                {text}
+                              </p>
+                            </div>
+                            {isMine ? (
+                              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-600 text-xs font-bold text-white">
+                                {avatarLabel}
+                              </div>
+                            ) : null}
+                          </div>
                         </div>
                       );
                     })}
                   </div>
                 ) : (
-                  <p className="rounded-2xl bg-slate-50 p-3 text-sm text-slate-500">
-                    {t("scheduleNoComments")}
-                  </p>
+                  <div className="mx-3 flex min-h-0 flex-1 items-center justify-center rounded-[24px] bg-slate-50 text-center text-sm text-slate-500">
+                    {t("scheduleConversationEmpty")}
+                  </div>
                 )}
                 {canComment ? (
-                  <div className="mt-3 flex flex-col gap-2">
-                    <textarea
-                      className="field min-h-20 resize-none"
-                      value={commentText}
-                      maxLength={300}
-                      placeholder={t("scheduleCommentPlaceholder")}
-                      onChange={(event) =>
-                        onCommentTextChange(event.target.value)
-                      }
-                    />
-                    <button
-                      type="button"
-                      className="btn-primary"
-                      disabled={commentBusy || commentText.trim().length === 0}
-                      onClick={onAddComment}
-                    >
-                      {commentBusy ? t("commonLoading") : t("scheduleSendComment")}
-                    </button>
+                  <div className="shrink-0 rounded-t-[24px] bg-white p-2 shadow-[0_-8px_20px_rgba(15,23,42,0.04)] ring-1 ring-slate-200">
+                    <div className="mb-2 flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        className={`h-8 rounded-full px-3 text-xs font-semibold transition ${
+                          contextVisibility === "family"
+                            ? "bg-brand-600 text-white"
+                            : "bg-slate-100 text-slate-600"
+                        }`}
+                        onClick={() => onContextVisibilityChange("family")}
+                      >
+                        {t("scheduleRecordPublic")}
+                      </button>
+                      <button
+                        type="button"
+                        className={`h-8 rounded-full px-3 text-xs font-semibold transition ${
+                          contextVisibility === "private"
+                            ? "bg-violet-600 text-white"
+                            : "bg-slate-100 text-slate-600"
+                        }`}
+                        onClick={() => {
+                          onContextVisibilityChange("private");
+                          if (!contextRecipientId && selectedContextRecipient) {
+                            onContextRecipientChange(selectedContextRecipient.id);
+                          }
+                        }}
+                        disabled={contextRecipientOptions.length === 0}
+                      >
+                        {t("scheduleRecordPrivate")}
+                      </button>
+                    </div>
+                    {contextVisibility === "private" ? (
+                      <select
+                        className="mb-2 h-9 w-full rounded-full border border-violet-100 bg-violet-50 px-3 text-xs font-semibold text-violet-700 outline-none"
+                        value={contextRecipientId || selectedContextRecipient?.id || ""}
+                        onChange={(event) => onContextRecipientChange(event.target.value)}
+                      >
+                        {contextRecipientOptions.map((member) => (
+                          <option key={member.id} value={member.id}>
+                            {t("scheduleRecordRecipient", {
+                              nickname: member.nickname,
+                            })}
+                          </option>
+                        ))}
+                      </select>
+                    ) : null}
+                    <div className="flex items-end gap-2">
+                      <textarea
+                        className="min-h-10 flex-1 resize-none rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none transition placeholder:text-slate-400 focus:border-brand-200 focus:bg-white focus:ring-2 focus:ring-brand-100"
+                        value={commentText}
+                        maxLength={300}
+                        rows={1}
+                        placeholder={t("scheduleRecordPlaceholder")}
+                        onChange={(event) =>
+                          onCommentTextChange(event.target.value)
+                        }
+                      />
+                      <button
+                        type="button"
+                        className="h-10 shrink-0 rounded-2xl bg-brand-600 px-4 text-sm font-semibold text-white shadow-sm transition disabled:bg-brand-300"
+                        disabled={sendDisabled}
+                        onClick={onAddComment}
+                      >
+                        {commentBusy ? t("commonLoading") : t("commonSend")}
+                      </button>
+                    </div>
                   </div>
                 ) : null}
               </div>
 
-              <div className="mt-4">
-                <h4 className="mb-2 text-sm font-semibold text-slate-900">
-                  {t("scheduleActivity")}
-                </h4>
-                {collaboration?.activity_logs.length ? (
-                  <div className="flex flex-col gap-2">
-                    {collaboration.activity_logs.slice(0, 10).map((entry) => (
-                      <div
-                        key={entry.id}
-                        className="rounded-2xl bg-slate-50 px-3 py-2 text-sm text-slate-600"
-                      >
-                        <p className="break-words">{entry.summary}</p>
-                        <p className="mt-1 text-xs text-slate-400">
-                          {formatDate(entry.created_at, language)}{" "}
-                          {formatTime(entry.created_at, language)}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="rounded-2xl bg-slate-50 p-3 text-sm text-slate-500">
-                    {t("scheduleNoActivity")}
-                  </p>
-                )}
-              </div>
             </section>
 
             {isRecurring ? (
-              <div className="mt-3">
+              <div className="shrink-0">
                 <ScopeSelect
                   label={t("scheduleDeleteScope")}
                   value={deleteScope}
@@ -1861,7 +2109,7 @@ function ScheduleDetailPanel({
               </div>
             ) : null}
 
-            <div className="mt-4 grid grid-cols-2 gap-2">
+            <div className="shrink-0 grid grid-cols-2 gap-2">
               {canEdit ? (
                 <button type="button" className="btn-secondary" onClick={onEdit}>
                   {t("scheduleEdit")}
@@ -1888,7 +2136,7 @@ function ScheduleDetailPanel({
                 </button>
               ) : null}
             </div>
-          </>
+          </div>
         )}
       </div>
     </div>
@@ -2134,11 +2382,13 @@ function ReminderOffsetChips({
   );
 }
 
-function DetailRow({ label, value }: { label: string; value: string }) {
+function DetailPill({ label, value }: { label: string; value: string }) {
   return (
-    <div className="grid grid-cols-[92px_1fr] gap-3">
-      <div className="text-slate-500">{label}</div>
-      <div className="min-w-0 break-words text-right text-slate-900">{value}</div>
+    <div className="inline-flex max-w-full min-w-0 items-center rounded-full bg-slate-50 px-3 py-1.5 ring-1 ring-slate-100">
+      <span className="mr-1 shrink-0 text-xs text-slate-500">{label}</span>
+      <span className="min-w-0 truncate text-xs font-semibold text-slate-900">
+        {value}
+      </span>
     </div>
   );
 }
@@ -2169,13 +2419,13 @@ function ReminderDeliveryCard({
   }
 
   return (
-    <div className="rounded-2xl bg-slate-50 p-3 text-sm text-slate-700">
+    <div className={`rounded-2xl bg-slate-50 text-sm text-slate-700 ${compact ? "px-2.5 py-2" : "p-3"}`}>
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <div className="truncate font-medium text-slate-900">
+          <div className={`${compact ? "text-xs" : ""} truncate font-medium text-slate-900`}>
             {compact ? delivery.nickname : t("commonMe")}
           </div>
-          <div className="mt-0.5 text-xs text-slate-400">
+          <div className="mt-0.5 truncate text-xs text-slate-400">
             {reminderKindLabel(delivery.reminder_kind, t)} ·{" "}
             {formatDate(delivery.scheduled_for, language)}{" "}
             {formatTime(delivery.scheduled_for, language)}
@@ -2243,6 +2493,7 @@ function ScheduleRangeControl({
   onToday: () => void;
 }) {
   const includesToday = rangeContainsToday(viewMode, selectedDate);
+  const holiday = viewMode !== "month" ? getJapanHoliday(selectedDate) : null;
 
   return (
     <section className="mb-3 rounded-2xl bg-white p-2.5 shadow-sm ring-1 ring-slate-100">
@@ -2284,6 +2535,7 @@ function ScheduleRangeControl({
               {t("scheduleTodayButton")}
             </span>
           ) : null}
+          {holiday ? <HolidayChip holiday={holiday} /> : null}
         </button>
         <button
           type="button"
@@ -2427,6 +2679,28 @@ function ScheduleFilters({
         </div>
       ) : null}
     </section>
+  );
+}
+
+function HolidayChip({
+  holiday,
+  compact = false,
+}: {
+  holiday: JapanHoliday;
+  compact?: boolean;
+}) {
+  return (
+    <span
+      className={`inline-flex max-w-full shrink-0 items-center rounded-full bg-rose-50 font-semibold text-rose-700 ring-1 ring-rose-100 ${
+        compact ? "px-2 py-0.5 text-[11px]" : "mt-1 px-2 py-0.5 text-[11px]"
+      }`}
+      title={holiday.name}
+    >
+      <span className="mr-1 rounded-full bg-rose-100 px-1 text-[10px] leading-4">
+        休
+      </span>
+      <span className="max-w-[7rem] truncate">{holiday.name}</span>
+    </span>
   );
 }
 
@@ -2608,10 +2882,12 @@ function WeekView({
     <>
       {visibleDays.map((day) => {
         const dayItems = groupedItems.get(toDateKey(day)) ?? [];
+        const holiday = getJapanHoliday(day);
         return (
           <section key={toDateKey(day)} className="flex flex-col gap-2">
-            <h2 className="px-1 text-sm font-semibold text-slate-600">
-              {formatWeekDayTitle(day, language)}
+            <h2 className="flex min-w-0 items-center gap-2 px-1 text-sm font-semibold text-slate-600">
+              <span className="truncate">{formatWeekDayTitle(day, language)}</span>
+              {holiday ? <HolidayChip holiday={holiday} compact /> : null}
             </h2>
             {dayItems.length === 0 ? (
               <div className="rounded-2xl bg-white px-4 py-3 text-sm text-slate-400 ring-1 ring-slate-100">
@@ -2708,11 +2984,13 @@ function scheduleToneClasses(item: ScheduleItem): ScheduleToneClasses {
 
 function dayNumberClass({
   day,
+  isHoliday,
   isToday,
   isSelected,
   isCurrentMonth,
 }: {
   day: Date;
+  isHoliday: boolean;
   isToday: boolean;
   isSelected: boolean;
   isCurrentMonth: boolean;
@@ -2722,6 +3000,7 @@ function dayNumberClass({
   if (isSelected) return `${base} bg-brand-500 text-white`;
   if (isToday) return `${base} bg-amber-100 text-amber-700 ring-1 ring-amber-200`;
   if (!isCurrentMonth) return `${base} text-slate-300`;
+  if (isHoliday) return `${base} bg-rose-50 text-rose-600 ring-1 ring-rose-100`;
   if (day.getDay() === 0) return `${base} text-rose-500`;
   if (day.getDay() === 6) return `${base} text-blue-500`;
   return `${base} text-slate-700`;
@@ -2773,6 +3052,7 @@ function MonthView({
           const dayItems = groupedItems.get(key) ?? [];
           const isToday = key === todayKey;
           const isSelected = key === selectedKey;
+          const holiday = getJapanHoliday(day);
           const isCurrentMonth = day.getMonth() === selectedMonth;
           const isLastColumn = index % 7 === 6;
           const isLastRow = index >= visibleDays.length - 7;
@@ -2794,6 +3074,8 @@ function MonthView({
                   ? "bg-brand-50/80 ring-1 ring-inset ring-brand-200"
                   : isToday
                     ? "bg-amber-50/70"
+                    : holiday && isCurrentMonth
+                      ? "bg-rose-50/60 hover:bg-rose-50"
                     : isCurrentMonth
                       ? "bg-white hover:bg-slate-50"
                       : "bg-slate-50/70 text-slate-300"
@@ -2813,13 +3095,21 @@ function MonthView({
                     className={dayNumberClass({
                       day,
                       isToday,
+                      isHoliday: Boolean(holiday),
                       isSelected,
                       isCurrentMonth,
                     })}
                   >
                     {day.getDate()}
                   </span>
-                  {isToday ? (
+                  {holiday && isCurrentMonth ? (
+                    <span
+                      className="max-w-[3.5rem] truncate rounded-[4px] bg-rose-100 px-1 text-[9px] font-semibold leading-4 text-rose-700"
+                      title={holiday.name}
+                    >
+                      {holiday.shortName}
+                    </span>
+                  ) : isToday ? (
                     <span className="hidden rounded-[4px] bg-amber-100 px-1 text-[9px] font-semibold leading-4 text-amber-700 min-[420px]:inline">
                       {t("scheduleTodayButton")}
                     </span>
@@ -3016,6 +3306,38 @@ function assigneeResponseLabel(
   return t("scheduleResponsePending");
 }
 
+function isScheduleTimelineSystemEvent(event: ScheduleContextEvent): boolean {
+  return !["text", "audio", "location"].includes(event.event_type);
+}
+
+function scheduleTimelineFallback(
+  event: ScheduleContextEvent,
+  t: ReturnType<typeof useLanguage>["t"],
+): string {
+  switch (event.event_type) {
+    case "created":
+      return t("scheduleTimelineCreated");
+    case "assigned":
+      return t("scheduleTimelineAssigned");
+    case "accepted":
+      return t("scheduleTimelineAccepted");
+    case "declined":
+      return t("scheduleTimelineDeclined");
+    case "completed":
+      return t("scheduleTimelineCompleted");
+    case "restored":
+      return t("scheduleTimelineRestored");
+    case "deleted":
+      return t("scheduleTimelineDeleted");
+    case "reminder_updated":
+      return t("scheduleTimelineReminderUpdated");
+    case "updated":
+      return t("scheduleTimelineUpdated");
+    default:
+      return t("scheduleTimelineSystem");
+  }
+}
+
 function responseBadgeClass(value: string): string {
   if (value === "accepted") {
     return "rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-100";
@@ -3085,7 +3407,8 @@ function itemTypeLabel(
 }
 
 function parseViewMode(value: string | null): ScheduleViewMode {
-  return value === "week" || value === "month" ? value : "day";
+  if (value === "day" || value === "week" || value === "month") return value;
+  return "month";
 }
 
 function parseTypeFilter(value: string | null): ScheduleTypeFilter {

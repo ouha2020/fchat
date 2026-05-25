@@ -10,3 +10,21 @@ export interface ImportantNotification {
   created_at: string;
   message: Message | null;
 }
+
+export interface ImportantNotificationReadMember {
+  notification_id: string;
+  member_id: string;
+  nickname: string;
+  role: string;
+  delivered_at: string | null;
+  read_at: string | null;
+  is_read: boolean;
+}
+
+export interface ImportantNotificationReadState {
+  notificationId: string;
+  members: ImportantNotificationReadMember[];
+  readCount: number;
+  unreadCount: number;
+  unreadNicknames: string[];
+}

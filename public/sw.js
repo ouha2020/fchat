@@ -1,8 +1,9 @@
-const PRECACHE = "family-chat-precache-v9";
-const RUNTIME = "family-chat-runtime-v9";
+const PRECACHE = "family-chat-precache-v10";
+const RUNTIME = "family-chat-runtime-v10";
 
 const PUSH_RECEIVED = "family-chat:push-received";
 const SCHEDULE_REMINDER_RECEIVED = "family-chat:schedule-reminder";
+const CLOSE_NOTIFICATIONS = "family-chat:close-notifications";
 
 const PRECACHE_URLS = [
   "/offline",
@@ -115,6 +116,12 @@ self.addEventListener("push", (event) => {
   };
 
   event.waitUntil(deliverForegroundOrNotify(title, options));
+});
+
+self.addEventListener("message", (event) => {
+  const data = event.data || {};
+  if (data.type !== CLOSE_NOTIFICATIONS) return;
+  event.waitUntil(closeNotifications(data));
 });
 
 self.addEventListener("notificationclick", (event) => {
@@ -238,6 +245,64 @@ async function deliverForegroundOrNotify(title, options) {
   }
 
   return self.registration.showNotification(title, options);
+}
+
+async function closeNotifications(data) {
+  if (typeof self.registration.getNotifications !== "function") return;
+
+  const familyId = data.familyId ? String(data.familyId) : null;
+  const messageIds = Array.isArray(data.messageIds)
+    ? data.messageIds.filter(Boolean).map(String)
+    : [];
+  const messageIdSet = new Set(messageIds);
+  const closeAllForFamily = data.closeAllForFamily === true;
+
+  if (!familyId && messageIdSet.size === 0) return;
+  if (!closeAllForFamily && messageIdSet.size === 0) return;
+
+  try {
+    const notifications = await self.registration.getNotifications();
+    notifications.forEach((notification) => {
+      if (
+        shouldCloseChatNotification(notification, {
+          familyId,
+          messageIdSet,
+          closeAllForFamily,
+        })
+      ) {
+        notification.close();
+      }
+    });
+  } catch {
+    // Notification cleanup is best-effort; never break the app flow.
+  }
+}
+
+function shouldCloseChatNotification(
+  notification,
+  { familyId, messageIdSet, closeAllForFamily },
+) {
+  const data = notification.data || {};
+  const notificationFamilyId = data.familyId ? String(data.familyId) : null;
+  const isScheduleReminder =
+    data.type === "schedule-reminder" || Boolean(data.scheduleItemId);
+
+  if (isScheduleReminder) return false;
+  if (familyId && notificationFamilyId !== familyId) return false;
+
+  if (closeAllForFamily) return true;
+
+  const notificationMessageId = data.messageId ? String(data.messageId) : null;
+  if (notificationMessageId && messageIdSet.has(notificationMessageId)) {
+    return true;
+  }
+
+  const tag = notification.tag || "";
+  for (const messageId of messageIdSet) {
+    if (tag.includes(messageId)) return true;
+  }
+
+  return false;
 }
 
 function buildClientPushMessage({

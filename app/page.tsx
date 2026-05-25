@@ -6,8 +6,8 @@ import { useEffect, useState } from "react";
 
 import EnvWarning from "@/components/EnvWarning";
 import { useToast } from "@/components/Toast";
-import { clearSession, loadSession, saveSession } from "@/lib/authLocal";
 import { ensureFamilyCode } from "@/lib/accountClient";
+import { clearSession, loadSession, saveSession } from "@/lib/authLocal";
 import { safeRestoreSession } from "@/lib/familyService";
 import { getSupabaseAuth } from "@/lib/supabaseAuthClient";
 import { isSupabaseConfigured } from "@/lib/supabaseClient";

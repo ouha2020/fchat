@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
 import { formatTime } from "@/lib/format";
@@ -9,13 +9,18 @@ import type { TranslationKey } from "@/lib/i18n";
 import { formatDuration } from "@/lib/recordingService";
 import { safeHttpUrl } from "@/lib/security";
 import { localizeSystemMessage } from "@/lib/systemMessage";
-import type { ImportantNotification } from "@/types/importantNotification";
+import type {
+  ImportantNotification,
+  ImportantNotificationReadState,
+} from "@/types/importantNotification";
 import type { FamilyMember } from "@/types/member";
 import type { Message } from "@/types/message";
 
 interface Props {
   notifications: ImportantNotification[];
   members: Map<string, FamilyMember>;
+  readStates?: Map<string, ImportantNotificationReadState>;
+  onRequestReadState?: (notificationId: string) => void;
   onSelect: (notification: ImportantNotification) => void;
   onRemove: (notification: ImportantNotification) => void;
 }
@@ -23,11 +28,22 @@ interface Props {
 export default function ImportantNoticeBar({
   notifications,
   members,
+  readStates,
+  onRequestReadState,
   onSelect,
   onRemove,
 }: Props) {
   const { language, t } = useLanguage();
   const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    if (!expanded || !onRequestReadState) return;
+    notifications.forEach((notification) => {
+      if (!readStates?.has(notification.id)) {
+        onRequestReadState(notification.id);
+      }
+    });
+  }, [expanded, notifications, onRequestReadState, readStates]);
 
   if (notifications.length === 0) return null;
 
@@ -35,10 +51,10 @@ export default function ImportantNoticeBar({
   const latestPreview = latest ? buildPreview(latest.message, t).text : "";
 
   return (
-    <section className="border-b border-amber-100/70 bg-white/85 px-3 py-1.5 backdrop-blur sm:px-5">
+    <section className="border-b border-white/70 bg-[#fffaf0]/80 px-3 py-1.5 shadow-[0_8px_18px_rgba(120,80,20,0.05)] backdrop-blur-xl sm:px-5">
       <button
         type="button"
-        className="flex min-h-10 w-full items-start justify-between gap-3 rounded-xl px-2 py-1 text-left text-[13px] leading-4 text-amber-700 transition hover:bg-amber-50/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200"
+        className="native-press flex min-h-10 w-full items-start justify-between gap-3 rounded-2xl px-2 py-1 text-left text-[13px] leading-4 text-amber-800 transition hover:bg-white/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200"
         aria-expanded={expanded}
         onClick={() => setExpanded((value) => !value)}
       >
@@ -60,7 +76,7 @@ export default function ImportantNoticeBar({
         </span>
       </button>
       {expanded ? (
-        <div className="mt-2 max-h-[120px] space-y-1 overflow-y-auto pr-1">
+        <div className="native-scroll mt-2 max-h-[120px] space-y-1 overflow-y-auto pr-1">
           {notifications.map((notification) => {
             const message = notification.message;
             const sender =
@@ -68,15 +84,16 @@ export default function ImportantNoticeBar({
                 ? members.get(message.sender_member_id)
                 : null;
             const preview = buildPreview(message, t);
+            const readState = readStates?.get(notification.id) ?? null;
 
             return (
               <div
                 key={notification.id}
-                className="group flex items-center gap-2 rounded-lg border border-amber-100 bg-amber-50/80 px-2 py-1.5 text-left shadow-sm transition hover:bg-amber-100/80"
+                className="group flex items-center gap-2 rounded-2xl border border-white/70 bg-white/[0.82] px-2 py-1.5 text-left shadow-[0_8px_20px_rgba(120,80,20,0.08)] transition hover:bg-white/95"
               >
                 <button
                   type="button"
-                  className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                  className="native-press flex min-w-0 flex-1 items-center gap-2 rounded-xl text-left"
                   onClick={() => onSelect(notification)}
                 >
                   <PreviewIcon message={message} text={preview.iconText} />
@@ -92,11 +109,12 @@ export default function ImportantNoticeBar({
                     <span className="block truncate text-xs text-slate-600">
                       {preview.text}
                     </span>
+                    <ReadStateLine state={readState} />
                   </span>
                 </button>
                 <button
                   type="button"
-                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xl leading-none text-slate-400 transition hover:bg-white hover:text-rose-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200"
+                  className="native-press flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-2xl leading-none text-slate-400 transition hover:bg-rose-50 hover:text-rose-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200"
                   aria-label={t("importantRemove")}
                   title={t("importantRemove")}
                   onClick={() => onRemove(notification)}
@@ -178,7 +196,7 @@ function PreviewIcon({
       <img
         src={imageUrl}
         alt=""
-        className="h-9 w-9 shrink-0 rounded-md object-cover"
+        className="h-9 w-9 shrink-0 rounded-xl object-cover shadow-[0_5px_12px_rgba(71,64,49,0.1)] ring-1 ring-white/80"
         draggable={false}
       />
     );
@@ -193,15 +211,48 @@ function PreviewIcon({
 
   if (src && !message?.deleted_at) {
     return (
-      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-white">
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/90 shadow-[0_5px_12px_rgba(71,64,49,0.08)] ring-1 ring-white/80">
         <Image src={src} alt="" width={24} height={24} className="h-6 w-6 object-contain" />
       </span>
     );
   }
 
   return (
-    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-white text-sm font-semibold text-amber-600">
+    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/90 text-sm font-semibold text-amber-700 shadow-[0_5px_12px_rgba(71,64,49,0.08)] ring-1 ring-white/80">
       {text}
+    </span>
+  );
+}
+
+function ReadStateLine({
+  state,
+}: {
+  state: ImportantNotificationReadState | null;
+}) {
+  const { t } = useLanguage();
+  if (!state) {
+    return (
+      <span className="mt-0.5 block truncate text-[11px] text-slate-400">
+        {t("importantReadLoading")}
+      </span>
+    );
+  }
+
+  const unreadNames = state.unreadNicknames.slice(0, 3).join("、");
+  const extra =
+    state.unreadNicknames.length > 3
+      ? ` +${state.unreadNicknames.length - 3}`
+      : "";
+
+  return (
+    <span className="mt-0.5 block truncate text-[11px] text-amber-700/80">
+      {t("importantReadSummary", {
+        read: state.readCount,
+        unread: state.unreadCount,
+      })}
+      {state.unreadCount > 0 && unreadNames
+        ? ` · ${t("importantUnreadMembers", { names: `${unreadNames}${extra}` })}`
+        : ""}
     </span>
   );
 }

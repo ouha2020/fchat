@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
 import { useToast } from "@/components/Toast";
 import { clearSession, loadSession, saveSession, type LocalSession } from "@/lib/authLocal";
+import { updateMemberAvatar, uploadAvatar } from "@/lib/avatarService";
 import { humanizeError } from "@/lib/errors";
 import { validateMember } from "@/lib/familyService";
 import { getPersonalDashboard } from "@/lib/personalDashboardService";
@@ -25,7 +26,9 @@ export default function MePage() {
   const [dashboard, setDashboard] = useState<PersonalDashboard | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [avatarBusy, setAvatarBusy] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const avatarInputRef = useRef<HTMLInputElement | null>(null);
 
   const refreshDashboard = useCallback(
     async (activeSession: LocalSession, quiet = false) => {
@@ -123,6 +126,57 @@ export default function MePage() {
     router.push(`/schedule?item=${encodeURIComponent(item.id)}`);
   }
 
+  async function handleAvatarFile(file: File | null) {
+    if (!file || !session) return;
+    setAvatarBusy(true);
+    try {
+      const url = await uploadAvatar(session, file);
+      const savedUrl = await updateMemberAvatar(session, url);
+      setDashboard((current) =>
+        current
+          ? {
+              ...current,
+              profile: {
+                ...current.profile,
+                avatar_url: savedUrl,
+              },
+            }
+          : current,
+      );
+      toast.success(t("meAvatarUpdated"));
+    } catch (err) {
+      toast.error(humanizeError(err, language) || t("meAvatarUploadFailed"));
+    } finally {
+      setAvatarBusy(false);
+      if (avatarInputRef.current) avatarInputRef.current.value = "";
+    }
+  }
+
+  async function handleRemoveAvatar() {
+    if (!session || !dashboard?.profile.avatar_url) return;
+    if (!window.confirm(t("meAvatarRemoveConfirm"))) return;
+    setAvatarBusy(true);
+    try {
+      await updateMemberAvatar(session, null);
+      setDashboard((current) =>
+        current
+          ? {
+              ...current,
+              profile: {
+                ...current.profile,
+                avatar_url: null,
+              },
+            }
+          : current,
+      );
+      toast.success(t("meAvatarRemoved"));
+    } catch (err) {
+      toast.error(humanizeError(err, language) || t("meAvatarUploadFailed"));
+    } finally {
+      setAvatarBusy(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="app-page">
@@ -188,9 +242,55 @@ export default function MePage() {
               {profile.is_admin ? t("commonAdmin") : t("meMember")}
             </p>
           </div>
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-brand-50 text-lg font-bold text-brand-700">
-            {profile.nickname.slice(0, 1).toUpperCase()}
+          <div className="flex shrink-0 flex-col items-center gap-2">
+            <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-3xl bg-brand-50 text-xl font-bold text-brand-700 ring-1 ring-brand-100">
+              {profile.avatar_url ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={profile.avatar_url}
+                  alt={profile.nickname}
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                profile.nickname.slice(0, 1).toUpperCase()
+              )}
+            </div>
+            <input
+              ref={avatarInputRef}
+              className="hidden"
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              onChange={(event) => {
+                void handleAvatarFile(event.target.files?.[0] ?? null);
+              }}
+            />
           </div>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            type="button"
+            className="btn-secondary flex-1 px-3 text-sm"
+            disabled={avatarBusy}
+            onClick={() => avatarInputRef.current?.click()}
+          >
+            {avatarBusy
+              ? t("commonLoading")
+              : profile.avatar_url
+                ? t("meAvatarChange")
+                : t("meAvatarUpload")}
+          </button>
+          {profile.avatar_url ? (
+            <button
+              type="button"
+              className="btn-ghost flex-1 px-3 text-sm text-rose-600 hover:bg-rose-50"
+              disabled={avatarBusy}
+              onClick={() => {
+                void handleRemoveAvatar();
+              }}
+            >
+              {t("meAvatarRemove")}
+            </button>
+          ) : null}
         </div>
         <p className="mt-3 rounded-xl bg-slate-50 p-3 text-sm leading-6 text-slate-500">
           {t("meIdentitySaved")}

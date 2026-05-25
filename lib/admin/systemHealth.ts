@@ -71,9 +71,31 @@ interface CatalogPolicy {
   qual?: string | null;
 }
 
+interface CatalogTrigger {
+  schema: string;
+  table: string;
+  name: string;
+  enabled: string;
+  definition?: string | null;
+}
+
+interface CatalogBucket {
+  name: string;
+  public?: boolean | null;
+  file_size_limit?: number | null;
+  allowed_mime_types?: string[] | null;
+}
+
 interface CatalogMigration {
   version?: string;
   name: string;
+}
+
+export interface HealthEnvironment {
+  systemHealthSecretConfigured: boolean;
+  pushFlushSecretConfigured: boolean;
+  scheduleReminderSecretConfigured: boolean;
+  cronSecretConfigured: boolean;
 }
 
 interface HealthCatalog {
@@ -83,8 +105,10 @@ interface HealthCatalog {
   routineGrants?: CatalogGrant[];
   tablePrivileges?: CatalogTablePrivilege[];
   policies?: CatalogPolicy[];
+  triggers?: CatalogTrigger[];
   realtimeTables?: { schema: string; table: string }[];
-  buckets?: { name: string }[];
+  buckets?: CatalogBucket[];
+  storagePolicies?: CatalogPolicy[];
   supabaseMigrations?: CatalogMigration[];
   appMigrations?: CatalogMigration[];
   catalogWarnings?: string[];
@@ -131,6 +155,10 @@ const REQUIRED_TABLES: ExpectedTable[] = [
   { name: "family_schedule_activity_logs", migrationName: "schedule_collaboration" },
   { name: "family_schedule_reminder_rules", migrationName: "schedule_reminder_experience_closure" },
   { name: "family_schedule_reminder_deliveries", migrationName: "schedule_reminder_deliveries" },
+  { name: "keeper_requests", migrationName: "keeper_requests" },
+  { name: "assistant_action_cards", migrationName: "assistant_action_cards" },
+  { name: "family_context_events", migrationName: "schedule_context_events" },
+  { name: "family_context_event_recipients", migrationName: "schedule_context_events" },
   { name: "app_schema_migrations", migrationName: "app_schema_health" },
 ];
 
@@ -147,6 +175,7 @@ const REQUIRED_COLUMNS: ExpectedColumn[] = [
   column("family_members", "user_id", "auth_family_code_flow"),
   column("family_members", "member_token_hash"),
   column("family_members", "access_token_hash", "family_code_token_security"),
+  column("family_members", "avatar_url", "member_avatar_profile"),
   column("family_members", "status"),
   column("message_recipients", "member_id", "message_recipients_inbox"),
   column("message_recipients", "delivery_state", "message_delivery_state"),
@@ -162,6 +191,16 @@ const REQUIRED_COLUMNS: ExpectedColumn[] = [
   column("family_schedule_reminder_deliveries", "attempt_count", "schedule_reminder_deliveries"),
   column("family_schedule_reminder_deliveries", "next_retry_at", "schedule_reminder_deliveries"),
   column("family_schedule_reminder_deliveries", "reminder_kind", "schedule_reminder_experience_closure"),
+  column("keeper_requests", "requester_member_id", "keeper_requests"),
+  column("keeper_requests", "schedule_item_id", "keeper_requests"),
+  column("assistant_action_cards", "card_message_id", "assistant_action_cards"),
+  column("assistant_action_cards", "status", "assistant_action_cards"),
+  column("assistant_action_cards", "payload", "assistant_action_cards"),
+  column("family_context_events", "schedule_item_id", "schedule_context_events"),
+  column("family_context_events", "recipient_member_id", "schedule_context_events"),
+  column("family_context_events", "source_table", "schedule_context_chat_backfill"),
+  column("family_context_events", "source_id", "schedule_context_chat_backfill"),
+  column("family_context_event_recipients", "event_id", "schedule_context_events"),
 ];
 
 const REQUIRED_FUNCTIONS: ExpectedFunction[] = [
@@ -176,7 +215,9 @@ const REQUIRED_FUNCTIONS: ExpectedFunction[] = [
   fn("mark_messages_delivered", ["p_message_ids uuid[]"], "message_delivery_state"),
   fn("mark_messages_read", ["p_message_ids uuid[]"], "message_delivery_state"),
   fn("get_unread_count_for_member", ["p_member_id uuid"], "message_delivery_state"),
+  fn("update_member_avatar", ["p_avatar_url text"], "member_avatar_profile"),
   fn("list_important_notifications_for_member", ["p_member_id uuid"]),
+  fn("get_important_notification_read_state", ["p_notification_id uuid"], "assistant_collaboration_mvp"),
   fn("add_important_notification", ["p_message_id uuid"]),
   fn("create_family_with_verified_code", ["p_user_id uuid"], "auth_family_code_flow", false),
   fn("issue_member_session_for_user", ["p_user_id uuid"], "auth_family_code_flow", false),
@@ -200,6 +241,16 @@ const REQUIRED_FUNCTIONS: ExpectedFunction[] = [
   fn("snooze_schedule_reminder", ["p_delivery_id uuid"], "schedule_reminder_experience_closure"),
   fn("ensure_overdue_schedule_reminders", [], "schedule_reminder_experience_closure", false),
   fn("get_schedule_reminder_health_for_member", ["p_member_id uuid"], "schedule_reminder_experience_closure"),
+  fn("create_keeper_request", ["p_request_text text"], "keeper_requests"),
+  fn("list_keeper_requests_for_member", ["p_member_id uuid"], "keeper_requests"),
+  fn("create_assistant_action_card", ["p_card_type text"], "assistant_action_cards"),
+  fn("confirm_assistant_action_card", ["p_card_id uuid"], "assistant_action_cards"),
+  fn("cancel_assistant_action_card", ["p_card_id uuid"], "assistant_action_cards"),
+  fn("list_assistant_action_cards_for_member", ["p_member_id uuid"], "assistant_action_cards"),
+  fn("create_schedule_context_event", ["p_schedule_item_id uuid"], "schedule_context_events"),
+  fn("list_schedule_context_events_for_member", ["p_schedule_item_id uuid"], "schedule_context_events"),
+  fn("delete_schedule_context_event", ["p_event_id uuid"], "schedule_context_chat_backfill"),
+  fn("insert_schedule_context_event", ["p_schedule_item_id uuid"], "schedule_context_timeline", false),
   fn("schema_health_ping", [], "app_schema_health", false),
   fn("get_system_health_catalog", [], "app_schema_health", false),
 ];
@@ -215,7 +266,55 @@ const REQUIRED_REALTIME_TABLES = [
   },
 ];
 
-const REQUIRED_BUCKETS = ["chat-images", "chat-audios"];
+const REQUIRED_TRIGGERS = [
+  {
+    table: "messages",
+    name: "trg_10_populate_message_recipients",
+    migrationName: "message_recipients_inbox",
+    impact: "新消息可能不会生成收件箱记录，导致消息不可见或 Push 目标为空。",
+  },
+  {
+    table: "messages",
+    name: "trg_20_enqueue_message_realtime_event",
+    migrationName: "directed_message_realtime_events",
+    impact: "新消息可能不会产生定向 Realtime 信号，只能依赖轮询补偿。",
+  },
+  {
+    table: "messages",
+    name: "trg_assign_message_family_seq",
+    migrationName: "family_seq_sync",
+    impact: "新消息可能没有 family_seq，弱网增量同步补偿会失效。",
+  },
+  {
+    table: "family_schedule_items",
+    name: "trg_family_schedule_realtime_events",
+    migrationName: "family_schedule_events",
+    impact: "日程变更可能不会实时通知其他成员。",
+  },
+  {
+    table: "family_schedule_items",
+    name: "trg_sync_schedule_reminder_deliveries",
+    migrationName: "schedule_reminder_deliveries",
+    impact: "新建或编辑日程后，提醒投递记录可能不会同步生成。",
+  },
+];
+
+const REQUIRED_BUCKETS: Array<{
+  name: string;
+  shouldBePublic: boolean;
+  impact: string;
+}> = [
+  {
+    name: "chat-images",
+    shouldBePublic: true,
+    impact: "图片、头像上传或展示可能失败。",
+  },
+  {
+    name: "chat-audios",
+    shouldBePublic: true,
+    impact: "语音上传或播放可能失败。",
+  },
+];
 
 const MESSAGE_PRIVACY_TABLES = ["messages", "important_notifications", "message_recipients"] as const;
 const MESSAGE_PRIVACY_ROLES = ["anon", "authenticated"] as const;
@@ -237,6 +336,15 @@ const REQUIRED_MIGRATIONS = [
   "schedule_recurrence_editing",
   "app_schema_health",
   "message_visibility_privacy_hardening",
+  "member_avatar_profile",
+  "keeper_requests",
+  "assistant_action_cards",
+  "assistant_collaboration_mvp",
+  "schedule_context_events",
+  "schedule_context_timeline",
+  "schedule_context_delete_timeline_fix",
+  "schedule_context_chat_backfill",
+  "system_health_consistency_checks",
 ];
 
 function column(table: string, columnName: string, migrationName?: string): ExpectedColumn {
@@ -255,6 +363,7 @@ function fn(
 export function buildSystemHealthReport(
   catalog: HealthCatalog,
   schemaCacheError?: string | null,
+  environment?: HealthEnvironment,
 ): HealthReport {
   const tableSet = new Set((catalog.tables ?? []).map((table) => `${table.schema}.${table.name}`));
   const columnSet = new Set(
@@ -273,7 +382,9 @@ export function buildSystemHealthReport(
   const realtimeSet = new Set(
     (catalog.realtimeTables ?? []).map((table) => `${table.schema}.${table.table}`),
   );
-  const bucketSet = new Set((catalog.buckets ?? []).map((bucket) => bucket.name));
+  const triggers = catalog.triggers ?? [];
+  const buckets = catalog.buckets ?? [];
+  const bucketMap = new Map(buckets.map((bucket) => [bucket.name, bucket]));
   const migrationSet = new Set(
     [...(catalog.supabaseMigrations ?? []), ...(catalog.appMigrations ?? [])].map((migration) =>
       migration.name.toLowerCase(),
@@ -388,6 +499,33 @@ export function buildSystemHealthReport(
       }),
     },
     {
+      id: "triggers",
+      label: "Triggers",
+      checks: REQUIRED_TRIGGERS.map((expected) => {
+        const trigger = triggers.find(
+          (candidate) =>
+            candidate.schema === "public" &&
+            candidate.table === expected.table &&
+            candidate.name === expected.name,
+        );
+        const enabled = trigger
+          ? trigger.enabled === "O" || trigger.enabled === "A"
+          : false;
+        return check({
+          id: `trigger:${expected.table}.${expected.name}`,
+          label: `${expected.table}.${expected.name}`,
+          passed: Boolean(trigger) && enabled,
+          severity: "critical",
+          message: trigger
+            ? "关键 trigger 存在但未启用。"
+            : "生产库缺少关键 trigger。",
+          impact: expected.impact,
+          suggestedFix: migrationFix(expected.migrationName),
+          migrationName: expected.migrationName,
+        });
+      }),
+    },
+    {
       id: "message-privacy",
       label: "消息隐私边界",
       checks: [
@@ -489,17 +627,67 @@ export function buildSystemHealthReport(
     {
       id: "storage",
       label: "Storage",
-      checks: REQUIRED_BUCKETS.map((bucket) =>
+      checks: REQUIRED_BUCKETS.flatMap((expected) => {
+        const bucket = bucketMap.get(expected.name);
+        return [
+          check({
+            id: `bucket:${expected.name}`,
+            label: `${expected.name} bucket`,
+            passed: Boolean(bucket),
+            severity: "critical",
+            message: "生产库缺少 Storage bucket。",
+            impact: expected.impact,
+            suggestedFix: `在 Supabase Storage 创建 ${expected.name} bucket 并配置现有策略。`,
+          }),
+          check({
+            id: `bucket-public:${expected.name}`,
+            label: `${expected.name} public 策略`,
+            passed: !bucket || bucket.public === expected.shouldBePublic,
+            severity: "warning",
+            message: expected.shouldBePublic
+              ? "该 bucket 不是 public，可能和当前媒体 URL 展示策略不一致。"
+              : "该 bucket 是 public，可能和当前隐私预期不一致。",
+            impact: expected.impact,
+            suggestedFix: `检查 ${expected.name} bucket 的 public 设置是否符合当前项目约定。`,
+          }),
+        ];
+      }),
+    },
+    {
+      id: "secrets",
+      label: "Secrets / Cron",
+      checks: [
         check({
-          id: `bucket:${bucket}`,
-          label: `${bucket} bucket`,
-          passed: bucketSet.has(bucket),
+          id: "secret:SYSTEM_HEALTH_SECRET",
+          label: "SYSTEM_HEALTH_SECRET",
+          passed: Boolean(environment?.systemHealthSecretConfigured),
           severity: "critical",
-          message: "生产库缺少 Storage bucket。",
-          impact: bucket === "chat-images" ? "图片上传可能失败。" : "语音上传可能失败。",
-          suggestedFix: `在 Supabase Storage 创建 ${bucket} bucket 并配置现有策略。`,
+          message: "服务端没有配置 SYSTEM_HEALTH_SECRET。",
+          impact: "无法使用 break-glass 密钥打开系统健康检查，排障会变慢。",
+          suggestedFix: "在 Vercel / 运行环境配置 SYSTEM_HEALTH_SECRET。",
         }),
-      ),
+        check({
+          id: "secret:PUSH_FLUSH_SECRET",
+          label: "PUSH_FLUSH_SECRET",
+          passed: Boolean(environment?.pushFlushSecretConfigured),
+          severity: "warning",
+          message: "服务端没有配置 PUSH_FLUSH_SECRET。",
+          impact: "Push 补偿和失败重试接口会返回 503，后台离线补发不可用。",
+          suggestedFix: "在 Vercel / 运行环境配置 PUSH_FLUSH_SECRET，并用于受保护的 Cron 或手动触发。",
+        }),
+        check({
+          id: "secret:SCHEDULE_REMINDER_SECRET",
+          label: "SCHEDULE_REMINDER_SECRET 或 CRON_SECRET",
+          passed: Boolean(
+            environment?.scheduleReminderSecretConfigured ||
+              environment?.cronSecretConfigured,
+          ),
+          severity: "critical",
+          message: "服务端没有配置日程提醒 Cron 密钥。",
+          impact: "日程提醒 flush/retry 接口会返回 503，到点提醒可能不会发送。",
+          suggestedFix: "配置 SCHEDULE_REMINDER_SECRET，或保留兼容的 CRON_SECRET。",
+        }),
+      ],
     },
     {
       id: "migrations",

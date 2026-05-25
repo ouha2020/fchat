@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 
-import type { HealthReport, HealthStatus } from "@/lib/admin/systemHealth";
+import type { HealthCheck, HealthReport, HealthStatus } from "@/lib/admin/systemHealth";
 
 const STATUS_CLASS: Record<HealthStatus, string> = {
   pass: "bg-emerald-50 text-emerald-700 ring-emerald-200",
@@ -30,6 +30,19 @@ export default function SystemHealthPage() {
     if (report.summary.failed > 0) return "有关键缺失";
     if (report.summary.warnings > 0) return "有警告";
     return "数据库状态正常";
+  }, [report]);
+
+  const checkSections = useMemo(() => {
+    if (!report) return [];
+    const rows = report.groups.flatMap((group) =>
+      group.checks.map((check) => ({ ...check, groupLabel: group.label })),
+    );
+    return [
+      { id: "fail", title: "关键缺失", checks: rows.filter((check) => check.status === "fail") },
+      { id: "warn", title: "警告", checks: rows.filter((check) => check.status === "warn") },
+      { id: "pass", title: "通过", checks: rows.filter((check) => check.status === "pass") },
+      { id: "info", title: "信息", checks: rows.filter((check) => check.status === "info") },
+    ].filter((section) => section.checks.length > 0);
   }, [report]);
 
   async function runCheck() {
@@ -138,40 +151,15 @@ export default function SystemHealthPage() {
           </section>
 
           <div className="space-y-4">
-            {report.groups.map((group) => (
-              <section key={group.id} className="section-card">
+            {checkSections.map((section) => (
+              <section key={section.id} className="section-card">
                 <div className="mb-3 flex items-center justify-between gap-3">
-                  <h2 className="text-lg font-bold text-slate-950">{group.label}</h2>
-                  <span className="text-sm text-slate-500">{group.checks.length} 项</span>
+                  <h2 className="text-lg font-bold text-slate-950">{section.title}</h2>
+                  <span className="text-sm text-slate-500">{section.checks.length} 项</span>
                 </div>
                 <div className="divide-y divide-slate-100">
-                  {group.checks.map((check) => (
-                    <article key={check.id} className="py-3 first:pt-0 last:pb-0">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <h3 className="break-words text-sm font-semibold text-slate-900">
-                            {check.label}
-                          </h3>
-                          {check.message ? (
-                            <p className="mt-1 text-sm text-slate-600">{check.message}</p>
-                          ) : null}
-                        </div>
-                        <StatusBadge status={check.status} />
-                      </div>
-                      {check.impact || check.suggestedFix ? (
-                        <div className="mt-2 rounded-2xl bg-slate-50 p-3 text-sm text-slate-600">
-                          {check.impact ? <p>影响：{check.impact}</p> : null}
-                          {check.suggestedFix ? (
-                            <p className="mt-1">建议：{check.suggestedFix}</p>
-                          ) : null}
-                          {check.migrationName ? (
-                            <p className="mt-1 font-mono text-xs text-slate-400">
-                              migration: {check.migrationName}
-                            </p>
-                          ) : null}
-                        </div>
-                      ) : null}
-                    </article>
+                  {section.checks.map((check) => (
+                    <HealthCheckRow key={check.id} check={check} />
                   ))}
                 </div>
               </section>
@@ -187,6 +175,48 @@ export default function SystemHealthPage() {
         </section>
       )}
     </main>
+  );
+}
+
+function HealthCheckRow({
+  check,
+}: {
+  check: HealthCheck & { groupLabel?: string };
+}) {
+  return (
+    <article className="py-3 first:pt-0 last:pb-0">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="mb-1 flex flex-wrap items-center gap-2">
+            {check.groupLabel ? (
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-500">
+                {check.groupLabel}
+              </span>
+            ) : null}
+            <h3 className="break-words text-sm font-semibold text-slate-900">
+              {check.label}
+            </h3>
+          </div>
+          {check.message ? (
+            <p className="mt-1 break-words text-sm text-slate-600">{check.message}</p>
+          ) : null}
+        </div>
+        <StatusBadge status={check.status} />
+      </div>
+      {check.impact || check.suggestedFix ? (
+        <div className="mt-2 rounded-2xl bg-slate-50 p-3 text-sm text-slate-600">
+          {check.impact ? <p className="break-words">影响：{check.impact}</p> : null}
+          {check.suggestedFix ? (
+            <p className="mt-1 break-words">建议：{check.suggestedFix}</p>
+          ) : null}
+          {check.migrationName ? (
+            <p className="mt-1 break-all font-mono text-xs text-slate-400">
+              migration: {check.migrationName}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+    </article>
   );
 }
 

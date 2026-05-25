@@ -150,10 +150,10 @@ export default function AssistantActionCardView({
       ) : null}
 
       {card.status === "pending" && canAct ? (
-        <div className="mt-3 flex gap-2">
+        <div className="assistant-action-row mt-3">
           <button
             type="button"
-            className="min-h-9 flex-1 rounded-full bg-brand-500 px-3 text-xs font-semibold text-white shadow-sm transition active:scale-[0.98] disabled:opacity-60"
+            className="assistant-action-button bg-brand-500 text-white shadow-sm"
             disabled={submitting}
             onClick={() => onConfirm(card)}
           >
@@ -161,7 +161,7 @@ export default function AssistantActionCardView({
           </button>
           <button
             type="button"
-            className="min-h-9 rounded-full bg-white px-3 text-xs font-semibold text-slate-700 ring-1 ring-slate-200 transition active:scale-[0.98] disabled:opacity-60"
+            className="assistant-action-button bg-white text-slate-700 ring-1 ring-slate-200"
             disabled={submitting}
             onClick={() => onModify(card)}
           >
@@ -169,7 +169,7 @@ export default function AssistantActionCardView({
           </button>
           <button
             type="button"
-            className="min-h-9 rounded-full bg-white px-3 text-xs font-semibold text-slate-500 ring-1 ring-slate-200 transition active:scale-[0.98] disabled:opacity-60"
+            className="assistant-action-button bg-white text-slate-500 ring-1 ring-slate-200"
             disabled={submitting}
             onClick={() => onCancel(card)}
           >
@@ -179,10 +179,10 @@ export default function AssistantActionCardView({
       ) : null}
 
       {canHandleTask(card, currentMemberId) ? (
-        <div className="mt-3 flex gap-2">
+        <div className="assistant-action-row mt-3">
           <button
             type="button"
-            className="min-h-9 flex-1 rounded-full bg-white px-3 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-100 transition active:scale-[0.98] disabled:opacity-60"
+            className="assistant-action-button bg-white text-emerald-700 ring-1 ring-emerald-100"
             disabled={submitting}
             onClick={() => onAcceptTask?.(card)}
           >
@@ -190,7 +190,7 @@ export default function AssistantActionCardView({
           </button>
           <button
             type="button"
-            className="min-h-9 flex-1 rounded-full bg-brand-500 px-3 text-xs font-semibold text-white shadow-sm transition active:scale-[0.98] disabled:opacity-60"
+            className="assistant-action-button bg-brand-500 text-white shadow-sm"
             disabled={submitting}
             onClick={() => onCompleteTask?.(card)}
           >
@@ -198,7 +198,7 @@ export default function AssistantActionCardView({
           </button>
           <button
             type="button"
-            className="min-h-9 rounded-full bg-white px-3 text-xs font-semibold text-slate-600 ring-1 ring-slate-200 transition active:scale-[0.98] disabled:opacity-60"
+            className="assistant-action-button bg-white text-slate-600 ring-1 ring-slate-200"
             disabled={submitting}
             onClick={() => onSnoozeTask?.(card)}
           >

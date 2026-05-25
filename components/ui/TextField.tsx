@@ -81,6 +81,7 @@ const TextField = forwardRef<HTMLInputElement, TextFieldProps>(
           id={inputId}
           invalid={invalid || Boolean(error)}
           aria-describedby={describedBy || undefined}
+          aria-errormessage={errorId}
           {...props}
         />
         {hint ? (

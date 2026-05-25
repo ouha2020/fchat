@@ -153,7 +153,7 @@ export default function CreateFamilyPage() {
           <RoleSelect value={role} onChange={setRole} />
         </div>
 
-        <div className="rounded-xl bg-sky-50 px-3 py-2 text-sm leading-6 text-sky-700">
+        <div className="info-note">
           管理操作将使用创建者邮箱账号验证，不再单独设置管理员密码。
         </div>
 

@@ -402,8 +402,8 @@ export default function SettingsPage() {
           <Row
             label={t("settingsFamilyCode")}
             value={
-              <span className="inline-flex items-center justify-end gap-2">
-                <span className="select-all font-mono text-base tracking-widest">
+              <span className="settings-family-code">
+                <span className="settings-family-code-text select-all">
                   {showFamilyCode ? session.family_code : maskFamilyCode(session.family_code)}
                 </span>
                 <button
@@ -434,11 +434,11 @@ export default function SettingsPage() {
         } />
         <Row label={t("settingsIsAdmin")} value={session.is_admin ? t("commonYes") : t("commonNo")} />
         {canManageFamily ? (
-          <div className="grid grid-cols-2 gap-2 pt-2">
-            <button type="button" className="btn-secondary" onClick={handleCopyFamilyCode}>
+          <div className="settings-action-grid">
+            <button type="button" className="btn-secondary min-w-0" onClick={handleCopyFamilyCode}>
               复制家庭代码
             </button>
-            <button type="button" className="btn-secondary" onClick={handleCopyInviteText}>
+            <button type="button" className="btn-secondary min-w-0" onClick={handleCopyInviteText}>
               复制邀请文案
             </button>
           </div>
@@ -497,10 +497,10 @@ export default function SettingsPage() {
           </div>
         ) : push.support.supported ? (
           <>
-            <div className="flex gap-2">
+            <div className="settings-action-grid pt-0">
               <button
                 type="button"
-                className="btn-primary flex-1"
+                className="btn-primary min-w-0"
                 disabled={!!busy || push.busy || push.enabled}
                 onClick={handleEnablePush}
               >
@@ -508,7 +508,7 @@ export default function SettingsPage() {
               </button>
               <button
                 type="button"
-                className="btn-secondary flex-1"
+                className="btn-secondary min-w-0"
                 disabled={!!busy || push.busy || !push.enabled}
                 onClick={handleDisablePush}
               >
@@ -519,15 +519,13 @@ export default function SettingsPage() {
               <p className="text-sm text-rose-600">{t("settingsPushDenied")}</p>
             ) : null}
             <div className="rounded-xl bg-slate-50 p-3 text-sm leading-6 text-slate-600">
-              <div className="flex items-center justify-between gap-3">
-                <span className="font-medium text-slate-700">
+              <div className="settings-row px-0 py-0">
+                <span className="settings-row-label font-medium text-slate-700">
                   {t("settingsPushNewMessages")}
                 </span>
                 <span
-                  className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-                    push.enabled
-                      ? "bg-emerald-100 text-emerald-700"
-                      : "bg-slate-200 text-slate-600"
+                  className={`status-badge shrink-0 ${
+                    push.enabled ? "status-badge-success" : "status-badge-muted"
                   }`}
                 >
                   {push.enabled ? t("commonYes") : t("commonNo")}
@@ -643,7 +641,7 @@ export default function SettingsPage() {
 
           <button
             type="button"
-            className="text-sm text-brand-600 hover:underline self-start"
+            className="self-start break-words text-sm text-brand-600 hover:underline"
             onClick={loadDiagnostics}
             disabled={diagLoading}
           >
@@ -679,11 +677,11 @@ export default function SettingsPage() {
           >
             {busy === "changeAccountPassword" ? t("commonLoading") : "修改密码"}
           </button>
-          <p className="rounded-xl bg-sky-50 px-3 py-2 text-sm leading-6 text-sky-700">
+          <p className="info-note">
             管理操作使用创建者邮箱账号验证，不再单独使用管理员密码。
           </p>
           <label className="flex items-center justify-between rounded-xl px-1 py-2">
-            <span className="text-sm text-slate-700">{t("settingsAllowJoin")}</span>
+            <span className="min-w-0 break-words text-sm text-slate-700">{t("settingsAllowJoin")}</span>
             <input
               type="checkbox"
               className="h-5 w-5"
@@ -693,8 +691,8 @@ export default function SettingsPage() {
             />
           </label>
           <div className="mt-2 rounded-2xl bg-slate-50 p-3">
-            <div className="flex items-center justify-between gap-3">
-              <div>
+            <div className="flex flex-col gap-3 min-[390px]:flex-row min-[390px]:items-start min-[390px]:justify-between">
+              <div className="min-w-0">
                 <h3 className="text-sm font-semibold text-slate-900">
                   {t("scheduleReminderHealthTitle")}
                 </h3>
@@ -704,7 +702,7 @@ export default function SettingsPage() {
               </div>
               <button
                 type="button"
-                className="btn-secondary shrink-0 px-3 py-2 text-sm"
+                className="btn-secondary min-w-0 px-3 py-2 text-sm"
                 disabled={reminderHealthLoading}
                 onClick={loadReminderHealth}
               >
@@ -856,9 +854,9 @@ function EyeOffIcon() {
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between gap-3">
-      <span className="text-sm text-slate-500">{label}</span>
-      <span className="text-sm font-medium text-slate-800">{value}</span>
+    <div className="settings-row">
+      <span className="settings-row-label">{label}</span>
+      <span className="settings-row-value text-slate-800">{value}</span>
     </div>
   );
 }
@@ -873,10 +871,10 @@ function DiagRow({
   ok: boolean;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3">
-      <span className="text-sm text-slate-500">{label}</span>
+    <div className="settings-row">
+      <span className="settings-row-label">{label}</span>
       <span
-        className={`text-sm font-medium ${
+        className={`settings-row-value ${
           ok ? "text-emerald-700" : "text-rose-600"
         }`}
       >

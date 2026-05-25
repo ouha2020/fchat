@@ -13,6 +13,7 @@ export interface PersonalDashboardProfile {
   is_admin: boolean;
   family_id: string;
   family_name: string;
+  avatar_url: string | null;
 }
 
 export interface PersonalDashboardScheduleItem {

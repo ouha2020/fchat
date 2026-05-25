@@ -24,8 +24,71 @@ body {
   display: none;
 }
 
+.native-scroll {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.native-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.native-press {
+  transition:
+    transform 160ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    filter 160ms ease,
+    box-shadow 160ms ease,
+    background-color 160ms ease;
+}
+
+.native-press:active {
+  transform: translateY(1px) scale(0.985);
+}
+
+.native-icon-button {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.86),
+    0 10px 20px rgba(71, 64, 49, 0.12),
+    0 2px 6px rgba(71, 64, 49, 0.08);
+}
+
+.native-input-bar {
+  background: rgba(255, 255, 255, 0.92);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 -18px 36px rgba(62, 56, 44, 0.08);
+}
+
+.chat-paper-bg {
+  background-color: #f7f6f2;
+  background-image:
+    radial-gradient(circle at 14% 10%, rgba(255, 255, 255, 0.72), transparent 28%),
+    radial-gradient(circle at 90% 18%, rgba(230, 244, 232, 0.38), transparent 26%),
+    linear-gradient(180deg, #fbfaf7 0%, #f5f3ed 100%);
+}
+
 .btn {
-  @apply inline-flex items-center justify-center rounded-xl px-4 py-2.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50;
+  @apply inline-flex min-h-10 max-w-full min-w-0 touch-manipulation items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-center text-sm font-medium leading-5 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 disabled:cursor-not-allowed disabled:opacity-50;
+}
+
+.btn-sm {
+  @apply min-h-10 px-3 py-2 text-sm;
+}
+
+.btn-md {
+  @apply min-h-10 px-4 py-2.5 text-sm;
+}
+
+.btn-lg {
+  @apply min-h-11 px-5 py-3 text-base;
+}
+
+.btn-icon {
+  @apply h-11 w-11 p-0;
 }
 
 .btn-primary {
@@ -41,11 +104,23 @@ body {
 }
 
 .btn-danger {
-  @apply btn bg-rose-500 text-white hover:bg-rose-600;
+  @apply btn bg-rose-500 text-white hover:bg-rose-600 active:bg-rose-700 focus-visible:ring-rose-200;
 }
 
 .field {
-  @apply w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm shadow-sm outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-200;
+  @apply w-full min-h-10 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm leading-5 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-brand-500 focus:ring-2 focus:ring-brand-200 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400;
+}
+
+.field-error {
+  @apply border-rose-300 focus:border-rose-500 focus:ring-rose-100;
+}
+
+.field-hint {
+  @apply mt-1.5 text-xs leading-5 text-slate-500;
+}
+
+.field-error-text {
+  @apply mt-1.5 text-xs font-medium leading-5 text-rose-600;
 }
 
 .label {
@@ -54,6 +129,10 @@ body {
 
 .card {
   @apply rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-100;
+}
+
+.card-compact {
+  @apply p-4;
 }
 
 .app-page {
@@ -89,11 +168,44 @@ body {
 }
 
 .action-card {
-  @apply rounded-2xl bg-white p-4 text-left shadow-sm ring-1 ring-slate-100 transition hover:bg-white/80 active:scale-[0.99];
+  @apply min-w-0 rounded-2xl bg-white p-4 text-left shadow-sm ring-1 ring-slate-100 transition hover:bg-white/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60;
 }
 
 .icon-action {
   @apply inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-white text-slate-700 shadow-sm ring-1 ring-slate-200 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200;
+}
+
+.bottom-tab-bar {
+  @apply fixed inset-x-0 bottom-0 z-40 mx-auto w-full max-w-3xl border-t border-slate-200/80 bg-white/95 px-3 pt-2 shadow-[0_-12px_28px_rgba(15,23,42,0.08)] backdrop-blur-xl;
+  padding-bottom: max(env(safe-area-inset-bottom), 0.5rem);
+}
+
+.bottom-tab-list {
+  @apply grid grid-cols-4 gap-1;
+}
+
+.bottom-tab-item {
+  @apply flex min-h-12 min-w-0 touch-manipulation flex-col items-center justify-center gap-1 rounded-2xl px-2 py-1.5 text-xs font-semibold leading-4 text-slate-500 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200;
+}
+
+.bottom-tab-item-active {
+  @apply bg-brand-50 text-brand-700;
+}
+
+.bottom-tab-icon-wrap {
+  @apply relative flex h-6 w-6 items-center justify-center;
+}
+
+.bottom-tab-icon {
+  @apply h-6 w-6 object-contain;
+}
+
+.bottom-tab-label {
+  @apply max-w-full truncate;
+}
+
+.bottom-tab-badge {
+  @apply absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-rose-500 ring-2 ring-white;
 }
 
 .meta-chip {
@@ -206,5 +318,191 @@ body {
   45% {
     outline-offset: 7px;
     filter: brightness(1.08);
+  }
+}
+
+.mood-branch {
+  stroke-dasharray: 460;
+  stroke-dashoffset: 460;
+  animation: mood-branch-draw 1.05s ease-out forwards;
+}
+
+.mood-branch-delay-1 {
+  animation-delay: 0.12s;
+}
+
+.mood-branch-delay-2 {
+  animation-delay: 0.2s;
+}
+
+.mood-branch-delay-3 {
+  animation-delay: 0.28s;
+}
+
+.mood-branch-delay-4 {
+  animation-delay: 0.34s;
+}
+
+.mood-leaf-button {
+  --leaf-color: #7ac66a;
+  --leaf-glow: rgba(122, 198, 106, 0.3);
+  --leaf-rotate: 0deg;
+  --leaf-delay: 0ms;
+  position: absolute;
+  z-index: 20;
+  width: 42px;
+  height: 42px;
+  transform: translate(-50%, -50%) scale(0.2) rotate(var(--leaf-rotate));
+  opacity: 0;
+  animation: mood-leaf-grow 0.62s cubic-bezier(0.2, 0.9, 0.25, 1.25) forwards;
+  animation-delay: var(--leaf-delay);
+  touch-action: manipulation;
+}
+
+.mood-leaf-shape {
+  display: block;
+  width: 30px;
+  height: 38px;
+  margin: 2px auto;
+  border-radius: 80% 10% 80% 14%;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.65), transparent 42%),
+    var(--leaf-color);
+  box-shadow:
+    inset -4px -6px 10px rgba(46, 95, 61, 0.14),
+    0 8px 18px var(--leaf-glow);
+}
+
+.mood-leaf-shape::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 9px;
+  width: 1px;
+  height: 24px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.58);
+  transform: rotate(-25deg);
+}
+
+.mood-leaf-active .mood-leaf-shape {
+  outline: 3px solid rgba(255, 255, 255, 0.95);
+  outline-offset: 3px;
+  box-shadow:
+    inset -4px -6px 10px rgba(46, 95, 61, 0.14),
+    0 0 0 8px var(--leaf-glow),
+    0 14px 24px rgba(45, 77, 53, 0.16);
+}
+
+.mood-caught-mark {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.94);
+  color: #047857;
+  font-size: 10px;
+  font-weight: 800;
+  box-shadow: 0 6px 14px rgba(15, 118, 110, 0.16);
+  animation: mood-caught-in 0.3s ease-out;
+}
+
+.mood-leaf-sharing {
+  animation:
+    mood-leaf-grow 0.01s forwards,
+    mood-leaf-share 0.72s ease-out;
+  animation-delay: 0ms, 0ms;
+}
+
+.mood-share-pop {
+  animation: mood-share-pop 0.28s ease-out;
+}
+
+.mood-reaction-in {
+  animation: mood-reaction-in 0.24s ease-out;
+}
+
+@keyframes mood-branch-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes mood-leaf-grow {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + 18px)) scale(0.2)
+      rotate(var(--leaf-rotate));
+  }
+  68% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.12) rotate(var(--leaf-rotate));
+  }
+  100% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1) rotate(var(--leaf-rotate));
+  }
+}
+
+@keyframes mood-leaf-share {
+  0%,
+  100% {
+    filter: brightness(1);
+  }
+  42% {
+    filter: brightness(1.2);
+    transform: translate(calc(-50% + 10px), calc(-50% - 14px)) scale(1.18)
+      rotate(var(--leaf-rotate));
+  }
+}
+
+@keyframes mood-share-pop {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes mood-caught-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.6);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes mood-reaction-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mood-branch,
+  .mood-leaf-button,
+  .mood-leaf-sharing,
+  .mood-share-pop,
+  .mood-caught-mark,
+  .mood-reaction-in {
+    animation: none !important;
+    opacity: 1;
+    stroke-dashoffset: 0;
   }
 }

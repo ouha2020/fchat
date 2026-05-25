@@ -25,6 +25,8 @@ interface Props {
   currentMemberId?: string | null;
   whisperTargetId?: string | null;
   onSelectWhisper?: (memberId: string) => void;
+  keeperMode?: boolean;
+  onOpenKeeper?: () => void;
 }
 
 type RecordingState =
@@ -51,9 +53,9 @@ const MAX_RECORD_MS = 60_000;
 const MIN_RECORD_MS = 600;
 const CONSENT_KEY = "family-chat:voice-recording-consent:v1";
 const iconButtonClass =
-  "inline-flex h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-cover bg-center bg-no-repeat shadow-sm ring-1 ring-slate-200/70 transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200";
+  "native-icon-button native-press inline-flex h-10 w-10 shrink-0 overflow-hidden rounded-[14px] bg-white bg-cover bg-center bg-no-repeat ring-1 ring-white/80 hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200";
 const inputShellClass =
-  "fixed inset-x-0 bottom-0 z-50 mx-auto min-h-[61px] w-full max-w-3xl border-t border-slate-200 bg-white";
+  "native-input-bar relative z-50 mx-auto min-h-[61px] w-full max-w-3xl shrink-0 overflow-visible border-t border-white/70";
 
 export default function ChatInput({
   disabled,
@@ -66,6 +68,8 @@ export default function ChatInput({
   currentMemberId = null,
   whisperTargetId = null,
   onSelectWhisper,
+  keeperMode = false,
+  onOpenKeeper,
 }: Props) {
   const { language, t } = useLanguage();
   const dialog = useDialog();
@@ -446,14 +450,14 @@ export default function ChatInput({
       <div
         ref={recordingBarRef}
         className={inputShellClass}
-        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+        style={{ paddingBottom: "max(env(safe-area-inset-bottom), 6px)" }}
       >
         <div className="px-3 py-2 sm:px-4">
           <div
             className={
               slideOffActive
-                ? "flex h-11 items-center justify-center gap-2 rounded-lg bg-slate-100 px-4 text-sm text-slate-500 ring-1 ring-slate-200 transition-colors"
-                : "flex h-11 items-center justify-center gap-2 rounded-lg bg-rose-50 px-4 text-sm text-rose-700 ring-1 ring-rose-100 transition-colors"
+                ? "flex h-11 items-center justify-center gap-2 rounded-2xl bg-slate-100/90 px-4 text-sm text-slate-500 shadow-sm ring-1 ring-white/70 transition-colors"
+                : "flex h-11 items-center justify-center gap-2 rounded-2xl bg-rose-50/95 px-4 text-sm text-rose-700 shadow-sm ring-1 ring-rose-100/80 transition-colors"
             }
           >
             <span
@@ -484,10 +488,10 @@ export default function ChatInput({
     return (
       <div
         className={inputShellClass}
-        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+        style={{ paddingBottom: "max(env(safe-area-inset-bottom), 6px)" }}
       >
         <div className="flex items-center gap-2 px-3 py-2 sm:px-4">
-          <div className="flex h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-lg bg-blue-50 px-3 text-sm text-blue-700 ring-1 ring-blue-100">
+          <div className="flex h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-2xl bg-blue-50/95 px-3 text-sm text-blue-700 shadow-sm ring-1 ring-blue-100/80">
             <span
               aria-hidden
               className="inline-block h-2.5 w-2.5 shrink-0 animate-pulse rounded-full bg-blue-500"
@@ -506,14 +510,14 @@ export default function ChatInput({
     return (
       <div
         className={inputShellClass}
-        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+        style={{ paddingBottom: "max(env(safe-area-inset-bottom), 6px)" }}
       >
         <div className="space-y-2 px-3 py-2 sm:px-4">
-          <div className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700 ring-1 ring-rose-100">
+          <div className="rounded-2xl bg-rose-50/95 px-3 py-2 text-xs text-rose-700 shadow-sm ring-1 ring-rose-100/80">
             {recordingState.error}
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <div className="flex min-w-40 flex-1 items-center justify-center gap-2 rounded-lg bg-slate-50 px-3 py-3 text-sm text-slate-700 ring-1 ring-slate-100">
+            <div className="flex min-w-40 flex-1 items-center justify-center gap-2 rounded-2xl bg-white/90 px-3 py-3 text-sm text-slate-700 shadow-sm ring-1 ring-white/80">
               <span className="truncate font-semibold">
                 {t("inputRecordingDone")}
               </span>
@@ -530,7 +534,7 @@ export default function ChatInput({
             </button>
             <button
               type="button"
-              className="btn-primary h-10 px-4 text-sm"
+              className="btn-primary native-press h-10 px-4 text-sm shadow-[0_10px_18px_rgba(79,108,247,0.2)]"
               onClick={() => void retrySend()}
             >
               {t("inputRetryAudioSend")}
@@ -544,12 +548,12 @@ export default function ChatInput({
   return (
     <div
       className={inputShellClass}
-      style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+      style={{ paddingBottom: "max(env(safe-area-inset-bottom), 6px)" }}
     >
       {actionsOpen ? (
         <div
           ref={moreMenuRef}
-          className="absolute bottom-full left-3 mb-2 flex items-center gap-2 rounded-2xl border border-slate-200/80 bg-white/95 p-2 shadow-lg shadow-slate-200/70 backdrop-blur sm:left-4"
+          className="absolute bottom-full left-3 mb-2 flex items-center gap-2 rounded-[22px] border border-white/80 bg-white/95 p-2 shadow-[0_18px_42px_rgba(70,62,48,0.14)] backdrop-blur-xl sm:left-4"
           role="menu"
         >
           <button
@@ -583,12 +587,29 @@ export default function ChatInput({
             disabled={disabled || sending || !canPickWhisper}
             onClick={handleOpenWhisperPicker}
           />
+          {onOpenKeeper ? (
+            <button
+              type="button"
+              className="native-icon-button native-press inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-[14px] bg-emerald-50 text-sm font-black text-emerald-700 ring-1 ring-white/80 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-200"
+              aria-label={t("keeperTalk")}
+              title={t("keeperTalk")}
+              role="menuitem"
+              disabled={disabled || sending}
+              onClick={() => {
+                setActionsOpen(false);
+                setWhisperPickerOpen(false);
+                onOpenKeeper();
+              }}
+            >
+              家
+            </button>
+          ) : null}
         </div>
       ) : null}
       {whisperPickerOpen ? (
         <div
           ref={whisperPickerRef}
-          className="absolute bottom-full left-3 right-3 mb-2 max-h-72 overflow-hidden rounded-2xl border border-violet-100 bg-white/95 shadow-xl shadow-violet-100/70 backdrop-blur sm:left-4 sm:right-4"
+          className="absolute bottom-full left-3 right-3 mb-2 max-h-72 overflow-hidden rounded-[22px] border border-white/80 bg-white/95 shadow-[0_18px_46px_rgba(88,70,118,0.16)] backdrop-blur-xl sm:left-4 sm:right-4"
           role="dialog"
           aria-label={t("inputWhisperPick")}
         >
@@ -600,7 +621,7 @@ export default function ChatInput({
             />
             <span className="truncate">{t("inputWhisperPick")}</span>
           </div>
-          <div className="max-h-52 overflow-y-auto py-1">
+          <div className="native-scroll max-h-52 overflow-y-auto py-1">
             {whisperCandidates.map((member) => (
               <button
                 key={member.id}
@@ -635,7 +656,7 @@ export default function ChatInput({
         </div>
       ) : null}
       {privacyNotice ? (
-        <div className="border-b border-amber-100 bg-amber-50 px-4 py-2 text-xs text-amber-700">
+        <div className="border-b border-amber-100/70 bg-amber-50/90 px-4 py-2 text-xs text-amber-700">
           {privacyNotice}
         </div>
       ) : null}
@@ -683,10 +704,11 @@ export default function ChatInput({
         />
         <textarea
           rows={1}
-          className="field max-h-32 min-h-[44px] flex-1 resize-none py-3"
-          placeholder={t("inputPlaceholder")}
+          className="field max-h-32 min-h-[44px] flex-1 resize-none rounded-[18px] border-[#dedbd2] bg-white/95 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_5px_14px_rgba(71,64,49,0.05)] focus:border-brand-300"
+          placeholder={keeperMode ? t("keeperInputPlaceholder") : t("inputPlaceholder")}
           value={text}
           disabled={disabled}
+          style={{ fontSize: 16 }}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
@@ -697,7 +719,7 @@ export default function ChatInput({
         />
         <button
           type="button"
-          className="btn-primary h-10 px-4"
+          className="btn-primary native-press h-10 rounded-[16px] px-4 shadow-[0_10px_18px_rgba(79,108,247,0.22)]"
           disabled={disabled || sending || !text.trim()}
           onClick={() => void submit()}
         >

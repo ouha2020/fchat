@@ -13,3 +13,5 @@ coverage
 *.tsbuildinfo
 supabase/.temp/
 .claude/
+.codex/
+.mcp.json

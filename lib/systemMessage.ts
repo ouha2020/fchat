@@ -57,6 +57,21 @@ const EVENT_MAP: Record<
   admin_password_changed: {
     key: "systemAdminPasswordChanged",
   },
+  keeper_request_created: {
+    key: "keeperReplySelf",
+  },
+  assistant_card_created: {
+    key: "assistantCardCreatedSystem",
+  },
+  assistant_card_confirmed: {
+    key: "assistantCardConfirmedSystem",
+  },
+  assistant_card_cancelled: {
+    key: "assistantCardCancelledSystem",
+  },
+  assistant_action_done: {
+    key: "assistantActionDoneSystem",
+  },
 };
 
 const LEGACY_PATTERNS: Array<{

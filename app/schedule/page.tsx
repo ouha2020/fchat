@@ -2,7 +2,15 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+} from "react";
 
 import { useDialog } from "@/components/Dialog";
 import { useLanguage } from "@/components/LanguageProvider";
@@ -1566,6 +1574,16 @@ function ScheduleDetailPanel({
   onToggle: () => void;
   onDelete: () => void;
 }) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const titleId = `schedule-detail-title-${item.id}`;
+  const [viewportStyle, setViewportStyle] = useState<CSSProperties>({
+    height: "100dvh",
+  });
+  const detailPanelStyle: CSSProperties = {
+    height: "min(92dvh, calc(100% - 1rem))",
+    maxHeight: "min(92dvh, calc(100% - 1rem))",
+  };
   const canEdit =
     item.creator_member_id === session.member_id ||
     item.assignee_member_id === session.member_id ||
@@ -1627,20 +1645,119 @@ function ScheduleDetailPanel({
     ? `${formatDate(item.remind_at, language)} ${formatTime(item.remind_at, language)}`
     : t("scheduleReminderNone");
 
+  useEffect(() => {
+    const visualViewport = window.visualViewport;
+
+    function updateViewport() {
+      if (!visualViewport) {
+        setViewportStyle({ height: "100dvh" });
+        return;
+      }
+
+      setViewportStyle({
+        height: `${visualViewport.height}px`,
+        transform: `translateY(${visualViewport.offsetTop}px)`,
+      });
+    }
+
+    updateViewport();
+    visualViewport?.addEventListener("resize", updateViewport);
+    visualViewport?.addEventListener("scroll", updateViewport);
+    window.addEventListener("resize", updateViewport);
+    window.addEventListener("orientationchange", updateViewport);
+    return () => {
+      visualViewport?.removeEventListener("resize", updateViewport);
+      visualViewport?.removeEventListener("scroll", updateViewport);
+      window.removeEventListener("resize", updateViewport);
+      window.removeEventListener("orientationchange", updateViewport);
+    };
+  }, []);
+
+  useEffect(() => {
+    const restoreTarget =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    const frame = window.requestAnimationFrame(() => {
+      closeButtonRef.current?.focus({ preventScroll: true });
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      if (restoreTarget?.isConnected) {
+        restoreTarget.focus({ preventScroll: true });
+      }
+    };
+  }, [item.id]);
+
+  function handlePanelKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      if (editMode) {
+        onCancelEdit();
+        return;
+      }
+      onClose();
+      return;
+    }
+
+    if (event.key !== "Tab") return;
+    const panel = panelRef.current;
+    if (!panel) return;
+
+    const focusable = getFocusableElements(panel);
+    if (focusable.length === 0) {
+      event.preventDefault();
+      panel.focus({ preventScroll: true });
+      return;
+    }
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus({ preventScroll: true });
+      return;
+    }
+    if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus({ preventScroll: true });
+    }
+  }
+
   return (
-    <div className="fixed inset-0 z-50 flex items-end bg-slate-950/35 px-0 sm:items-center sm:px-6">
-      <div className="flex h-[92dvh] max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-3xl bg-slate-50 shadow-2xl sm:mx-auto sm:max-w-2xl sm:rounded-3xl">
+    <div
+      className="fixed inset-x-0 top-0 z-50 flex items-end overflow-hidden bg-slate-950/35 px-0 sm:items-center sm:px-6"
+      style={viewportStyle}
+    >
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        onKeyDown={handlePanelKeyDown}
+        className="flex w-full flex-col overflow-hidden rounded-t-3xl bg-slate-50 shadow-2xl focus:outline-none sm:mx-auto sm:max-w-2xl sm:rounded-3xl"
+        style={detailPanelStyle}
+      >
         <div className="shrink-0 p-4 pb-3 sm:p-5 sm:pb-3">
         <div className="mb-4 flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-xs font-semibold uppercase tracking-wide text-brand-600">
               {t("scheduleDetail")}
             </p>
-            <h2 className="mt-1 break-words text-xl font-bold text-slate-900">
+            <h2
+              id={titleId}
+              className="mt-1 break-words text-xl font-bold text-slate-900"
+            >
               {item.title}
             </h2>
           </div>
-          <button type="button" className="btn-ghost shrink-0 px-3" onClick={onClose}>
+          <button
+            ref={closeButtonRef}
+            type="button"
+            className="btn-ghost shrink-0 px-3"
+            onClick={onClose}
+          >
             {t("commonCancel")}
           </button>
         </div>
@@ -1689,7 +1806,7 @@ function ScheduleDetailPanel({
             </div>
           </div>
         ) : (
-          <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:px-5">
+          <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:px-5">
             <div className="shrink-0 rounded-2xl bg-white p-3 text-sm text-slate-700 ring-1 ring-slate-100">
               <div className="flex flex-wrap gap-2">
                 <DetailPill
@@ -1834,7 +1951,7 @@ function ScheduleDetailPanel({
               )}
             </details>
 
-            <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[28px] bg-slate-100/80 ring-1 ring-slate-200">
+            <section className="flex min-h-[22rem] flex-1 flex-col overflow-hidden rounded-[28px] bg-slate-100/80 ring-1 ring-slate-200">
               <div className="flex shrink-0 items-center justify-between gap-2 px-4 py-3">
                 <h3 className="text-base font-semibold text-slate-900">
                   {t("scheduleConversation")}
@@ -3199,6 +3316,26 @@ function LockBadge() {
         <path d="M8 11V8a4 4 0 0 1 8 0v3" />
       </svg>
     </span>
+  );
+}
+
+function getFocusableElements(root: HTMLElement): HTMLElement[] {
+  const selector = [
+    "a[href]",
+    "button:not([disabled])",
+    "textarea:not([disabled])",
+    "input:not([disabled])",
+    "select:not([disabled])",
+    '[tabindex]:not([tabindex="-1"])',
+  ].join(",");
+
+  return Array.from(root.querySelectorAll<HTMLElement>(selector)).filter(
+    (element) =>
+      !element.hasAttribute("hidden") &&
+      element.getAttribute("aria-hidden") !== "true" &&
+      (element.offsetWidth > 0 ||
+        element.offsetHeight > 0 ||
+        element === document.activeElement),
   );
 }
 

@@ -186,15 +186,7 @@ export default function ChatMessage({
     <div
       className={`flex w-full gap-2 ${isMine ? "flex-row-reverse" : "flex-row"}`}
     >
-      <div
-        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-semibold sm:h-9 sm:w-9 sm:text-base ${
-          isMine
-            ? "bg-brand-500 text-white shadow-[0_8px_18px_rgba(79,108,247,0.22)] ring-1 ring-white/30"
-            : "bg-white/90 text-slate-700 shadow-[0_8px_18px_rgba(71,64,49,0.08)] ring-1 ring-white/80"
-        }`}
-      >
-        {(sender?.nickname ?? "?").slice(0, 1).toUpperCase()}
-      </div>
+      <MemberAvatar sender={sender} isMine={isMine} />
       <div
         className={`flex ${messageBodyWidthClass} flex-col gap-1 ${
           isMine ? "items-end" : "items-start"
@@ -234,6 +226,38 @@ export default function ChatMessage({
           }
         />
       </div>
+    </div>
+  );
+}
+
+function MemberAvatar({
+  sender,
+  isMine,
+}: {
+  sender: FamilyMember | null;
+  isMine: boolean;
+}) {
+  const avatarUrl = safeHttpUrl(sender?.avatar_url ?? null);
+  const placeholder = (sender?.nickname ?? "?").slice(0, 1).toUpperCase();
+  const shellClass = `flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full text-sm font-semibold sm:h-9 sm:w-9 sm:text-base ${
+    isMine
+      ? "bg-brand-500 text-white shadow-[0_8px_18px_rgba(79,108,247,0.22)] ring-1 ring-white/30"
+      : "bg-white/90 text-slate-700 shadow-[0_8px_18px_rgba(71,64,49,0.08)] ring-1 ring-white/80"
+  }`;
+
+  return (
+    <div className={shellClass}>
+      {avatarUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={avatarUrl}
+          alt=""
+          className="h-full w-full object-cover"
+          draggable={false}
+        />
+      ) : (
+        placeholder
+      )}
     </div>
   );
 }

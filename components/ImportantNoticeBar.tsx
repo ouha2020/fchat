@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
 import { formatTime } from "@/lib/format";
@@ -35,6 +35,7 @@ export default function ImportantNoticeBar({
 }: Props) {
   const { language, t } = useLanguage();
   const [expanded, setExpanded] = useState(false);
+  const listId = useId();
 
   useEffect(() => {
     if (!expanded || !onRequestReadState) return;
@@ -54,11 +55,15 @@ export default function ImportantNoticeBar({
     <section className="border-b border-white/70 bg-[#fffaf0]/80 px-3 py-1.5 shadow-[0_8px_18px_rgba(120,80,20,0.05)] backdrop-blur-xl sm:px-5">
       <button
         type="button"
-        className="native-press flex min-h-10 w-full items-start justify-between gap-3 rounded-2xl px-2 py-1 text-left text-[13px] leading-4 text-amber-800 transition hover:bg-white/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200"
+        className="native-press flex min-h-10 w-full items-start justify-between gap-2 overflow-hidden rounded-2xl px-2 py-1 text-left text-[13px] leading-4 text-amber-800 transition hover:bg-white/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200"
         aria-expanded={expanded}
+        aria-controls={listId}
+        aria-label={`${expanded ? t("importantCollapse") : t("importantExpand")} ${t(
+          "importantTitle",
+        )}`}
         onClick={() => setExpanded((value) => !value)}
       >
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <div className="truncate font-semibold">
             {t("importantTitle")}{" "}
             <span className="tabular-nums">
@@ -71,12 +76,16 @@ export default function ImportantNoticeBar({
             </div>
           ) : null}
         </div>
-        <span className="shrink-0 rounded-full px-2 py-0.5 text-[12px] font-medium leading-4 text-amber-700">
+        <span className="inline-flex min-h-7 shrink-0 items-center rounded-full px-2 py-0.5 text-[12px] font-medium leading-4 text-amber-700">
           {expanded ? t("importantCollapse") : t("importantExpand")}
         </span>
       </button>
       {expanded ? (
-        <div className="native-scroll mt-2 max-h-[120px] space-y-1 overflow-y-auto pr-1">
+        <div
+          id={listId}
+          role="list"
+          className="native-scroll mt-2 max-h-[32dvh] space-y-1 overflow-y-auto pr-1"
+        >
           {notifications.map((notification) => {
             const message = notification.message;
             const sender =
@@ -89,16 +98,18 @@ export default function ImportantNoticeBar({
             return (
               <div
                 key={notification.id}
-                className="group flex items-center gap-2 rounded-2xl border border-white/70 bg-white/[0.82] px-2 py-1.5 text-left shadow-[0_8px_20px_rgba(120,80,20,0.08)] transition hover:bg-white/95"
+                role="listitem"
+                className="group flex items-start gap-2 rounded-2xl border border-white/70 bg-white/[0.82] px-2 py-1.5 text-left shadow-[0_8px_20px_rgba(120,80,20,0.08)] transition hover:bg-white/95"
               >
                 <button
                   type="button"
-                  className="native-press flex min-w-0 flex-1 items-center gap-2 rounded-xl text-left"
+                  className="native-press flex min-h-10 min-w-0 flex-1 items-start gap-2 rounded-xl px-1 py-0.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200"
+                  title={`${sender?.nickname ?? t("importantSystemSender")} / ${preview.text}`}
                   onClick={() => onSelect(notification)}
                 >
                   <PreviewIcon message={message} text={preview.iconText} />
                   <span className="min-w-0 flex-1">
-                    <span className="flex min-w-0 items-center gap-1.5">
+                    <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
                       <span className="truncate text-xs font-semibold text-slate-700">
                         {sender?.nickname ?? t("importantSystemSender")}
                       </span>
@@ -106,7 +117,7 @@ export default function ImportantNoticeBar({
                         {formatTime(notification.created_at, language)}
                       </span>
                     </span>
-                    <span className="block truncate text-xs text-slate-600">
+                    <span className="block truncate text-xs leading-4 text-slate-600">
                       {preview.text}
                     </span>
                     <ReadStateLine state={readState} />
@@ -114,12 +125,24 @@ export default function ImportantNoticeBar({
                 </button>
                 <button
                   type="button"
-                  className="native-press flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-2xl leading-none text-slate-400 transition hover:bg-rose-50 hover:text-rose-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200"
+                  className="native-press flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-rose-50 hover:text-rose-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200"
                   aria-label={t("importantRemove")}
                   title={t("importantRemove")}
                   onClick={() => onRemove(notification)}
                 >
-                  ×
+                  <svg
+                    aria-hidden="true"
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                  >
+                    <path d="M6 6l12 12" />
+                    <path d="M18 6L6 18" />
+                  </svg>
                 </button>
               </div>
             );
@@ -232,27 +255,33 @@ function ReadStateLine({
   const { t } = useLanguage();
   if (!state) {
     return (
-      <span className="mt-0.5 block truncate text-[11px] text-slate-400">
+      <span className="mt-0.5 block truncate text-[11px] leading-4 text-slate-400">
         {t("importantReadLoading")}
       </span>
     );
   }
 
-  const unreadNames = state.unreadNicknames.slice(0, 3).join("、");
+  const unreadNames = state.unreadNicknames.slice(0, 3).join(", ");
   const extra =
     state.unreadNicknames.length > 3
       ? ` +${state.unreadNicknames.length - 3}`
       : "";
+  const summary = t("importantReadSummary", {
+    read: state.readCount,
+    unread: state.unreadCount,
+  });
+  const unreadSummary =
+    state.unreadCount > 0 && unreadNames
+      ? ` / ${t("importantUnreadMembers", { names: `${unreadNames}${extra}` })}`
+      : "";
 
   return (
-    <span className="mt-0.5 block truncate text-[11px] text-amber-700/80">
-      {t("importantReadSummary", {
-        read: state.readCount,
-        unread: state.unreadCount,
-      })}
-      {state.unreadCount > 0 && unreadNames
-        ? ` · ${t("importantUnreadMembers", { names: `${unreadNames}${extra}` })}`
-        : ""}
+    <span
+      className="mt-0.5 block truncate text-[11px] leading-4 text-amber-700/80"
+      title={`${summary}${unreadSummary}`}
+    >
+      {summary}
+      {unreadSummary}
     </span>
   );
 }

@@ -222,7 +222,7 @@ export default function JoinPage() {
               家庭代码只会发送到创建家庭时使用的邮箱，页面不会直接显示代码。
             </p>
             {recoverNotice ? (
-              <div className="mt-2 rounded-xl bg-sky-50 px-3 py-2 text-sm leading-6 text-sky-700">
+              <div className="info-note mt-2">
                 {recoverNotice}
               </div>
             ) : null}
@@ -253,7 +253,7 @@ export default function JoinPage() {
         </div>
 
         {needsAdminPassword ? (
-          <div className="rounded-xl bg-amber-50 px-3 py-2 text-sm leading-6 text-amber-800">
+          <div className="warning-note">
             这个昵称已经存在。请使用创建家庭的邮箱账号登录，登录成功后就可以恢复这个身份。
             <Link
               className="ml-1 font-semibold text-brand-600 underline"

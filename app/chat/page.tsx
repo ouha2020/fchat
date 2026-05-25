@@ -111,10 +111,14 @@ const MESSAGE_DELIVERED_REPORT_DELAY_MS = 500;
 const MESSAGE_READ_REPORT_DELAY_MS = 700;
 const CHAT_BOOTSTRAP_DATA_TIMEOUT_MS = 15_000;
 const ASSISTANT_REPLY_DELAY_MS = 850;
+const MESSAGE_ACTION_MENU_MARGIN = 8;
+const MESSAGE_ACTION_MENU_FALLBACK_WIDTH = 176;
+const MESSAGE_ACTION_MENU_FALLBACK_HEIGHT = 220;
+const MESSAGE_ACTION_MENU_MIN_VISIBLE_HEIGHT = 112;
 const chatHeaderIconClass =
   "native-icon-button native-press inline-flex h-11 w-11 shrink-0 overflow-hidden rounded-[15px] bg-white bg-cover bg-center bg-no-repeat ring-1 ring-white/80 hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200";
 const chatActionMenuButtonClass =
-  "block min-h-11 w-full px-4 py-2.5 text-left text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset";
+  "block min-h-11 w-full whitespace-normal break-words px-4 py-2.5 text-left text-sm font-medium leading-5 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset";
 
 interface MessageRealtimeEvent {
   id: string;
@@ -137,6 +141,15 @@ interface ImportantNotificationRealtimeEvent {
 interface AssistantReplyPending {
   sourceMessageId: string;
   startedAt: number;
+}
+
+interface MessageActionMenuState {
+  messageId: string;
+  anchorX: number;
+  anchorY: number;
+  x: number;
+  y: number;
+  maxHeight: number;
 }
 
 interface ScheduleRealtimeEvent {
@@ -319,6 +332,95 @@ async function copyTextToClipboard(text: string): Promise<void> {
   const copied = document.execCommand("copy");
   document.body.removeChild(textarea);
   if (!copied) throw new Error("copy_failed");
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  if (max < min) return min;
+  return Math.min(Math.max(value, min), max);
+}
+
+function getMessageActionMenuPlacement({
+  anchorX,
+  anchorY,
+  menuElement,
+  composerElement,
+}: {
+  anchorX: number;
+  anchorY: number;
+  menuElement?: HTMLElement | null;
+  composerElement?: HTMLElement | null;
+}): Pick<MessageActionMenuState, "x" | "y" | "maxHeight"> {
+  if (typeof window === "undefined") {
+    return {
+      x: anchorX,
+      y: anchorY,
+      maxHeight: MESSAGE_ACTION_MENU_FALLBACK_HEIGHT,
+    };
+  }
+
+  const viewport = window.visualViewport;
+  const viewportLeft = viewport?.offsetLeft ?? 0;
+  const viewportTop = viewport?.offsetTop ?? 0;
+  const viewportWidth = viewport?.width ?? window.innerWidth;
+  const viewportHeight = viewport?.height ?? window.innerHeight;
+  const viewportRight = viewportLeft + viewportWidth;
+  const viewportBottom = viewportTop + viewportHeight;
+
+  const safeLeft = viewportLeft + MESSAGE_ACTION_MENU_MARGIN;
+  const safeTop = viewportTop + MESSAGE_ACTION_MENU_MARGIN;
+  const safeRight = Math.max(
+    safeLeft,
+    viewportRight - MESSAGE_ACTION_MENU_MARGIN,
+  );
+  let safeBottom = Math.max(
+    safeTop,
+    viewportBottom - MESSAGE_ACTION_MENU_MARGIN,
+  );
+
+  const composerRect = composerElement?.getBoundingClientRect();
+  if (composerRect) {
+    const composerTop = composerRect.top;
+    const composerBottom = composerRect.bottom;
+    const composerIntersectsViewport =
+      composerBottom > safeTop && composerTop < viewportBottom;
+    const bottomAboveComposer = composerTop - MESSAGE_ACTION_MENU_MARGIN;
+    if (
+      composerIntersectsViewport &&
+      bottomAboveComposer - safeTop >= MESSAGE_ACTION_MENU_MIN_VISIBLE_HEIGHT
+    ) {
+      safeBottom = Math.min(safeBottom, bottomAboveComposer);
+    }
+  }
+
+  const availableWidth = Math.max(
+    MESSAGE_ACTION_MENU_FALLBACK_WIDTH,
+    safeRight - safeLeft,
+  );
+  const menuWidth = Math.min(
+    Math.max(
+      menuElement?.offsetWidth ?? MESSAGE_ACTION_MENU_FALLBACK_WIDTH,
+      MESSAGE_ACTION_MENU_FALLBACK_WIDTH,
+    ),
+    availableWidth,
+  );
+  const availableHeight = Math.max(
+    MESSAGE_ACTION_MENU_MIN_VISIBLE_HEIGHT,
+    safeBottom - safeTop,
+  );
+  const menuHeight = Math.min(
+    menuElement?.offsetHeight ?? MESSAGE_ACTION_MENU_FALLBACK_HEIGHT,
+    availableHeight,
+  );
+
+  return {
+    x: Math.round(
+      clampNumber(anchorX, safeLeft, Math.max(safeLeft, safeRight - menuWidth)),
+    ),
+    y: Math.round(
+      clampNumber(anchorY, safeTop, Math.max(safeTop, safeBottom - menuHeight)),
+    ),
+    maxHeight: Math.floor(availableHeight),
+  };
 }
 
 function removeWhisperParamFromUrl(): void {
@@ -653,11 +755,8 @@ export default function ChatPage() {
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(
     null,
   );
-  const [messageActionMenu, setMessageActionMenu] = useState<{
-    messageId: string;
-    x: number;
-    y: number;
-  } | null>(null);
+  const [messageActionMenu, setMessageActionMenu] =
+    useState<MessageActionMenuState | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
   const [sending, setSending] = useState(false);
@@ -669,6 +768,10 @@ export default function ChatPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const messagesContentRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messageActionMenuPanelRef = useRef<HTMLDivElement>(null);
+  const messageActionMenuStateRef = useRef<MessageActionMenuState | null>(null);
+  const messageActionMenuReturnFocusRef = useRef<HTMLElement | null>(null);
+  const chatComposerRef = useRef<HTMLDivElement>(null);
   const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const lastHeaderTapRef = useRef(0);
   const pullStartYRef = useRef<number | null>(null);
@@ -1905,14 +2008,14 @@ export default function ChatPage() {
   }, [loading, scrollToBottom]);
 
   // Scroll to the message targeted by a notification click (?mid=xxx).
-  const hasScrolledToNotifiedRef = useRef(false);
+  const lastScrolledToNotifiedMessageIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
     const mid = params.get("mid");
-    if (!mid || hasScrolledToNotifiedRef.current) return;
+    if (!mid || lastScrolledToNotifiedMessageIdRef.current === mid) return;
     if (messages.some((m) => m.id === mid)) {
-      hasScrolledToNotifiedRef.current = true;
+      lastScrolledToNotifiedMessageIdRef.current = mid;
       window.setTimeout(() => scrollToMessage(mid), 300);
       return;
     }
@@ -2046,6 +2149,107 @@ export default function ChatPage() {
   const selectedActionCopyText = selectedActionMessage
     ? getCopyableMessageText(selectedActionMessage)
     : null;
+  const messageActionMenuId = messageActionMenu?.messageId ?? null;
+  useLayoutEffect(() => {
+    messageActionMenuStateRef.current = messageActionMenu;
+  }, [messageActionMenu]);
+
+  const closeMessageActionMenu = useCallback(() => {
+    setMessageActionMenu(null);
+    const returnTarget = messageActionMenuReturnFocusRef.current;
+    messageActionMenuReturnFocusRef.current = null;
+    if (!returnTarget || !returnTarget.isConnected) return;
+    window.setTimeout(() => {
+      try {
+        returnTarget.focus({ preventScroll: true });
+      } catch {
+        returnTarget.focus();
+      }
+    }, 0);
+  }, []);
+
+  const repositionMessageActionMenu = useCallback(() => {
+    const current = messageActionMenuStateRef.current;
+    if (!current) return;
+    const placement = getMessageActionMenuPlacement({
+      anchorX: current.anchorX,
+      anchorY: current.anchorY,
+      menuElement: messageActionMenuPanelRef.current,
+      composerElement: chatComposerRef.current,
+    });
+    setMessageActionMenu((prev) => {
+      if (!prev || prev.messageId !== current.messageId) return prev;
+      if (
+        prev.x === placement.x &&
+        prev.y === placement.y &&
+        prev.maxHeight === placement.maxHeight
+      ) {
+        return prev;
+      }
+      return { ...prev, ...placement };
+    });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!messageActionMenuId || !selectedActionMessage) return;
+    repositionMessageActionMenu();
+    const focusFrame = window.requestAnimationFrame(() => {
+      messageActionMenuPanelRef.current?.focus({ preventScroll: true });
+      repositionMessageActionMenu();
+    });
+    return () => window.cancelAnimationFrame(focusFrame);
+  }, [
+    messageActionMenuId,
+    repositionMessageActionMenu,
+    selectedActionMessage,
+  ]);
+
+  useEffect(() => {
+    if (!messageActionMenuId) return;
+    const visualViewport = window.visualViewport;
+    let frame = 0;
+
+    const queueReposition = () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        repositionMessageActionMenu();
+      });
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      closeMessageActionMenu();
+    };
+
+    visualViewport?.addEventListener("resize", queueReposition);
+    visualViewport?.addEventListener("scroll", queueReposition);
+    window.addEventListener("resize", queueReposition);
+    window.addEventListener("orientationchange", queueReposition);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      visualViewport?.removeEventListener("resize", queueReposition);
+      visualViewport?.removeEventListener("scroll", queueReposition);
+      window.removeEventListener("resize", queueReposition);
+      window.removeEventListener("orientationchange", queueReposition);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [
+    closeMessageActionMenu,
+    messageActionMenuId,
+    repositionMessageActionMenu,
+  ]);
+
+  useEffect(() => {
+    if (messageActionMenuId && !selectedActionMessage) {
+      setMessageActionMenu(null);
+    }
+  }, [messageActionMenuId, selectedActionMessage]);
+
   const assistantCardsByMessageId = useMemo(() => {
     const map = new Map<string, AssistantActionCard>();
     assistantCards.forEach((card) => {
@@ -2146,17 +2350,20 @@ export default function ChatPage() {
     point: { x: number; y: number },
   ) {
     if (!session) return;
-    const menuWidth = 180;
-    const menuHeight = 200;
-    const x =
-      typeof window === "undefined"
-        ? point.x
-        : Math.min(Math.max(8, point.x), window.innerWidth - menuWidth - 8);
-    const y =
-      typeof window === "undefined"
-        ? point.y
-        : Math.min(Math.max(8, point.y), window.innerHeight - menuHeight - 8);
-    setMessageActionMenu({ messageId: message.id, x, y });
+    const activeElement = document.activeElement;
+    messageActionMenuReturnFocusRef.current =
+      activeElement instanceof HTMLElement ? activeElement : null;
+    const placement = getMessageActionMenuPlacement({
+      anchorX: point.x,
+      anchorY: point.y,
+      composerElement: chatComposerRef.current,
+    });
+    setMessageActionMenu({
+      messageId: message.id,
+      anchorX: point.x,
+      anchorY: point.y,
+      ...placement,
+    });
   }
 
   async function handleSetMessageImageBackground(message: Message) {
@@ -2234,7 +2441,7 @@ export default function ChatPage() {
   }
 
   async function createScheduleChangeAssistantCard(
-    sourceMessageId: string,
+    sourceMessageId: string | null,
     lookup: ScheduleLookupIntent,
   ) {
     if (!session) return;
@@ -2440,6 +2647,7 @@ export default function ChatPage() {
   async function handleSendText(text: string) {
     if (!session) return;
     const explicitAssistantText = assistantDraftFromText(text) ?? keeperDraftFromText(text);
+    const isAssistantAddressed = !whisperTarget && (keeperMode || explicitAssistantText !== null);
     const assistantText = keeperMode ? text.trim() : explicitAssistantText ?? text;
     const latestTarget = latestOrdinaryVisibleMessage(messagesRef.current);
     const assistantDraft =
@@ -2453,6 +2661,65 @@ export default function ChatPage() {
 
     setSending(true);
     try {
+      if (isAssistantAddressed) {
+        if (!assistantText.trim()) {
+          toast.info(t("assistantNeedTimeExample"));
+          return;
+        }
+
+        const pendingKey = `assistant-${Date.now()}`;
+        if (assistantDraft?.reason === "schedule_lookup") {
+          await runAssistantReplyAfterPause(pendingKey, async () => {
+            try {
+              await createScheduleChangeAssistantCard(null, assistantDraft.scheduleLookup);
+            } catch (assistantErr) {
+              toast.error(
+                t("assistantCreateFailed", {
+                  message: humanizeError(assistantErr, language),
+                }),
+              );
+            }
+          });
+        } else if (assistantDraft?.reason === "missing_time") {
+          toast.info(t("assistantNeedTimeExample"));
+        } else if (assistantDraft?.reason === "missing_target") {
+          toast.info(t("assistantNeedTarget"));
+        } else if (isAssistantCreateDraft(assistantDraft)) {
+          await runAssistantReplyAfterPause(pendingKey, async () => {
+            try {
+              const result = await createAssistantActionCard(session, {
+                ...assistantDraft,
+                source_message_id: null,
+              });
+              await refreshAssistantCards(session).catch(() => undefined);
+              if (result.message_id) {
+                const fetched = await fetchRealtimeMessage(result.message_id).catch(
+                  () => false,
+                );
+                if (!fetched) {
+                  await syncMessages(session, { onMessages: handleSyncedMessages }).catch(
+                    () => undefined,
+                  );
+                }
+              }
+            } catch (assistantErr) {
+              toast.error(
+                t("assistantCreateFailed", {
+                  message: humanizeError(assistantErr, language),
+                }),
+              );
+            }
+          });
+          if (keeperMode) {
+            setKeeperMode(false);
+            removeKeeperParamFromUrl();
+          }
+        } else {
+          toast.info(t("assistantNeedTimeExample"));
+        }
+        return;
+      }
+
       const { content, effect: eff } = transformForSending(text);
       const id = await sendMessage(session, {
         type: "text",
@@ -2683,16 +2950,25 @@ export default function ChatPage() {
           <button
             type="button"
             aria-label={t("commonCancel")}
-            className="fixed inset-0 z-40 cursor-default bg-transparent"
-            onClick={() => setMessageActionMenu(null)}
+            className="chat-action-dismiss-layer"
+            onClick={closeMessageActionMenu}
           />
           <div
-            className="fixed z-50 min-w-44 overflow-hidden rounded-2xl border border-white/80 bg-white/95 py-1 text-sm shadow-[0_18px_42px_rgba(70,62,48,0.14)] backdrop-blur-xl"
-            style={{ left: messageActionMenu.x, top: messageActionMenu.y }}
+            ref={messageActionMenuPanelRef}
+            role="menu"
+            aria-label={t("inputMoreActions")}
+            tabIndex={-1}
+            className="chat-action-menu"
+            style={{
+              left: messageActionMenu.x,
+              top: messageActionMenu.y,
+              maxHeight: messageActionMenu.maxHeight,
+            }}
           >
             {selectedActionCopyText ? (
               <button
                 type="button"
+                role="menuitem"
                 className={`${chatActionMenuButtonClass} text-slate-700 hover:bg-slate-50 focus-visible:ring-brand-200`}
                 onClick={() => {
                   void handleCopyMessage(selectedActionMessage);
@@ -2704,6 +2980,7 @@ export default function ChatPage() {
             {selectedActionMessage.recipient_member_id ? null : selectedActionNotification ? (
               <button
                 type="button"
+                role="menuitem"
                 className={`${chatActionMenuButtonClass} text-slate-700 hover:bg-slate-50 focus-visible:ring-brand-200`}
                 onClick={() => handleRemoveImportant(selectedActionNotification.id)}
               >
@@ -2712,6 +2989,7 @@ export default function ChatPage() {
             ) : !selectedActionMessage.deleted_at ? (
               <button
                 type="button"
+                role="menuitem"
                 className={`${chatActionMenuButtonClass} text-slate-700 hover:bg-slate-50 focus-visible:ring-brand-200`}
                 onClick={() => handleAddImportant(selectedActionMessage.id)}
               >
@@ -2723,6 +3001,7 @@ export default function ChatPage() {
             !selectedActionMessage.deleted_at ? (
               <button
                 type="button"
+                role="menuitem"
                 className={`${chatActionMenuButtonClass} text-slate-700 hover:bg-slate-50 focus-visible:ring-brand-200`}
                 onClick={() => handleSetMessageImageBackground(selectedActionMessage)}
               >
@@ -2735,6 +3014,7 @@ export default function ChatPage() {
               (!selectedActionMessage.recipient_member_id && session.is_admin)) ? (
               <button
                 type="button"
+                role="menuitem"
                 className={`${chatActionMenuButtonClass} text-rose-600 hover:bg-rose-50 focus-visible:ring-rose-200`}
                 onClick={() => {
                   setMessageActionMenu(null);
@@ -2936,7 +3216,7 @@ export default function ChatPage() {
         </div>
       </div>
 
-      <div className="relative z-40 shrink-0">
+      <div ref={chatComposerRef} className="relative z-40 shrink-0">
       {keeperMode && !whisperTarget ? (
         <div
           className="mx-auto flex h-10 w-full max-w-3xl items-center justify-between gap-2 border-t border-emerald-100/70 bg-emerald-50/90 px-3 text-sm text-emerald-800 shadow-[0_-10px_24px_rgba(47,83,67,0.08)] backdrop-blur-xl sm:px-4"

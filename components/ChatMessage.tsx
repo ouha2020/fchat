@@ -237,6 +237,7 @@ function MemberAvatar({
   sender: FamilyMember | null;
   isMine: boolean;
 }) {
+  const { t } = useLanguage();
   const avatarUrl = safeHttpUrl(sender?.avatar_url ?? null);
   const placeholder = (sender?.nickname ?? "?").slice(0, 1).toUpperCase();
   const shellClass = `flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full text-sm font-semibold sm:h-9 sm:w-9 sm:text-base ${
@@ -244,8 +245,7 @@ function MemberAvatar({
       ? "bg-brand-500 text-white shadow-[0_8px_18px_rgba(79,108,247,0.22)] ring-1 ring-white/30"
       : "bg-white/90 text-slate-700 shadow-[0_8px_18px_rgba(71,64,49,0.08)] ring-1 ring-white/80"
   }`;
-
-  return (
+  const avatar = (
     <div className={shellClass}>
       {avatarUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
@@ -260,6 +260,21 @@ function MemberAvatar({
       )}
     </div>
   );
+
+  if (isMine) {
+    return (
+      <Link
+        href="/me"
+        className="-m-1 flex shrink-0 rounded-full p-1 transition active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+        aria-label={t("meTitle")}
+        title={t("meTitle")}
+      >
+        {avatar}
+      </Link>
+    );
+  }
+
+  return avatar;
 }
 
 function useLongPress(

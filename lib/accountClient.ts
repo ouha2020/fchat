@@ -127,19 +127,6 @@ export async function rejoinFamilyMemberWithAccount(
   return response.session as LocalSession;
 }
 
-export async function getOwnerAccountStatus(session: LocalSession): Promise<boolean> {
-  try {
-    const response = await postAuthed("/api/auth/owner-admin", {
-      action: "owner_status",
-      memberId: session.member_id,
-      memberToken: session.member_token,
-    });
-    return response.owner === true;
-  } catch {
-    return false;
-  }
-}
-
 export async function updateFamilyNameWithAccount(
   session: LocalSession,
   newName: string,

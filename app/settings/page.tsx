@@ -8,7 +8,6 @@ import { useLanguage } from "@/components/LanguageProvider";
 import { useDialog } from "@/components/Dialog";
 import { useToast } from "@/components/Toast";
 import {
-  getOwnerAccountStatus,
   resetFamilyCodeWithAccount,
   setJoinEnabledWithAccount,
   updateAccountPassword,
@@ -44,7 +43,6 @@ export default function SettingsPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
-  const [isOwnerAccount, setIsOwnerAccount] = useState(false);
   const [showFamilyCode, setShowFamilyCode] = useState(false);
   const push = usePushNotificationControls(session);
   const [diagnostics, setDiagnostics] = useState<PushDiagnostics | null>(null);
@@ -133,7 +131,6 @@ export default function SettingsPage() {
         }
         saveSession(fresh);
         setSession(fresh);
-        setIsOwnerAccount(await getOwnerAccountStatus(fresh));
         const row = await fetchFamilySettings(fresh);
         if (cancelled) return;
         if (row) {
@@ -221,7 +218,6 @@ export default function SettingsPage() {
       await updateAccountPassword(result.newPassword);
       toast.success("密码已修改，请重新登录");
       await getSupabaseAuth().auth.signOut();
-      setIsOwnerAccount(false);
       router.replace("/login?reset=1");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : humanizeError(err, language));
@@ -295,7 +291,6 @@ export default function SettingsPage() {
       await leaveFamily(session);
       clearSession();
       await getSupabaseAuth().auth.signOut();
-      setIsOwnerAccount(false);
       router.replace("/");
     } catch (err) {
       toast.error(humanizeError(err, language));
@@ -312,7 +307,6 @@ export default function SettingsPage() {
     if (!ok) return;
     clearSession();
     await getSupabaseAuth().auth.signOut();
-    setIsOwnerAccount(false);
     router.replace("/");
   }
 

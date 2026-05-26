@@ -70,11 +70,10 @@ import {
 } from "@/lib/notify";
 import {
   checkPushSubscriptionHealth,
-  pushNotificationErrorMessage,
   requestMessagePush,
   updatePushPresence,
 } from "@/lib/pushNotificationService";
-import { safeGoogleMapsUrl } from "@/lib/security";
+import { safeGoogleMapsUrl, safeHttpUrl } from "@/lib/security";
 import type { RecordingResult } from "@/lib/recordingService";
 import {
   getScheduleReminderStatus,
@@ -1615,30 +1614,6 @@ export default function ChatPage() {
     document.title = unreadCount > 0 ? `(${unreadCount}) ${base}` : base;
   }, [t, unreadCount]);
 
-  async function handleToggleNotifications() {
-    if (!session) return;
-    if (push.busy) return;
-
-    if (push.enabled) {
-      await push.disable().catch(() => undefined);
-      setUnreadCount(0);
-      return;
-    }
-
-    if (push.support?.reason === "ios_not_standalone") {
-      toast.info(t("settingsPushIosGuideTitle"));
-      router.push("/settings");
-      return;
-    }
-
-    try {
-      await push.enable();
-      toast.success(t("settingsPushEnabledAlert"));
-    } catch (err) {
-      toast.error(pushNotificationErrorMessage(err, t));
-    }
-  }
-
   // Bootstrap: validate session, then load data.
   useEffect(() => {
     let cancelled = false;
@@ -2933,6 +2908,9 @@ export default function ChatPage() {
     return null;
   }
 
+  const currentMember = memberMap.get(session.member_id) ?? null;
+  const currentAvatarUrl = safeHttpUrl(currentMember?.avatar_url ?? null);
+
   return (
     <div
       className="chat-paper-bg flex overflow-hidden flex-col"
@@ -3048,26 +3026,6 @@ export default function ChatPage() {
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1 sm:gap-2">
-          <button
-            type="button"
-            className={chatHeaderIconClass}
-            style={{
-              backgroundImage: `url(${
-                push.enabled ? "/ui-icons/notify-on.png" : "/ui-icons/notify-off.png"
-              })`,
-            }}
-            aria-label={push.enabled ? t("chatNotifyOff") : t("chatNotifyOn")}
-            title={
-              push.enabled
-                ? t("chatNotifyOff")
-                : push.support?.permission === "denied"
-                  ? t("chatNotifyDenied")
-                  : t("chatNotifyOn")
-            }
-            disabled={push.busy}
-            aria-pressed={push.enabled}
-            onClick={handleToggleNotifications}
-          />
           <Link
             href="/schedule"
             className={`${chatHeaderIconClass} relative`}
@@ -3084,13 +3042,6 @@ export default function ChatPage() {
             ) : null}
           </Link>
           <Link
-            href="/me"
-            className={chatHeaderIconClass}
-            style={{ backgroundImage: "url(/ui-icons/me.png)" }}
-            aria-label={t("meTitle")}
-            title={t("meTitle")}
-          />
-          <Link
             href="/members"
             className={chatHeaderIconClass}
             style={{ backgroundImage: "url(/ui-icons/members.png)" }}
@@ -3098,12 +3049,26 @@ export default function ChatPage() {
             title={t("chatMembers")}
           />
           <Link
-            href="/settings"
+            href="/me"
             className={chatHeaderIconClass}
-            style={{ backgroundImage: "url(/ui-icons/settings.png)" }}
-            aria-label={t("chatSettings")}
-            title={t("chatSettings")}
-          />
+            style={
+              currentAvatarUrl
+                ? undefined
+                : { backgroundImage: "url(/ui-icons/me.png)" }
+            }
+            aria-label={t("meTitle")}
+            title={t("meTitle")}
+          >
+            {currentAvatarUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={currentAvatarUrl}
+                alt=""
+                className="h-full w-full object-cover"
+                draggable={false}
+              />
+            ) : null}
+          </Link>
         </div>
       </header>
 

@@ -141,7 +141,7 @@ export default function ChatInput({
     if (recordingState.status !== "recording") return;
     if (recordingState.stopping) return;
     if (recordingState.elapsedMs < MAX_RECORD_MS) return;
-    void stopRecording("max");
+    void stopRecording();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recordingState]);
 
@@ -321,7 +321,7 @@ export default function ChatInput({
       const current = recordingStateRef.current;
       if (current.status !== "recording" || current.stopping) return;
       if (isInZone(e.clientX, e.clientY)) {
-        void stopRecording("manual");
+        void stopRecording();
       } else {
         handleCancelRecording();
       }
@@ -401,7 +401,7 @@ export default function ChatInput({
     }
   }
 
-  async function stopRecording(reason: "manual" | "max") {
+  async function stopRecording() {
     const current = recordingStateRef.current;
     if (current.status !== "recording" || current.stopping) return;
 

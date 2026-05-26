@@ -151,10 +151,6 @@ export async function POST(req: NextRequest) {
       body?.memberToken,
     );
 
-    if (action === "owner_status") {
-      return jsonOk({ owner: true });
-    }
-
     if (action === "update_family_name") {
       const newName = cleanText(body?.newName, 30);
       if (!newName) throw new Error("family_name_required");

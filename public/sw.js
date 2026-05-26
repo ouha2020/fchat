@@ -1,4 +1,4 @@
-const PRECACHE = "family-chat-precache-v10";
+const PRECACHE = "family-chat-precache-v11";
 const RUNTIME = "family-chat-runtime-v10";
 
 const PUSH_RECEIVED = "family-chat:push-received";
@@ -13,11 +13,8 @@ const PRECACHE_URLS = [
   "/ui-icons/location.png",
   "/ui-icons/me.png",
   "/ui-icons/members.png",
-  "/ui-icons/notify-off.png",
-  "/ui-icons/notify-on.png",
   "/ui-icons/plus.png",
   "/ui-icons/schedule.png",
-  "/ui-icons/settings.png",
   "/ui-icons/voice.png",
 ];
 

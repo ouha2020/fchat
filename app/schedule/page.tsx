@@ -37,6 +37,7 @@ import {
   snoozeScheduleReminder,
   updateScheduleItem,
 } from "@/lib/scheduleService";
+import { safeHttpUrl } from "@/lib/security";
 import { getSupabase, isSupabaseConfigured } from "@/lib/supabaseClient";
 import type { FamilyMember } from "@/types/member";
 import type {
@@ -1644,6 +1645,10 @@ function ScheduleDetailPanel({
   const reminderTimeLabel = item.remind_at
     ? `${formatDate(item.remind_at, language)} ${formatTime(item.remind_at, language)}`
     : t("scheduleReminderNone");
+  const memberById = useMemo(
+    () => new Map(members.map((member) => [member.id, member])),
+    [members],
+  );
 
   useEffect(() => {
     const visualViewport = window.visualViewport;
@@ -1951,8 +1956,8 @@ function ScheduleDetailPanel({
               )}
             </details>
 
-            <section className="flex min-h-[22rem] flex-1 flex-col overflow-hidden rounded-[28px] bg-slate-100/80 ring-1 ring-slate-200">
-              <div className="flex shrink-0 items-center justify-between gap-2 px-4 py-3">
+            <section className="flex min-h-[24rem] flex-1 flex-col overflow-hidden rounded-[28px] bg-gradient-to-b from-stone-50 via-white to-stone-100 ring-1 ring-white/80">
+              <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/70 bg-white/75 px-4 py-3 backdrop-blur-xl">
                 <h3 className="text-base font-semibold text-slate-900">
                   {t("scheduleConversation")}
                 </h3>
@@ -1963,72 +1968,95 @@ function ScheduleDetailPanel({
                 ) : null}
               </div>
 
-              <div className="mx-3 mb-2 rounded-[22px] bg-white/80 p-3 text-sm text-slate-700 shadow-sm ring-1 ring-slate-100">
-                <div className="flex flex-wrap items-center justify-center gap-2 text-center">
-                  <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-100">
-                    {t("keeperName")}
-                  </span>
-                  <span className="text-xs font-medium text-slate-500">
-                    {t("scheduleAssigneeResponse")}
-                  </span>
-                  <span className={responseBadgeClass(response.status)}>
-                    {assigneeResponseLabel(response.status, t)}
-                  </span>
-                </div>
-                {response.note ? (
-                  <p className="mt-2 whitespace-pre-wrap break-words text-center text-slate-500">
-                    {response.note}
-                  </p>
-                ) : null}
-                {isAssignee && item.status === "active" ? (
-                  <div className="mt-3 flex flex-col gap-2">
-                    {showDeclineNote ? (
-                      <textarea
-                        className="field min-h-20 resize-none"
-                        value={declineNote}
-                        maxLength={300}
-                        placeholder={t("scheduleDeclineReason")}
-                        onChange={(event) =>
-                          onDeclineNoteChange(event.target.value)
-                        }
-                      />
-                    ) : null}
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        className="btn-secondary"
-                        disabled={responseBusy}
-                        onClick={() => onRespondAssignment("accepted")}
-                      >
-                        {t("scheduleAcceptAssignment")}
-                      </button>
-                      <button
-                        type="button"
-                        className="btn-ghost text-rose-600 hover:bg-rose-50"
-                        disabled={responseBusy}
-                        onClick={() => {
-                          if (!showDeclineNote) {
-                            onShowDeclineNoteChange(true);
-                            return;
-                          }
-                          onRespondAssignment("declined");
-                        }}
-                      >
-                        {t("scheduleDeclineAssignment")}
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-
               <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                 {contextEventsLoading ? (
-                  <div className="mx-3 flex min-h-0 flex-1 items-center justify-center rounded-[24px] bg-slate-50 text-sm text-slate-500">
+                  <div className="mx-3 my-3 flex min-h-0 flex-1 items-center justify-center rounded-[24px] bg-white/70 text-sm text-slate-500 ring-1 ring-white/80">
                     {t("commonLoading")}
                   </div>
-                ) : recordRows.length ? (
-                  <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3">
-                    {recordRows.map((row) => {
+                ) : (
+                  <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 py-4">
+                    <div className="flex items-start gap-2">
+                      <ScheduleConversationAvatar label="家" tone="keeper" />
+                      <div className="flex min-w-0 max-w-[82%] flex-col items-start gap-1 sm:max-w-md">
+                        <div className="flex max-w-full min-w-0 items-center gap-1.5 text-[11px] leading-4 text-slate-500">
+                          <span className="max-w-full truncate font-medium text-slate-700">
+                            {t("keeperName")}
+                          </span>
+                          <span className="text-slate-300">·</span>
+                          <span className="shrink-0">
+                            {t("scheduleAssigneeResponse")}
+                          </span>
+                        </div>
+                        <div className="max-w-full rounded-[22px] rounded-bl-md bg-white/95 px-3.5 py-3 text-sm text-slate-800 shadow-[0_10px_26px_rgba(47,83,67,0.08)] ring-1 ring-white/80">
+                          <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                            <span className="rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-100">
+                              {itemTypeLabel(item.item_type, t)}
+                            </span>
+                            <span className={responseBadgeClass(response.status)}>
+                              {assigneeResponseLabel(response.status, t)}
+                            </span>
+                          </div>
+                          <h4 className="break-words text-base font-bold leading-6 text-slate-950">
+                            {item.title}
+                          </h4>
+                          <p className="mt-1 break-words text-xs leading-5 text-slate-600">
+                            {t("scheduleStartTime")}: {scheduleTimeRange}
+                          </p>
+                          {item.note ? (
+                            <p className="mt-1 whitespace-pre-wrap break-words text-xs leading-5 text-slate-600">
+                              {item.note}
+                            </p>
+                          ) : null}
+                          {response.note ? (
+                            <p className="mt-2 whitespace-pre-wrap break-words rounded-2xl bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600">
+                              {response.note}
+                            </p>
+                          ) : null}
+                          {isAssignee && item.status === "active" ? (
+                            <div className="mt-3 flex flex-col gap-2">
+                              {showDeclineNote ? (
+                                <textarea
+                                  className="field min-h-20 resize-none"
+                                  value={declineNote}
+                                  maxLength={300}
+                                  placeholder={t("scheduleDeclineReason")}
+                                  onChange={(event) =>
+                                    onDeclineNoteChange(event.target.value)
+                                  }
+                                />
+                              ) : null}
+                              <div className="grid grid-cols-2 gap-2">
+                                <button
+                                  type="button"
+                                  className="btn-secondary min-w-0 px-3"
+                                  disabled={responseBusy}
+                                  onClick={() => onRespondAssignment("accepted")}
+                                >
+                                  {t("scheduleAcceptAssignment")}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-ghost min-w-0 px-3 text-rose-600 hover:bg-rose-50"
+                                  disabled={responseBusy}
+                                  onClick={() => {
+                                    if (!showDeclineNote) {
+                                      onShowDeclineNoteChange(true);
+                                      return;
+                                    }
+                                    onRespondAssignment("declined");
+                                  }}
+                                >
+                                  {t("scheduleDeclineAssignment")}
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+
+                    {recordRows.length ? (
+                      recordRows.map((row) => {
                       const event = row.event;
                       const senderMemberId = event.sender_member_id ?? null;
                       const isMine = senderMemberId === session.member_id;
@@ -2039,13 +2067,17 @@ function ScheduleDetailPanel({
                         ? scheduleTimelineFallback(event, t)
                         : event.text_content ?? scheduleTimelineFallback(event, t);
                       const isPrivate = event.visibility === "private";
+                      const senderMember = senderMemberId
+                        ? memberById.get(senderMemberId) ?? null
+                        : null;
+                      const avatarUrl = safeHttpUrl(senderMember?.avatar_url ?? null);
                       const avatarLabel = (isMine ? t("membersMe") : nickname).slice(0, 1);
                       const canDeleteRecord =
                         isMine && ["text", "audio", "location"].includes(event.event_type);
                       if (isSystem) {
                         return (
                           <div key={row.id} className="flex justify-center px-3">
-                            <div className="max-w-[90%] rounded-full bg-white px-3 py-1.5 text-center text-[11px] font-medium text-slate-500 ring-1 ring-slate-100">
+                            <div className="max-w-[90%] rounded-full bg-white/95 px-3 py-1.5 text-center text-[11px] font-medium text-slate-500 shadow-sm ring-1 ring-white/80">
                               <span className="break-words">{text}</span>
                               <span className="ml-1 text-slate-400">
                                 {formatTime(createdAt, language)}
@@ -2058,7 +2090,7 @@ function ScheduleDetailPanel({
                         <div key={row.id}>
                           <div
                             className={`mb-1 flex items-center gap-1 text-[11px] text-slate-500 ${
-                              isMine ? "justify-end pr-10" : "pl-10"
+                              isMine ? "justify-end pr-11" : "pl-11"
                             }`}
                           >
                             <span className="max-w-28 truncate">
@@ -2086,23 +2118,23 @@ function ScheduleDetailPanel({
                             }`}
                           >
                             {!isMine ? (
-                              <div
-                                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                              <ScheduleConversationAvatar
+                                label={avatarLabel}
+                                avatarUrl={avatarUrl}
+                                tone={
                                   event.sender_type === "keeper"
-                                    ? "bg-emerald-100 text-emerald-700"
-                                    : "bg-slate-200 text-slate-700"
-                                }`}
-                              >
-                                {avatarLabel}
-                              </div>
+                                    ? "keeper"
+                                    : "member"
+                                }
+                              />
                             ) : null}
                             <div
-                              className={`max-w-[76%] rounded-[18px] px-3 py-2 text-sm shadow-sm ${
+                              className={`max-w-[78%] rounded-[20px] px-3.5 py-2.5 text-sm shadow-[0_10px_24px_rgba(77,67,50,0.08)] ${
                                 isMine
-                                  ? "rounded-br-md bg-brand-600 text-white"
+                                  ? "rounded-br-md bg-brand-600 text-white ring-1 ring-white/20"
                                   : event.sender_type === "keeper"
-                                    ? "rounded-bl-md bg-emerald-50 text-slate-800 ring-1 ring-emerald-100"
-                                    : "rounded-bl-md bg-white text-slate-800 ring-1 ring-slate-100"
+                                    ? "rounded-bl-md bg-white/95 text-slate-800 ring-1 ring-emerald-100/80"
+                                    : "rounded-bl-md bg-white/95 text-slate-800 ring-1 ring-white/80"
                               }`}
                             >
                               {isPrivate ? (
@@ -2128,23 +2160,28 @@ function ScheduleDetailPanel({
                               </p>
                             </div>
                             {isMine ? (
-                              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-600 text-xs font-bold text-white">
-                                {avatarLabel}
-                              </div>
+                              <ScheduleConversationAvatar
+                                label={avatarLabel}
+                                avatarUrl={avatarUrl}
+                                tone="mine"
+                              />
                             ) : null}
                           </div>
                         </div>
                       );
-                    })}
-                  </div>
-                ) : (
-                  <div className="mx-3 flex min-h-0 flex-1 items-center justify-center rounded-[24px] bg-slate-50 text-center text-sm text-slate-500">
-                    {t("scheduleConversationEmpty")}
+                      })
+                    ) : (
+                      <div className="flex justify-center px-3">
+                        <div className="max-w-[90%] rounded-full bg-white/90 px-3 py-1.5 text-center text-[11px] font-medium text-slate-500 shadow-sm ring-1 ring-white/80">
+                          {t("scheduleConversationEmpty")}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
                 {canComment ? (
-                  <div className="shrink-0 rounded-t-[24px] bg-white p-2 shadow-[0_-8px_20px_rgba(15,23,42,0.04)] ring-1 ring-slate-200">
-                    <div className="mb-2 flex items-center gap-1.5">
+                  <div className="shrink-0 rounded-t-[28px] bg-white/95 p-2.5 shadow-[0_-8px_20px_rgba(15,23,42,0.05)] ring-1 ring-white/90 backdrop-blur-xl">
+                    <div className="mb-2 inline-flex max-w-full rounded-full bg-slate-100 p-1">
                       <button
                         type="button"
                         className={`h-8 rounded-full px-3 text-xs font-semibold transition ${
@@ -2191,7 +2228,7 @@ function ScheduleDetailPanel({
                     ) : null}
                     <div className="flex items-end gap-2">
                       <textarea
-                        className="min-h-10 flex-1 resize-none rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none transition placeholder:text-slate-400 focus:border-brand-200 focus:bg-white focus:ring-2 focus:ring-brand-100"
+                        className="min-h-10 flex-1 resize-none rounded-[18px] border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none transition placeholder:text-slate-400 focus:border-brand-200 focus:bg-white focus:ring-2 focus:ring-brand-100"
                         value={commentText}
                         maxLength={300}
                         rows={1}
@@ -2202,7 +2239,7 @@ function ScheduleDetailPanel({
                       />
                       <button
                         type="button"
-                        className="h-10 shrink-0 rounded-2xl bg-brand-600 px-4 text-sm font-semibold text-white shadow-sm transition disabled:bg-brand-300"
+                        className="h-10 shrink-0 rounded-[18px] bg-brand-600 px-4 text-sm font-semibold text-white shadow-sm transition disabled:bg-brand-300"
                         disabled={sendDisabled}
                         onClick={onAddComment}
                       >
@@ -2256,6 +2293,42 @@ function ScheduleDetailPanel({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function ScheduleConversationAvatar({
+  label,
+  avatarUrl,
+  tone = "member",
+}: {
+  label: string;
+  avatarUrl?: string | null;
+  tone?: "keeper" | "member" | "mine";
+}) {
+  const toneClass =
+    tone === "keeper"
+      ? "bg-emerald-100 text-emerald-700 ring-emerald-50"
+      : tone === "mine"
+        ? "bg-brand-600 text-white ring-white/30"
+        : "bg-white/90 text-slate-700 ring-white/80";
+
+  return (
+    <div
+      className={`flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full text-sm font-bold shadow-[0_8px_18px_rgba(71,64,49,0.08)] ring-1 ${toneClass}`}
+      aria-hidden="true"
+    >
+      {avatarUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={avatarUrl}
+          alt=""
+          className="h-full w-full object-cover"
+          draggable={false}
+        />
+      ) : (
+        label
+      )}
     </div>
   );
 }

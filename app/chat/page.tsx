@@ -23,6 +23,7 @@ import {
 import {
   isAssistantCreateDraft,
   parseAssistantIntent,
+  type ParsedAssistantIntent,
   type ScheduleLookupIntent,
 } from "@/lib/assistantIntentParser";
 import {
@@ -198,10 +199,42 @@ function writeScheduleAttentionDot(
   }
 }
 
+function isAssistantCardSystemMessage(message: Message): boolean {
+  const payload = message.system_event_payload ?? {};
+  return (
+    message.message_type === "system" &&
+    (message.system_event_type === "assistant_card_created" ||
+      message.system_event_type === "assistant_card_confirmed" ||
+      message.system_event_type === "assistant_card_cancelled" ||
+      (payload.actor_type === "assistant" &&
+        typeof payload.card_id === "string" &&
+        typeof payload.status === "string"))
+  );
+}
+
+function isAssistantScheduleActionDoneMessage(message: Message): boolean {
+  const payload = message.system_event_payload ?? {};
+  return (
+    message.message_type === "system" &&
+    message.system_event_type === "assistant_action_done" &&
+    payload.actor_type === "assistant" &&
+    typeof payload.schedule_item_id === "string"
+  );
+}
+
 function isMessageVisibleToSession(
   message: Message,
   activeSession: LocalSession,
 ): boolean {
+  if (isAssistantCardSystemMessage(message)) {
+    return message.sender_member_id === activeSession.member_id;
+  }
+  if (
+    isAssistantScheduleActionDoneMessage(message) &&
+    !message.recipient_member_id
+  ) {
+    return message.sender_member_id === activeSession.member_id;
+  }
   return (
     !message.recipient_member_id ||
     message.sender_member_id === activeSession.member_id ||
@@ -271,16 +304,7 @@ function mergeMessagesById(existing: Message[], incoming: Message[]): Message[] 
 }
 
 function hasAssistantCardMessage(rows: Message[]): boolean {
-  return rows.some((message) => {
-    const payload = message.system_event_payload ?? {};
-    return (
-      message.message_type === "system" &&
-      (message.system_event_type === "assistant_card_created" ||
-        message.system_event_type === "assistant_card_confirmed" ||
-        message.system_event_type === "assistant_card_cancelled" ||
-        payload.actor_type === "assistant")
-    );
-  });
+  return rows.some(isAssistantCardSystemMessage);
 }
 
 function latestOrdinaryVisibleMessage(rows: Message[], currentMessageId?: string): Message | null {
@@ -491,6 +515,21 @@ function assistantDraftFromText(text: string): string | null {
   const trigger = triggers.find((item) => trimmed.startsWith(item));
   if (!trigger) return null;
   return trimmed.slice(trigger.length).replace(/^[\s,，、。:：]+/, "").trim();
+}
+
+function shouldKeepAssistantDraftPrivate(
+  draft: ParsedAssistantIntent | null,
+): boolean {
+  if (!draft) return false;
+  if ("reason" in draft && draft.reason === "schedule_lookup") return true;
+  if (!isAssistantCreateDraft(draft) || draft.reason) return false;
+  return [
+    "reminder",
+    "schedule",
+    "todo",
+    "schedule_update",
+    "schedule_cancel",
+  ].includes(draft.card_type);
 }
 
 function buildScheduleChangeCardInput(
@@ -2508,6 +2547,7 @@ export default function ChatPage() {
       }
       if (result.result_message_id) {
         await fetchRealtimeMessage(result.result_message_id).catch(() => false);
+        requestMessagePush(session, result.result_message_id);
       }
       if (card.card_type === "important") {
         await refreshImportantNotifications(session).catch(() => undefined);
@@ -2633,10 +2673,12 @@ export default function ChatPage() {
             latestVisibleMessage: latestTarget,
           })
         : null;
+    const keepAssistantDraftPrivate =
+      !whisperTarget && shouldKeepAssistantDraftPrivate(assistantDraft);
 
     setSending(true);
     try {
-      if (isAssistantAddressed) {
+      if (isAssistantAddressed || keepAssistantDraftPrivate) {
         if (!assistantText.trim()) {
           toast.info(t("assistantNeedTimeExample"));
           return;

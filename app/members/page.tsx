@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import AppLoading from "@/components/AppLoading";
 import { useLanguage } from "@/components/LanguageProvider";
 import { useDialog } from "@/components/Dialog";
 import { useToast } from "@/components/Toast";
@@ -145,6 +146,10 @@ export default function MembersPage() {
     }
   }
 
+  if (loading) {
+    return <AppLoading tone="members" message={t("commonLoading")} />;
+  }
+
   return (
     <div className="app-page">
       <header className="app-header">
@@ -156,9 +161,7 @@ export default function MembersPage() {
         </div>
       </header>
 
-      {loading ? (
-        <div className="status-note">{t("commonLoading")}</div>
-      ) : loadError ? (
+      {loadError ? (
         <div className="section-card text-center">
           <h2 className="text-lg font-bold text-slate-900">
             {t("chatLoadFailedTitle")}

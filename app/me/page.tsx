@@ -5,12 +5,14 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
+import AppLoading from "@/components/AppLoading";
 import { useLanguage } from "@/components/LanguageProvider";
 import { useToast } from "@/components/Toast";
 import { clearSession, loadSession, saveSession, type LocalSession } from "@/lib/authLocal";
 import { updateMemberAvatar, uploadAvatar } from "@/lib/avatarService";
 import { humanizeError } from "@/lib/errors";
 import { validateMember } from "@/lib/familyService";
+import { notifyMemberProfileChanged } from "@/lib/memberProfileEvents";
 import { getPersonalDashboard } from "@/lib/personalDashboardService";
 import { isSupabaseConfigured } from "@/lib/supabaseClient";
 import type {
@@ -143,6 +145,11 @@ export default function MePage() {
             }
           : current,
       );
+      notifyMemberProfileChanged({
+        familyId: session.family_id,
+        memberId: session.member_id,
+        avatarUrl: savedUrl,
+      });
       toast.success(t("meAvatarUpdated"));
     } catch (err) {
       toast.error(humanizeError(err, language) || t("meAvatarUploadFailed"));
@@ -169,6 +176,11 @@ export default function MePage() {
             }
           : current,
       );
+      notifyMemberProfileChanged({
+        familyId: session.family_id,
+        memberId: session.member_id,
+        avatarUrl: null,
+      });
       toast.success(t("meAvatarRemoved"));
     } catch (err) {
       toast.error(humanizeError(err, language) || t("meAvatarUploadFailed"));
@@ -178,11 +190,7 @@ export default function MePage() {
   }
 
   if (loading) {
-    return (
-      <div className="app-page">
-        <div className="status-note">{t("commonLoading")}</div>
-      </div>
-    );
+    return <AppLoading tone="profile" message={t("commonLoading")} />;
   }
 
   if (loadError || !session || !dashboard) {

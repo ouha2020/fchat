@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 
+import AppLoading from "@/components/AppLoading";
 import { useLanguage } from "@/components/LanguageProvider";
 import { useDialog } from "@/components/Dialog";
 import { useToast } from "@/components/Toast";
@@ -337,13 +338,7 @@ export default function SettingsPage() {
   }
 
   if (loading) {
-    return (
-      <main className="min-h-dvh bg-[#fbfff7] px-4 py-6 text-slate-900">
-        <div className="mx-auto w-full max-w-2xl rounded-[22px] bg-white/95 px-4 py-3 text-sm leading-6 text-[#526452] shadow-[0_14px_36px_rgba(79,168,95,0.10)] ring-1 ring-[#dff3d8]">
-          {t("commonLoading")}
-        </div>
-      </main>
-    );
+    return <AppLoading tone="settings" message={t("commonLoading")} />;
   }
 
   if (loadError) {

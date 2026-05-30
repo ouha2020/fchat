@@ -143,6 +143,174 @@ body {
   @apply mx-auto flex w-full max-w-md flex-1 flex-col px-4 py-6 sm:px-6 sm:py-8;
 }
 
+.schedule-page {
+  padding-bottom: max(8.5rem, calc(env(safe-area-inset-bottom) + 8.5rem));
+}
+
+.schedule-filter-panel,
+.schedule-page > section.mb-3.rounded-2xl.bg-white.p-2\.5.shadow-sm.ring-1.ring-slate-100,
+.app-page > section.mb-3.rounded-2xl.bg-white.p-2\.5.shadow-sm.ring-1.ring-slate-100 {
+  position: fixed;
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom) + 0.75rem);
+  z-index: 39;
+  width: calc(100vw - 1.5rem);
+  max-width: calc(48rem - 2rem);
+  padding: 0.625rem;
+  border-radius: 24px;
+  border: 1px solid rgba(226, 232, 240, 0.86);
+  background: rgba(255, 255, 255, 0.94);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 -18px 36px rgba(62, 56, 44, 0.08),
+    0 10px 28px rgba(15, 23, 42, 0.08);
+  transform: translateX(-50%);
+}
+
+.schedule-page > section.mb-3.rounded-2xl.bg-white.p-2\.5.shadow-sm.ring-1.ring-slate-100,
+.app-page > section.mb-3.rounded-2xl.bg-white.p-2\.5.shadow-sm.ring-1.ring-slate-100 {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 0.5rem;
+  margin-bottom: 0;
+}
+
+.schedule-page > section.mb-3.rounded-2xl.bg-white.p-2\.5.shadow-sm.ring-1.ring-slate-100 > .mt-2,
+.app-page > section.mb-3.rounded-2xl.bg-white.p-2\.5.shadow-sm.ring-1.ring-slate-100 > .mt-2 {
+  margin-top: 0;
+}
+
+.schedule-fab-shell {
+  pointer-events: none;
+  position: fixed;
+  inset-inline: 0;
+  bottom: calc(env(safe-area-inset-bottom) + 5.5rem);
+  z-index: 40;
+  display: flex;
+  width: 100%;
+  max-width: 48rem;
+  justify-content: flex-end;
+  margin-inline: auto;
+  padding-inline: 1rem;
+}
+
+.schedule-fab-shell-hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(0.5rem);
+}
+
+.schedule-fab-button {
+  pointer-events: auto;
+  display: flex;
+  width: 3.5rem;
+  height: 3.5rem;
+  flex-shrink: 0;
+  touch-action: manipulation;
+  align-items: center;
+  justify-content: center;
+  border-radius: 22px;
+  background: #4f6cf7;
+  color: #fff;
+  font-size: 1.875rem;
+  font-weight: 600;
+  line-height: 1;
+  box-shadow:
+    0 16px 30px rgba(79, 108, 247, 0.28),
+    0 0 0 1px rgba(255, 255, 255, 0.4);
+  transition:
+    transform 160ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    background-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.schedule-fab-button:hover {
+  background: #3a55de;
+}
+
+.schedule-fab-button:active {
+  transform: translateY(1px) scale(0.985);
+}
+
+.schedule-fab-button:focus-visible {
+  outline: none;
+  box-shadow:
+    0 16px 30px rgba(79, 108, 247, 0.28),
+    0 0 0 3px #c8d4ff;
+}
+
+.schedule-fab-button:disabled {
+  opacity: 0.6;
+}
+
+.schedule-page > header.mb-3 > button[aria-label="新建"],
+.schedule-page > header.mb-3 > button[title="新建"],
+.schedule-page > header.mb-3 > button[aria-label="取消"],
+.schedule-page > header.mb-3 > button[title="取消"],
+.app-page > header.mb-3 > button[aria-label="新建"],
+.app-page > header.mb-3 > button[title="新建"],
+.app-page > header.mb-3 > button[aria-label="取消"],
+.app-page > header.mb-3 > button[title="取消"] {
+  position: fixed;
+  right: max(1rem, calc((100vw - 48rem) / 2 + 1rem));
+  bottom: calc(env(safe-area-inset-bottom) + 5.5rem);
+  z-index: 40;
+  width: 3.5rem;
+  height: 3.5rem;
+  border-radius: 22px;
+  box-shadow:
+    0 16px 30px rgba(79, 108, 247, 0.28),
+    0 0 0 1px rgba(255, 255, 255, 0.4);
+}
+
+.app-page:has(
+    > section.mb-3.rounded-2xl.bg-white.p-2\.5.shadow-sm.ring-1.ring-slate-100
+      select
+  )
+  > header.mb-3
+  > button[aria-label="新建"],
+.app-page:has(
+    > section.mb-3.rounded-2xl.bg-white.p-2\.5.shadow-sm.ring-1.ring-slate-100
+      select
+  )
+  > header.mb-3
+  > button[title="新建"],
+.app-page:has(
+    > section.mb-3.rounded-2xl.bg-white.p-2\.5.shadow-sm.ring-1.ring-slate-100
+      select
+  )
+  > header.mb-3
+  > button[aria-label="取消"],
+.app-page:has(
+    > section.mb-3.rounded-2xl.bg-white.p-2\.5.shadow-sm.ring-1.ring-slate-100
+      select
+  )
+  > header.mb-3
+  > button[title="取消"] {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(0.5rem);
+}
+
+@media (min-width: 640px) {
+  .schedule-fab-shell {
+    padding-inline: 1.5rem;
+  }
+
+  .schedule-page > header.mb-3 > button[aria-label="新建"],
+  .schedule-page > header.mb-3 > button[title="新建"],
+  .schedule-page > header.mb-3 > button[aria-label="取消"],
+  .schedule-page > header.mb-3 > button[title="取消"],
+  .app-page > header.mb-3 > button[aria-label="新建"],
+  .app-page > header.mb-3 > button[title="新建"],
+  .app-page > header.mb-3 > button[aria-label="取消"],
+  .app-page > header.mb-3 > button[title="取消"] {
+    right: max(1.5rem, calc((100vw - 48rem) / 2 + 1.5rem));
+  }
+}
+
 .app-header {
   @apply mb-4 flex items-center justify-between gap-3;
 }
@@ -274,6 +442,92 @@ body {
 
 .status-note {
   @apply rounded-xl bg-slate-50 px-3 py-2 text-sm leading-6 text-slate-600;
+}
+
+.app-loading-screen {
+  @apply relative flex min-h-[100dvh] overflow-hidden bg-gradient-to-b from-emerald-50 via-white to-brand-50 px-6 py-10 text-slate-900;
+}
+
+.app-loading-bg {
+  @apply pointer-events-none absolute inset-0 overflow-hidden;
+}
+
+.app-loading-branch {
+  @apply absolute block h-px w-32 origin-left bg-emerald-200/70;
+}
+
+.app-loading-branch::before,
+.app-loading-branch::after {
+  content: "";
+  border-radius: 999px 0 999px 0;
+  @apply absolute block h-6 w-3 bg-emerald-200/80;
+}
+
+.app-loading-branch::before {
+  @apply left-8 -top-5 rotate-[-18deg];
+}
+
+.app-loading-branch::after {
+  @apply left-16 top-1 rotate-[28deg] bg-amber-100/80;
+}
+
+.app-loading-branch-left {
+  @apply -left-10 top-24 rotate-[-14deg];
+}
+
+.app-loading-branch-right {
+  @apply -right-8 top-14 rotate-[162deg];
+}
+
+.app-loading-panel {
+  @apply relative z-10 m-auto flex w-full max-w-xs flex-col items-center rounded-[2rem] bg-white/80 px-8 py-10 shadow-sm ring-1 ring-white/80 backdrop-blur;
+}
+
+.app-loading-mark {
+  @apply flex h-24 w-24 items-center justify-center rounded-[2rem] bg-white text-emerald-700 shadow-sm ring-1 ring-emerald-100;
+  animation: app-loading-float 2.8s ease-in-out infinite;
+}
+
+.app-loading-dot {
+  @apply h-2.5 w-2.5 rounded-full bg-emerald-500;
+  animation: app-loading-dot 1.15s ease-in-out infinite;
+}
+
+.app-loading-dot:nth-child(2) {
+  animation-delay: 0.14s;
+}
+
+.app-loading-dot:nth-child(3) {
+  animation-delay: 0.28s;
+}
+
+@keyframes app-loading-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+@keyframes app-loading-dot {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-5px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-loading-mark,
+  .app-loading-dot {
+    animation: none;
+  }
 }
 
 .info-note {

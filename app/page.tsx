@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -51,7 +52,7 @@ export default function HomePage() {
       const result = await ensureFamilyCode(false);
       if (result.status === "has_family" && result.session) {
         saveSession(result.session);
-        toast.info("你已经创建过家庭，正在进入家庭聊天室。");
+        toast.info("你已经创建过家庭，正在进入家人聊天室。");
         router.replace("/chat");
         return;
       }
@@ -68,62 +69,80 @@ export default function HomePage() {
   }
 
   return (
-    <div className="app-page-narrow">
-      <header className="app-header-stack">
-        <h1 className="page-title">家人聊天室</h1>
-        <p className="page-subtitle">
-          创建家庭需要邮箱注册。家人加入家庭只需要家庭代码。
-        </p>
-      </header>
+    <main className="min-h-[100dvh] bg-[#f6f2ea] text-stone-950">
+      <section className="relative mx-auto h-[100dvh] min-h-[640px] w-full max-w-md overflow-hidden bg-[#fffdf8] shadow-2xl shadow-stone-300/40">
+        <h1 className="sr-only">HomeTree 家人聊天室</h1>
 
-      <EnvWarning />
+        <div className="absolute inset-0 overflow-hidden">
+          <Image
+            src="/welcome-home-main.png?v=no-status-20260530"
+            alt=""
+            fill
+            priority
+            aria-hidden="true"
+            className="object-cover object-top"
+            sizes="(max-width: 448px) 100vw, 448px"
+          />
+          <div
+            className="pointer-events-none absolute inset-x-0 bottom-0 h-[46%] bg-gradient-to-b from-transparent via-[#fffdf8]/74 to-[#fffdf8]"
+            aria-hidden="true"
+          />
+          <div
+            className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-[#fffdf8]/80 to-transparent"
+            aria-hidden="true"
+          />
+        </div>
 
-      <div className="grid gap-4">
-        <button
-          type="button"
-          className="action-card flex items-center justify-between gap-4"
-          disabled={busy}
-          onClick={handleCreateFamily}
-        >
-          <span className="min-w-0 text-left">
-            <span className="block text-lg font-bold text-slate-900">
-              创建家庭
-            </span>
-            <span className="mt-1 block text-sm leading-relaxed text-slate-500">
-              注册或登录邮箱，获取家庭代码后创建家庭。
-            </span>
-          </span>
-          <span className="icon-action text-2xl text-brand-600" aria-hidden="true">
-            +
-          </span>
-        </button>
+        <div className="relative z-10 flex h-full flex-col justify-end px-5 pb-[max(env(safe-area-inset-bottom),1.125rem)] pt-6 min-[390px]:px-6">
+          <div className="rounded-[32px] border border-[#efe5ce]/80 bg-[#fffaf0]/90 p-4 shadow-[0_16px_38px_rgba(128,103,65,0.14)] backdrop-blur-sm">
+            <EnvWarning />
+            <p className="mb-3 text-center text-sm font-medium leading-6 text-[#6f604d]">
+              创建家庭需要邮箱，家人加入只要家庭代码。
+            </p>
+            <div className="grid grid-cols-2 gap-2.5">
+              <button
+                type="button"
+                className="native-press flex min-h-[4.25rem] w-full touch-manipulation flex-col items-center justify-center rounded-[20px] bg-[#6f9d56] px-3 text-center text-lg font-bold leading-6 text-white shadow-[0_10px_24px_rgba(93,130,70,0.22),inset_0_1px_0_rgba(255,255,255,0.28)] transition hover:bg-[#628f4b] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c8deb5] disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={busy}
+                onClick={handleCreateFamily}
+              >
+                <span>创建家庭</span>
+                <span className="mt-0.5 text-xs font-semibold text-white/78">
+                  注册邮箱
+                </span>
+              </button>
 
-        <Link
-          href="/join"
-          className="action-card flex items-center justify-between gap-4"
-        >
-          <span className="min-w-0">
-            <span className="block text-lg font-bold text-slate-900">
-              加入家庭
-            </span>
-            <span className="mt-1 block text-sm leading-relaxed text-slate-500">
-              输入家人分享的家庭代码、昵称和角色即可加入。
-            </span>
-          </span>
-          <span className="icon-action text-xl text-brand-600" aria-hidden="true">
-            →
-          </span>
-        </Link>
-      </div>
-
-      <div className="mt-6 flex justify-center gap-4 text-sm">
-        <Link className="text-brand-600 hover:underline" href="/login">
-          已注册？登录
-        </Link>
-        <Link className="text-slate-500 hover:text-brand-600" href="/forgot-password">
-          忘记密码
-        </Link>
-      </div>
-    </div>
+              <Link
+                href="/join"
+                className="native-press flex min-h-[4.25rem] w-full touch-manipulation flex-col items-center justify-center rounded-[20px] border border-[#c7d9b6] bg-[#f8f4e9]/95 px-3 text-center text-lg font-bold leading-6 text-[#445f37] shadow-[inset_0_1px_0_rgba(255,255,255,0.76),0_8px_18px_rgba(116,99,70,0.08)] transition hover:bg-[#f1f6e9] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c8deb5]"
+              >
+                <span>加入家庭</span>
+                <span className="mt-0.5 text-xs font-semibold text-[#7a775f]">
+                  输入代码
+                </span>
+              </Link>
+            </div>
+            <div className="mt-3 flex min-h-9 items-center justify-center gap-3 text-sm font-medium leading-5 text-[#7a6c58]">
+              <span>已有账号？</span>
+              <Link
+                className="font-semibold text-[#5f934e] underline underline-offset-4"
+                href="/login"
+              >
+                登录
+              </Link>
+              <span aria-hidden="true" className="text-[#d3c7ad]">
+                |
+              </span>
+              <Link
+                className="text-[#7a6c58] underline-offset-4 hover:text-[#5f934e] hover:underline"
+                href="/forgot-password"
+              >
+                忘记密码
+              </Link>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
   );
 }

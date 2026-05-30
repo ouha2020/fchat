@@ -2,6 +2,8 @@
 -- Run this in the Supabase SQL editor in order from top to bottom.
 
 create extension if not exists "pgcrypto";
+create extension if not exists pg_cron with schema extensions;
+create extension if not exists pg_net with schema extensions;
 
 -- =====================================================================
 -- Tables

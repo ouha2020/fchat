@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
+import AppLoading from "@/components/AppLoading";
 import ChatInput from "@/components/ChatInput";
 import ChatMessage from "@/components/ChatMessage";
 import EffectOverlay from "@/components/EffectOverlay";
@@ -47,6 +48,12 @@ import {
   removeImportantNotification,
 } from "@/lib/importantNotificationService";
 import { listMembers } from "@/lib/memberService";
+import {
+  MEMBER_PROFILE_CHANGED_EVENT,
+  isMemberProfileChangedDetail,
+  memberProfileChangedStorageKey,
+  readMemberProfileChanged,
+} from "@/lib/memberProfileEvents";
 import {
   deleteMessage,
   forceRefreshMessages,
@@ -657,27 +664,7 @@ function AssistantReplyPendingBubble() {
 }
 
 function ChatLoadingState() {
-  const { t } = useLanguage();
-  return (
-    <div
-      className="chat-paper-bg flex flex-col items-center justify-center px-6 text-center"
-      style={{ height: "var(--chat-viewport-height, 100dvh)" }}
-      role="status"
-      aria-live="polite"
-    >
-      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white/95 text-base font-black text-emerald-700 shadow-sm ring-1 ring-white/80">
-        家
-      </div>
-      <p className="mt-4 text-sm font-semibold text-slate-700">
-        {t("commonLoading")}
-      </p>
-      <div className="mt-3 flex items-center justify-center gap-1.5" aria-hidden>
-        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-emerald-400 [animation-delay:-0.2s]" />
-        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-emerald-400 [animation-delay:-0.1s]" />
-        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-emerald-400" />
-      </div>
-    </div>
-  );
+  return <AppLoading tone="chat" />;
 }
 
 function ChatLoadErrorState({
@@ -765,6 +752,7 @@ function OlderMessagesLoadingIndicator() {
 
 export default function ChatPage() {
   const router = useRouter();
+  const pathname = usePathname();
   const { language, t } = useLanguage();
   const dialog = useDialog();
   const toast = useToast();
@@ -979,6 +967,76 @@ export default function ChatPage() {
   useEffect(() => {
     sessionRef.current = session;
   }, [session]);
+  useEffect(() => {
+    if (!session) return;
+    let lastAppliedProfileChange = "";
+
+    const refreshMembers = () => {
+      if (document.visibilityState !== "visible") return;
+      listMembers(session, { includeRemoved: true })
+        .then(setMembers)
+        .catch(() => undefined);
+    };
+
+    const applyProfileChange = (detail: unknown): boolean => {
+      if (!isMemberProfileChangedDetail(detail)) return false;
+      if (detail.familyId !== session.family_id) return false;
+      const changeKey = `${detail.memberId}:${detail.avatarUrl ?? ""}:${detail.updatedAt}`;
+      if (changeKey === lastAppliedProfileChange) return false;
+      lastAppliedProfileChange = changeKey;
+      setMembers((current) => {
+        let changed = false;
+        const next = current.map((member) => {
+          if (member.id !== detail.memberId) return member;
+          if (member.avatar_url === detail.avatarUrl) return member;
+          changed = true;
+          return { ...member, avatar_url: detail.avatarUrl };
+        });
+        return changed ? next : current;
+      });
+      return true;
+    };
+
+    const syncStoredProfileChange = () => {
+      applyProfileChange(readMemberProfileChanged(session.family_id));
+      refreshMembers();
+    };
+
+    const handleProfileChange = (event: Event) => {
+      const applied = applyProfileChange(
+        (event as CustomEvent<unknown>).detail,
+      );
+      if (applied) refreshMembers();
+    };
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== memberProfileChangedStorageKey(session.family_id)) {
+        return;
+      }
+      syncStoredProfileChange();
+    };
+
+    const handleVisible = () => {
+      if (document.visibilityState === "visible") syncStoredProfileChange();
+    };
+
+    syncStoredProfileChange();
+    window.addEventListener(MEMBER_PROFILE_CHANGED_EVENT, handleProfileChange);
+    window.addEventListener("focus", syncStoredProfileChange);
+    window.addEventListener("pageshow", syncStoredProfileChange);
+    window.addEventListener("storage", handleStorage);
+    document.addEventListener("visibilitychange", handleVisible);
+    return () => {
+      window.removeEventListener(
+        MEMBER_PROFILE_CHANGED_EVENT,
+        handleProfileChange,
+      );
+      window.removeEventListener("focus", syncStoredProfileChange);
+      window.removeEventListener("pageshow", syncStoredProfileChange);
+      window.removeEventListener("storage", handleStorage);
+      document.removeEventListener("visibilitychange", handleVisible);
+    };
+  }, [pathname, session]);
   useEffect(() => {
     if (!session) {
       setScheduleAttentionDot(false);

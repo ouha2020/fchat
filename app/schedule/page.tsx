@@ -13,6 +13,7 @@ import {
   type PointerEvent,
 } from "react";
 
+import AppLoading from "@/components/AppLoading";
 import AudioBubble from "@/components/AudioBubble";
 import { useDialog } from "@/components/Dialog";
 import { useLanguage } from "@/components/LanguageProvider";
@@ -1018,11 +1019,7 @@ export default function SchedulePage() {
   }
 
   if (loading) {
-    return (
-      <div className="app-page">
-        <div className="status-note">{t("commonLoading")}</div>
-      </div>
-    );
+    return <AppLoading tone="schedule" message={t("commonLoading")} />;
   }
 
   if (loadError) {
@@ -1044,7 +1041,7 @@ export default function SchedulePage() {
   if (!session) return null;
 
   return (
-    <div className="app-page">
+    <div className="app-page schedule-page">
       <header className="mb-3 flex items-center gap-3">
         <Link
           href="/chat"
@@ -1064,9 +1061,18 @@ export default function SchedulePage() {
             })}
           </p>
         </div>
+      </header>
+
+      <div
+        className={
+          filtersOpen
+            ? "schedule-fab-shell schedule-fab-shell-hidden"
+            : "schedule-fab-shell"
+        }
+      >
         <button
           type="button"
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-brand-500 text-2xl font-semibold leading-none text-white shadow-sm transition hover:bg-brand-600 disabled:opacity-60"
+          className="schedule-fab-button"
           aria-label={showForm ? t("commonCancel") : t("scheduleNew")}
           title={showForm ? t("commonCancel") : t("scheduleNew")}
           onClick={() => {
@@ -1079,7 +1085,7 @@ export default function SchedulePage() {
         >
           {showForm ? "×" : "+"}
         </button>
-      </header>
+      </div>
 
       <MyTodaySection
         items={myOpenTodayItems}
@@ -1090,6 +1096,7 @@ export default function SchedulePage() {
       />
 
       <ScheduleFilters
+        docked
         searchText={searchText}
         assigneeFilter={assigneeFilter}
         typeFilter={typeFilter}
@@ -3203,16 +3210,16 @@ function ScheduleRangeControl({
   const holiday = viewMode !== "month" ? getJapanHoliday(selectedDate) : null;
 
   return (
-    <section className="mb-3 rounded-2xl bg-white p-2.5 shadow-sm ring-1 ring-slate-100">
-      <div className="grid grid-cols-3 gap-1 rounded-xl bg-slate-100 p-1">
+    <section className="mb-3 rounded-[22px] bg-white/95 p-2.5 shadow-sm ring-1 ring-slate-100">
+      <div className="grid grid-cols-3 gap-1 rounded-2xl bg-slate-100/80 p-1">
         {VIEW_MODES.map((mode) => (
           <button
             key={mode}
             type="button"
-            className={`h-9 rounded-lg text-sm font-semibold transition ${
+            className={`h-9 rounded-xl text-sm font-semibold transition ${
               viewMode === mode
-                ? "bg-white text-brand-700 shadow-sm"
-                : "text-slate-600 hover:bg-white/60"
+                ? "bg-white text-brand-700 shadow-sm ring-1 ring-white/80"
+                : "text-slate-600 hover:bg-white/70"
             }`}
             onClick={() => onViewModeChange(mode)}
           >
@@ -3223,7 +3230,7 @@ function ScheduleRangeControl({
       <div className="mt-2 flex items-center gap-2">
         <button
           type="button"
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-50 text-lg font-semibold text-slate-600 ring-1 ring-slate-200"
+          className="native-press flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-slate-50 text-lg font-semibold text-slate-600 ring-1 ring-slate-200 transition hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
           aria-label={t("schedulePrevious")}
           onClick={onPrevious}
         >
@@ -3231,22 +3238,24 @@ function ScheduleRangeControl({
         </button>
         <button
           type="button"
-          className="min-w-0 flex-1 rounded-xl bg-slate-50 px-3 py-2 text-center ring-1 ring-slate-200"
+          className="native-press flex min-h-10 min-w-0 flex-1 items-center justify-between gap-2 rounded-2xl bg-gradient-to-r from-slate-50 to-white px-3 py-2 text-left ring-1 ring-slate-200 transition hover:from-white hover:to-brand-50/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
           onClick={onToday}
         >
-          <span className="block truncate text-sm font-semibold text-slate-900">
+          <span className="min-w-0 flex-1 truncate text-sm font-bold text-slate-900">
             {rangeTitle(viewMode, selectedDate, language)}
           </span>
-          {includesToday ? (
-            <span className="mt-0.5 inline-flex rounded-full bg-brand-50 px-2 py-0.5 text-[11px] font-semibold text-brand-700">
-              {t("scheduleTodayButton")}
-            </span>
-          ) : null}
-          {holiday ? <HolidayChip holiday={holiday} /> : null}
+          <span className="flex shrink-0 items-center gap-1.5">
+            {includesToday ? (
+              <span className="inline-flex min-h-6 items-center rounded-full bg-brand-50 px-2.5 py-0.5 text-[11px] font-bold text-brand-700 ring-1 ring-brand-100">
+                {t("scheduleTodayButton")}
+              </span>
+            ) : null}
+            {holiday ? <HolidayChip holiday={holiday} compact /> : null}
+          </span>
         </button>
         <button
           type="button"
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-50 text-lg font-semibold text-slate-600 ring-1 ring-slate-200"
+          className="native-press flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-slate-50 text-lg font-semibold text-slate-600 ring-1 ring-slate-200 transition hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
           aria-label={t("scheduleNext")}
           onClick={onNext}
         >
@@ -3258,6 +3267,7 @@ function ScheduleRangeControl({
 }
 
 function ScheduleFilters({
+  docked = false,
   searchText,
   assigneeFilter,
   typeFilter,
@@ -3273,6 +3283,7 @@ function ScheduleFilters({
   onToggleOpen,
   onClear,
 }: {
+  docked?: boolean;
   searchText: string;
   assigneeFilter: ScheduleAssigneeFilter;
   typeFilter: ScheduleTypeFilter;
@@ -3288,13 +3299,101 @@ function ScheduleFilters({
   onToggleOpen: () => void;
   onClear: () => void;
 }) {
+  const filterFields = (
+    <div
+      className={`grid grid-cols-1 gap-2 sm:grid-cols-3 ${
+        docked ? "mb-2" : "mt-2"
+      }`}
+    >
+      <label>
+        <span className="sr-only">{t("scheduleAssignee")}</span>
+        <select
+          className="field h-10 rounded-xl"
+          value={assigneeFilter}
+          onChange={(event) =>
+            onAssigneeFilterChange(
+              event.target.value as ScheduleAssigneeFilter,
+            )
+          }
+        >
+          <option value="all">{t("scheduleAllAssignees")}</option>
+          {members.map((member) => (
+            <option key={member.id} value={member.id}>
+              {member.nickname}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        <span className="sr-only">{t("scheduleType")}</span>
+        <select
+          className="field h-10 rounded-xl"
+          value={typeFilter}
+          onChange={(event) =>
+            onTypeFilterChange(event.target.value as ScheduleTypeFilter)
+          }
+        >
+          {TYPE_FILTERS.map((value) => (
+            <option key={value} value={value}>
+              {typeFilterLabel(value, t)}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        <span className="sr-only">{t("scheduleVisibility")}</span>
+        <select
+          className="field h-10 rounded-xl"
+          value={visibilityFilter}
+          onChange={(event) =>
+            onVisibilityFilterChange(
+              event.target.value as ScheduleVisibilityFilter,
+            )
+          }
+        >
+          {VISIBILITY_FILTERS.map((value) => (
+            <option key={value} value={value}>
+              {visibilityFilterLabel(value, t)}
+            </option>
+          ))}
+        </select>
+      </label>
+    </div>
+  );
+  const activeFilterNotice = hasActiveFilters ? (
+    <div
+      className={`flex items-center justify-between gap-2 rounded-xl bg-slate-50 px-3 py-2 ${
+        docked ? "mb-2" : "mt-2"
+      }`}
+    >
+      <span className="truncate text-xs font-medium text-slate-500">
+        {t("scheduleFiltersActive")}
+      </span>
+      <button
+        type="button"
+        className="shrink-0 text-sm font-semibold text-brand-600"
+        onClick={onClear}
+      >
+        {t("scheduleClearFilters")}
+      </button>
+    </div>
+  ) : null;
+
   return (
-    <section className="mb-3 rounded-2xl bg-white p-2.5 shadow-sm ring-1 ring-slate-100">
+    <section
+      className={
+        docked
+          ? "schedule-filter-panel"
+          : "mb-3 rounded-2xl bg-white p-2.5 shadow-sm ring-1 ring-slate-100"
+      }
+    >
+      {docked ? activeFilterNotice : null}
+      {docked && open ? filterFields : null}
       <div className="flex items-center gap-2">
         <label className="min-w-0 flex-1">
           <span className="sr-only">{t("scheduleSearch")}</span>
           <input
-            className="field h-10 rounded-xl"
+            className={`field rounded-xl ${docked ? "h-11" : "h-10"}`}
             value={searchText}
             maxLength={40}
             placeholder={t("scheduleSearchPlaceholder")}
@@ -3303,7 +3402,7 @@ function ScheduleFilters({
         </label>
         <button
           type="button"
-          className={`h-10 shrink-0 rounded-xl px-3 text-sm font-semibold transition ${
+          className={`${docked ? "h-11 rounded-[16px]" : "h-10 rounded-xl"} shrink-0 px-3 text-sm font-semibold transition ${
             open || hasActiveFilters
               ? "bg-brand-50 text-brand-700 ring-1 ring-brand-100"
               : "bg-slate-50 text-slate-700 ring-1 ring-slate-200"
@@ -3314,77 +3413,8 @@ function ScheduleFilters({
           {hasActiveFilters ? t("scheduleFiltersActive") : t("scheduleFilters")}
         </button>
       </div>
-      {open ? (
-        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
-          <label>
-            <span className="sr-only">{t("scheduleAssignee")}</span>
-            <select
-              className="field h-10 rounded-xl"
-              value={assigneeFilter}
-              onChange={(event) =>
-                onAssigneeFilterChange(
-                  event.target.value as ScheduleAssigneeFilter,
-                )
-              }
-            >
-              <option value="all">{t("scheduleAllAssignees")}</option>
-              {members.map((member) => (
-                <option key={member.id} value={member.id}>
-                  {member.nickname}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span className="sr-only">{t("scheduleType")}</span>
-            <select
-              className="field h-10 rounded-xl"
-              value={typeFilter}
-              onChange={(event) =>
-                onTypeFilterChange(event.target.value as ScheduleTypeFilter)
-              }
-            >
-              {TYPE_FILTERS.map((value) => (
-                <option key={value} value={value}>
-                  {typeFilterLabel(value, t)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span className="sr-only">{t("scheduleVisibility")}</span>
-            <select
-              className="field h-10 rounded-xl"
-              value={visibilityFilter}
-              onChange={(event) =>
-                onVisibilityFilterChange(
-                  event.target.value as ScheduleVisibilityFilter,
-                )
-              }
-            >
-              {VISIBILITY_FILTERS.map((value) => (
-                <option key={value} value={value}>
-                  {visibilityFilterLabel(value, t)}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-      ) : null}
-      {hasActiveFilters ? (
-        <div className="mt-2 flex items-center justify-between gap-2 rounded-xl bg-slate-50 px-3 py-2">
-          <span className="truncate text-xs font-medium text-slate-500">
-            {t("scheduleFiltersActive")}
-          </span>
-          <button
-            type="button"
-            className="shrink-0 text-sm font-semibold text-brand-600"
-            onClick={onClear}
-          >
-            {t("scheduleClearFilters")}
-          </button>
-        </div>
-      ) : null}
+      {!docked && open ? filterFields : null}
+      {!docked ? activeFilterNotice : null}
     </section>
   );
 }
@@ -3942,7 +3972,7 @@ function defaultFormState(session: LocalSession | null): ScheduleFormState {
     endDate: "",
     endTime: "",
     assigneeMemberId: session?.member_id ?? "",
-    reminderOffsets: [],
+    reminderOffsets: [0],
     recurrenceRule: "none",
   };
 }

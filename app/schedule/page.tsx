@@ -995,6 +995,11 @@ export default function SchedulePage() {
     setSelectedDate((current) => shiftDateForView(current, viewMode, 1));
   }
 
+  function handleViewModeChange(mode: ScheduleViewMode) {
+    setShowForm(false);
+    setViewMode(mode);
+  }
+
   function handleTodayRange() {
     setSelectedDate(startOfDay(new Date()));
   }
@@ -1118,7 +1123,7 @@ export default function SchedulePage() {
         selectedDate={selectedDate}
         t={t}
         language={language}
-        onViewModeChange={setViewMode}
+        onViewModeChange={handleViewModeChange}
         onPrevious={handlePreviousRange}
         onNext={handleNextRange}
         onToday={handleTodayRange}

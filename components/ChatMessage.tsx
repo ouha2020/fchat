@@ -8,11 +8,13 @@ import AudioBubble from "./AudioBubble";
 import { useLanguage } from "@/components/LanguageProvider";
 import { formatTime } from "@/lib/format";
 import { createGoogleMapUrl } from "@/lib/locationService";
-import { safeGoogleMapsUrl, safeHttpUrl } from "@/lib/security";
+import { useResolvedMediaUrl } from "@/lib/mediaClient";
+import { safeGoogleMapsUrl } from "@/lib/security";
 import {
   getSystemMessageTone,
   localizeSystemMessage,
 } from "@/lib/systemMessage";
+import type { LocalSession } from "@/lib/authLocal";
 import type { TranslationKey } from "@/lib/i18n";
 import type { Message } from "@/types/message";
 import type { FamilyMember } from "@/types/member";
@@ -29,6 +31,7 @@ const messageMetaClass =
   "flex max-w-full min-w-0 flex-wrap items-center gap-1.5 text-[11px] leading-4 text-slate-500";
 
 interface Props {
+  session: LocalSession;
   message: Message;
   sender: FamilyMember | null;
   recipient?: FamilyMember | null;
@@ -52,6 +55,7 @@ interface Props {
 }
 
 export default function ChatMessage({
+  session,
   message,
   sender,
   recipient,
@@ -186,7 +190,7 @@ export default function ChatMessage({
     <div
       className={`flex w-full gap-2 ${isMine ? "flex-row-reverse" : "flex-row"}`}
     >
-      <MemberAvatar sender={sender} isMine={isMine} />
+      <MemberAvatar session={session} sender={sender} isMine={isMine} />
       <div
         className={`flex ${messageBodyWidthClass} flex-col gap-1 ${
           isMine ? "items-end" : "items-start"
@@ -214,6 +218,7 @@ export default function ChatMessage({
         </div>
         <Bubble
           message={message}
+          session={session}
           isMine={isMine}
           highlighted={highlighted}
           actionHandlers={actionHandlers}
@@ -231,14 +236,16 @@ export default function ChatMessage({
 }
 
 function MemberAvatar({
+  session,
   sender,
   isMine,
 }: {
+  session: LocalSession;
   sender: FamilyMember | null;
   isMine: boolean;
 }) {
   const { t } = useLanguage();
-  const avatarUrl = safeHttpUrl(sender?.avatar_url ?? null);
+  const avatarUrl = useResolvedMediaUrl(session, sender?.avatar_url ?? null);
   const placeholder = (sender?.nickname ?? "?").slice(0, 1).toUpperCase();
   const shellClass = `flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full text-sm font-semibold sm:h-9 sm:w-9 sm:text-base ${
     isMine
@@ -339,6 +346,7 @@ function useLongPress(
 
 function Bubble({
   message,
+  session,
   isMine,
   isPrivate,
   highlighted,
@@ -347,6 +355,7 @@ function Bubble({
   onReplayEffect,
 }: {
   message: Message;
+  session: LocalSession;
   isMine: boolean;
   isPrivate: boolean;
   highlighted?: boolean;
@@ -367,13 +376,20 @@ function Bubble({
   const highlightClass = highlighted
     ? "important-message-highlight"
     : "";
+  const imageUrl = useResolvedMediaUrl(
+    session,
+    message.message_type === "image" ? message.image_url : null,
+    { messageId: message.id },
+  );
+  const audioUrl = useResolvedMediaUrl(
+    session,
+    message.message_type === "audio" ? message.audio_url : null,
+    { messageId: message.id },
+  );
 
   if (message.message_type === "image" && message.image_url) {
-    const imageUrl = safeHttpUrl(message.image_url);
     if (!imageUrl) return null;
-    const previewHref = `/image-preview?src=${encodeURIComponent(
-      imageUrl,
-    )}`;
+    const previewHref = `/image-preview?mid=${encodeURIComponent(message.id)}`;
 
     return (
       <div
@@ -406,7 +422,6 @@ function Bubble({
   }
 
   if (message.message_type === "audio" && message.audio_url) {
-    const audioUrl = safeHttpUrl(message.audio_url);
     if (!audioUrl) return null;
     return (
       <div

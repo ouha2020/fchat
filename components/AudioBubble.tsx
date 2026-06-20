@@ -47,7 +47,8 @@ export default function AudioBubble({
 
   function toggle(e: React.MouseEvent) {
     e.stopPropagation();
-    if (!audioRef.current) {
+    if (!audioRef.current || audioRef.current.src !== url) {
+      audioRef.current?.pause();
       const a = new Audio(url);
       a.preload = "metadata";
       a.addEventListener("ended", () => setPlaying(false));

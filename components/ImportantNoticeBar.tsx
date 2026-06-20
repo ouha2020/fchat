@@ -4,10 +4,11 @@ import Image from "next/image";
 import { useEffect, useId, useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
+import type { LocalSession } from "@/lib/authLocal";
 import { formatTime } from "@/lib/format";
 import type { TranslationKey } from "@/lib/i18n";
+import { useResolvedMediaUrl } from "@/lib/mediaClient";
 import { formatDuration } from "@/lib/recordingService";
-import { safeHttpUrl } from "@/lib/security";
 import { localizeSystemMessage } from "@/lib/systemMessage";
 import type {
   ImportantNotification,
@@ -17,6 +18,7 @@ import type { FamilyMember } from "@/types/member";
 import type { Message } from "@/types/message";
 
 interface Props {
+  session: LocalSession;
   notifications: ImportantNotification[];
   members: Map<string, FamilyMember>;
   readStates?: Map<string, ImportantNotificationReadState>;
@@ -26,6 +28,7 @@ interface Props {
 }
 
 export default function ImportantNoticeBar({
+  session,
   notifications,
   members,
   readStates,
@@ -107,7 +110,11 @@ export default function ImportantNoticeBar({
                   title={`${sender?.nickname ?? t("importantSystemSender")} / ${preview.text}`}
                   onClick={() => onSelect(notification)}
                 >
-                  <PreviewIcon message={message} text={preview.iconText} />
+                  <PreviewIcon
+                    session={session}
+                    message={message}
+                    text={preview.iconText}
+                  />
                   <span className="min-w-0 flex-1">
                     <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
                       <span className="truncate text-xs font-semibold text-slate-700">
@@ -205,14 +212,23 @@ function buildPreview(
 }
 
 function PreviewIcon({
+  session,
   message,
   text,
 }: {
+  session: LocalSession;
   message: Message | null;
   text: string;
 }) {
+  const imageUrl = useResolvedMediaUrl(
+    session,
+    message?.message_type === "image" && !message.deleted_at
+      ? message.image_url
+      : null,
+    { messageId: message?.id ?? null },
+  );
+
   if (message?.message_type === "image" && message.image_url && !message.deleted_at) {
-    const imageUrl = safeHttpUrl(message.image_url);
     if (!imageUrl) return null;
     return (
       // eslint-disable-next-line @next/next/no-img-element

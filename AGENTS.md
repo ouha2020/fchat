@@ -91,6 +91,9 @@ git diff --check
 - 默认开发分支：`Codex/family-chat-webapp-AYGTc`。
 - 不要直接推送到 `main`。
 - `main` 连接 Vercel 自动部署。
+- Vercel 费用保护：不要主动执行或触发任何可能产生 Vercel 计费的操作。包括但不限于 `vercel deploy`、`vercel --prod`、`vercel promote`、`vercel rollback`、调用 Vercel CLI/API 检查或操作部署、推送会触发 Vercel Preview 的分支、创建会触发 Preview 的 PR、合并到会触发 Production Deployment 的 `main`。
+- 即使用户说“提交”“推送”“合并”“提交到主分支”，也不能默认允许触发 Vercel。必须在执行前明确提示“这可能触发 Vercel 自动部署/计费”，并获得用户明确确认后才可以继续。
+- 如只需要保存代码，优先本地 commit 或推送到确认不会触发 Vercel 的目标；无法确认是否会触发 Vercel 时，停下来询问用户。
 - 发布数据库相关改动时，顺序必须是：
   1. 写入 migration 和 `supabase/schema.sql`
   2. 在 Supabase 生产库执行 migration

@@ -342,6 +342,7 @@ let lastHealthSaveAt = 0;
 
 export async function checkPushSubscriptionHealth(
   session: LocalSession,
+  options: { force?: boolean } = {},
 ): Promise<"ok" | "resubscribed" | "expired" | "no_subscription"> {
   if (!("serviceWorker" in navigator)) return "no_subscription";
 
@@ -357,14 +358,14 @@ export async function checkPushSubscriptionHealth(
   }
 
   const now = Date.now();
-  if (now - lastHealthSaveAt < HEALTH_CHECK_DEBOUNCE_MS) {
+  if (!options.force && now - lastHealthSaveAt < HEALTH_CHECK_DEBOUNCE_MS) {
     return "ok";
   }
   lastHealthSaveAt = now;
 
   const prefs = getPushPreferences(session);
   await savePushSubscription(session, subscription, prefs);
-  return "ok";
+  return options.force ? "resubscribed" : "ok";
 }
 
 async function savePushSubscriptionStatus(

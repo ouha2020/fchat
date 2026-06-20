@@ -12,6 +12,7 @@ import { clearSession, loadSession, saveSession, type LocalSession } from "@/lib
 import { updateMemberAvatar, uploadAvatar } from "@/lib/avatarService";
 import { humanizeError } from "@/lib/errors";
 import { validateMember } from "@/lib/familyService";
+import { useResolvedMediaUrl } from "@/lib/mediaClient";
 import { notifyMemberProfileChanged } from "@/lib/memberProfileEvents";
 import { getPersonalDashboard } from "@/lib/personalDashboardService";
 import { isSupabaseConfigured } from "@/lib/supabaseClient";
@@ -31,6 +32,10 @@ export default function MePage() {
   const [avatarBusy, setAvatarBusy] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
+  const profileAvatarUrl = useResolvedMediaUrl(
+    session,
+    dashboard?.profile.avatar_url ?? null,
+  );
 
   const refreshDashboard = useCallback(
     async (activeSession: LocalSession, quiet = false) => {
@@ -252,10 +257,10 @@ export default function MePage() {
           </div>
           <div className="flex shrink-0 flex-col items-center gap-2">
             <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-3xl bg-brand-50 text-xl font-bold text-brand-700 ring-1 ring-brand-100">
-              {profile.avatar_url ? (
+              {profileAvatarUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
-                  src={profile.avatar_url}
+                  src={profileAvatarUrl}
                   alt={profile.nickname}
                   className="h-full w-full object-cover"
                 />

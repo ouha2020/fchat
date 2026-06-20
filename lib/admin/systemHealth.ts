@@ -306,12 +306,12 @@ const REQUIRED_BUCKETS: Array<{
 }> = [
   {
     name: "chat-images",
-    shouldBePublic: true,
+    shouldBePublic: false,
     impact: "图片、头像上传或展示可能失败。",
   },
   {
     name: "chat-audios",
-    shouldBePublic: true,
+    shouldBePublic: false,
     impact: "语音上传或播放可能失败。",
   },
 ];
@@ -345,6 +345,7 @@ const REQUIRED_MIGRATIONS = [
   "schedule_context_delete_timeline_fix",
   "schedule_context_chat_backfill",
   "system_health_consistency_checks",
+  "private_chat_media_storage",
 ];
 
 function column(table: string, columnName: string, migrationName?: string): ExpectedColumn {

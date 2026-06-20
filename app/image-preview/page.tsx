@@ -2,12 +2,14 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
 import { useDialog } from "@/components/Dialog";
-import { loadSession } from "@/lib/authLocal";
+import { loadSession, type LocalSession } from "@/lib/authLocal";
 import { setChatBackground } from "@/lib/chatBackground";
+import { getMessageById } from "@/lib/messageService";
+import { useResolvedMediaUrl } from "@/lib/mediaClient";
 import { safeHttpUrl } from "@/lib/security";
 
 export default function ImagePreviewPage() {
@@ -27,9 +29,40 @@ function ImagePreviewContent() {
   const { t } = useLanguage();
   const dialog = useDialog();
   const searchParams = useSearchParams();
-  const src = safeHttpUrl(searchParams.get("src")?.trim() ?? "");
+  const messageId = searchParams.get("mid")?.trim() ?? null;
+  const legacySrc = safeHttpUrl(searchParams.get("src")?.trim() ?? "");
   const lastTouchAtRef = useRef(0);
+  const [session, setSession] = useState<LocalSession | null>(null);
+  const [mediaRef, setMediaRef] = useState<string | null>(legacySrc);
   const [notice, setNotice] = useState<string | null>(null);
+  const src = useResolvedMediaUrl(session, mediaRef, {
+    messageId,
+  });
+
+  useEffect(() => {
+    const currentSession = loadSession();
+    setSession(currentSession);
+    if (!messageId || !currentSession) {
+      setMediaRef(legacySrc);
+      return;
+    }
+    let cancelled = false;
+    getMessageById(currentSession, messageId)
+      .then((message) => {
+        if (cancelled) return;
+        setMediaRef(
+          message?.message_type === "image" && !message.deleted_at
+            ? message.image_url
+            : null,
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setMediaRef(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [legacySrc, messageId]);
 
   function handleBack() {
     if (window.history.length > 1) {
@@ -40,8 +73,7 @@ function ImagePreviewContent() {
   }
 
   async function handleSetBackground() {
-    if (!src) return;
-    const session = loadSession();
+    if (!mediaRef) return;
     if (!session) {
       setNotice(t("previewNeedSession"));
       return;
@@ -51,7 +83,7 @@ function ImagePreviewContent() {
       message: t("previewSetBackgroundConfirm"),
     });
     if (!ok) return;
-    setChatBackground(session.family_id, src);
+    setChatBackground(session.family_id, mediaRef, messageId);
     setNotice(t("previewBackgroundSet"));
   }
 

@@ -23,6 +23,7 @@ import { humanizeError } from "@/lib/errors";
 import { validateMember } from "@/lib/familyService";
 import { getJapanHoliday, type JapanHoliday } from "@/lib/japanHolidays";
 import { createGoogleMapUrl, getCurrentLocation } from "@/lib/locationService";
+import { useResolvedMediaUrl } from "@/lib/mediaClient";
 import { listMembers } from "@/lib/memberService";
 import { uploadChatAudio } from "@/lib/messageService";
 import { startRecording, type RecordingHandle } from "@/lib/recordingService";
@@ -43,7 +44,6 @@ import {
   snoozeScheduleReminder,
   updateScheduleItem,
 } from "@/lib/scheduleService";
-import { safeHttpUrl } from "@/lib/security";
 import { getSupabase, isSupabaseConfigured } from "@/lib/supabaseClient";
 import type { FamilyMember } from "@/types/member";
 import type {
@@ -2363,12 +2363,8 @@ function ScheduleDetailPanel({
                       const senderMember = senderMemberId
                         ? memberById.get(senderMemberId) ?? null
                         : null;
-                      const avatarUrl = safeHttpUrl(senderMember?.avatar_url ?? null);
-                      const audioUrl = event.audio_url
-                        ? safeHttpUrl(event.audio_url)
-                        : null;
                       const isAudioRecord =
-                        event.event_type === "audio" && Boolean(audioUrl);
+                        event.event_type === "audio" && Boolean(event.audio_url);
                       const isLocationRecord = event.event_type === "location";
                       const avatarLabel = (isMine ? t("membersMe") : nickname).slice(0, 1);
                       const canDeleteRecord =
@@ -2419,7 +2415,8 @@ function ScheduleDetailPanel({
                             {!isMine ? (
                               <ScheduleConversationAvatar
                                 label={avatarLabel}
-                                avatarUrl={avatarUrl}
+                                session={session}
+                                avatarRef={senderMember?.avatar_url ?? null}
                                 tone={
                                   event.sender_type === "keeper"
                                     ? "keeper"
@@ -2465,10 +2462,9 @@ function ScheduleDetailPanel({
                                 </p>
                               ) : null}
                               {isAudioRecord ? (
-                                <AudioBubble
-                                  messageId={event.id}
-                                  url={audioUrl!}
-                                  durationMs={event.audio_duration_ms}
+                                <ScheduleContextAudioBubble
+                                  session={session}
+                                  event={event}
                                   isMine={isMine}
                                 />
                               ) : isLocationRecord ? (
@@ -2486,7 +2482,8 @@ function ScheduleDetailPanel({
                             {isMine ? (
                               <ScheduleConversationAvatar
                                 label={avatarLabel}
-                                avatarUrl={avatarUrl}
+                                session={session}
+                                avatarRef={senderMember?.avatar_url ?? null}
                                 tone="mine"
                               />
                             ) : null}
@@ -2592,7 +2589,8 @@ function ScheduleDetailPanel({
                             >
                               <ScheduleConversationAvatar
                                 label={member.nickname.slice(0, 1)}
-                                avatarUrl={safeHttpUrl(member.avatar_url)}
+                                session={session}
+                                avatarRef={member.avatar_url}
                               />
                               <span className="min-w-0 flex-1 truncate font-semibold">
                                 {member.nickname}
@@ -2777,13 +2775,16 @@ function ScheduleDetailPanel({
 
 function ScheduleConversationAvatar({
   label,
-  avatarUrl,
+  session,
+  avatarRef,
   tone = "member",
 }: {
   label: string;
-  avatarUrl?: string | null;
+  session?: LocalSession | null;
+  avatarRef?: string | null;
   tone?: "keeper" | "member" | "mine";
 }) {
+  const avatarUrl = useResolvedMediaUrl(session ?? null, avatarRef ?? null);
   const toneClass =
     tone === "keeper"
       ? "bg-emerald-100 text-emerald-700 ring-emerald-50"
@@ -2808,6 +2809,30 @@ function ScheduleConversationAvatar({
         label
       )}
     </div>
+  );
+}
+
+function ScheduleContextAudioBubble({
+  session,
+  event,
+  isMine,
+}: {
+  session: LocalSession;
+  event: ScheduleContextEvent;
+  isMine: boolean;
+}) {
+  const audioUrl = useResolvedMediaUrl(session, event.audio_url, {
+    contextEventId: event.id,
+  });
+  if (!audioUrl) return null;
+
+  return (
+    <AudioBubble
+      messageId={event.id}
+      url={audioUrl}
+      durationMs={event.audio_duration_ms}
+      isMine={isMine}
+    />
   );
 }
 

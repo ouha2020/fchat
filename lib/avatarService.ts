@@ -1,4 +1,5 @@
 import type { LocalSession } from "@/lib/authLocal";
+import { isSafeMediaRef } from "@/lib/mediaRefs";
 import { getSupabase } from "@/lib/supabaseClient";
 
 export async function uploadAvatar(
@@ -17,7 +18,7 @@ export async function uploadAvatar(
   const payload = (await res.json().catch(() => null)) as
     | { url?: string; error?: string }
     | null;
-  if (!res.ok || !payload?.url) {
+  if (!res.ok || !payload?.url || !isSafeMediaRef(payload.url)) {
     throw new Error(payload?.error ?? "avatar_upload_failed");
   }
   return payload.url;

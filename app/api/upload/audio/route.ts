@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { ApiRequestError, badRequest, rejectMismatchedOrigin } from "@/lib/apiSecurity";
 import { validateMemberCredentials } from "@/lib/memberAuthServer";
-import { isSafeHttpUrl } from "@/lib/security";
+import { createStorageMediaRef } from "@/lib/mediaRefs";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { AUDIO_MIME_TYPES, MAX_UPLOAD_BYTES, uploadAuthSchema } from "@/lib/validation";
 
@@ -47,9 +47,8 @@ export async function POST(request: Request) {
     });
     if (error) throw new ApiRequestError("upload_failed", 500);
 
-    const { data } = sb.storage.from("chat-audios").getPublicUrl(path);
-    if (!isSafeHttpUrl(data.publicUrl)) throw new ApiRequestError("upload_failed", 500);
-    return NextResponse.json({ url: data.publicUrl });
+    const ref = createStorageMediaRef("chat-audios", path);
+    return NextResponse.json({ url: ref, ref });
   } catch (err) {
     return badRequest(err, "upload_failed");
   }

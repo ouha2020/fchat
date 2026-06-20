@@ -54,6 +54,7 @@ import {
   memberProfileChangedStorageKey,
   readMemberProfileChanged,
 } from "@/lib/memberProfileEvents";
+import { useResolvedMediaUrl } from "@/lib/mediaClient";
 import {
   deleteMessage,
   forceRefreshMessages,
@@ -81,7 +82,7 @@ import {
   requestMessagePush,
   updatePushPresence,
 } from "@/lib/pushNotificationService";
-import { safeGoogleMapsUrl, safeHttpUrl } from "@/lib/security";
+import { safeGoogleMapsUrl } from "@/lib/security";
 import type { RecordingResult } from "@/lib/recordingService";
 import {
   getScheduleReminderStatus,
@@ -106,13 +107,14 @@ import type { FamilyMember } from "@/types/member";
 import type { Message } from "@/types/message";
 import type { ScheduleItem } from "@/types/schedule";
 
-const MESSAGE_FALLBACK_POLL_MS = 30_000;
+const MESSAGE_FALLBACK_POLL_MS = 15_000;
+const MESSAGE_FULL_VERIFY_POLL_MS = 180_000;
 const IMPORTANT_FALLBACK_POLL_MS = 30_000;
 const METADATA_FALLBACK_POLL_MS = 120_000;
 const INITIAL_CACHED_MESSAGE_LIMIT = 100;
 const CACHED_MESSAGE_PAGE_SIZE = 100;
 const PUSH_MESSAGE_DEDUPE_MS = 5_000;
-const REALTIME_BACKGROUND_DISCONNECT_MS = 45_000;
+const REALTIME_BACKGROUND_DISCONNECT_MS = 120_000;
 const REALTIME_BATCH_FLUSH_MS = 150;
 const MESSAGE_DELIVERED_REPORT_DELAY_MS = 500;
 const MESSAGE_READ_REPORT_DELAY_MS = 700;
@@ -789,7 +791,8 @@ export default function ChatPage() {
   const [error, setError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
-  const [chatBackgroundUrl, setChatBackgroundUrl] = useState<string | null>(null);
+  const [chatBackgroundSource, setChatBackgroundSource] =
+    useState<ReturnType<typeof getChatBackground>>(null);
   const [realtimeConnected, setRealtimeConnected] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
   const messagesContentRef = useRef<HTMLDivElement>(null);
@@ -1394,11 +1397,15 @@ export default function ChatPage() {
       if (!data) return;
 
       if (data.type === "family-chat:subscription-changed") {
-        void checkPushSubscriptionHealth(session).catch(() => undefined);
+        void checkPushSubscriptionHealth(session, { force: true }).catch(
+          () => undefined,
+        );
         return;
       }
       if (data.type === "family-chat:subscription-expired") {
-        void checkPushSubscriptionHealth(session).catch(() => undefined);
+        void checkPushSubscriptionHealth(session, { force: true }).catch(
+          () => undefined,
+        );
         return;
       }
       if (data.type === "family-chat:schedule-reminder") {
@@ -1476,12 +1483,12 @@ export default function ChatPage() {
 
   useEffect(() => {
     if (!session) {
-      setChatBackgroundUrl(null);
+      setChatBackgroundSource(null);
       return;
     }
 
     const syncBackground = () => {
-      setChatBackgroundUrl(getChatBackground(session.family_id));
+      setChatBackgroundSource(getChatBackground(session.family_id));
     };
 
     syncBackground();
@@ -1604,6 +1611,10 @@ export default function ChatPage() {
       syncVisibleMessages,
       MESSAGE_FALLBACK_POLL_MS,
     );
+    const messageFullVerifyPoll = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      forceRefreshMessages(session, handleSyncedMessages).catch(() => undefined);
+    }, MESSAGE_FULL_VERIFY_POLL_MS);
     const importantPoll = window.setInterval(
       refreshVisibleImportantNotifications,
       IMPORTANT_FALLBACK_POLL_MS,
@@ -1619,6 +1630,7 @@ export default function ChatPage() {
 
     return () => {
       window.clearInterval(messagePoll);
+      window.clearInterval(messageFullVerifyPoll);
       window.clearInterval(importantPoll);
       window.clearInterval(metadataPoll);
     };
@@ -1788,7 +1800,7 @@ export default function ChatPage() {
 
         const syncResult = await withTimeout(
           syncMessages(fresh, {
-            forceFullRefresh: cached.length === 0,
+            forceFullRefresh: true,
             onMessages: (next) => {
               if (!cancelled) setMessages(filterVisibleMessages(next, fresh));
             },
@@ -2446,7 +2458,7 @@ export default function ChatPage() {
       message: t("previewSetBackgroundConfirm"),
     });
     if (!ok) return;
-    setChatBackground(session.family_id, message.image_url);
+    setChatBackground(session.family_id, message.image_url, message.id);
     toast.success(t("previewBackgroundSet"));
   }
 
@@ -2979,6 +2991,17 @@ export default function ChatPage() {
     }
   }
 
+  const currentMember = session ? memberMap.get(session.member_id) ?? null : null;
+  const currentAvatarUrl = useResolvedMediaUrl(
+    session,
+    currentMember?.avatar_url ?? null,
+  );
+  const chatBackgroundUrl = useResolvedMediaUrl(
+    session,
+    chatBackgroundSource?.mediaRef ?? null,
+    { messageId: chatBackgroundSource?.messageId ?? null },
+  );
+
   if (!isSupabaseConfigured()) {
     return (
       <div className="flex flex-1 flex-col px-5 py-8">
@@ -3007,9 +3030,6 @@ export default function ChatPage() {
   if (!session) {
     return null;
   }
-
-  const currentMember = memberMap.get(session.member_id) ?? null;
-  const currentAvatarUrl = safeHttpUrl(currentMember?.avatar_url ?? null);
 
   return (
     <div
@@ -3181,6 +3201,7 @@ export default function ChatPage() {
         </div>
       ) : null}
       <ImportantNoticeBar
+        session={session}
         notifications={visibleImportantNotifications}
         members={memberMap}
         readStates={importantReadStates}
@@ -3237,6 +3258,7 @@ export default function ChatPage() {
                   className="rounded-3xl"
                 >
                   <ChatMessage
+                    session={session}
                     message={m}
                     sender={
                       m.sender_member_id

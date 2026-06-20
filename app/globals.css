@@ -75,22 +75,6 @@ body {
   @apply inline-flex min-h-10 max-w-full min-w-0 touch-manipulation items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-center text-sm font-medium leading-5 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 disabled:cursor-not-allowed disabled:opacity-50;
 }
 
-.btn-sm {
-  @apply min-h-10 px-3 py-2 text-sm;
-}
-
-.btn-md {
-  @apply min-h-10 px-4 py-2.5 text-sm;
-}
-
-.btn-lg {
-  @apply min-h-11 px-5 py-3 text-base;
-}
-
-.btn-icon {
-  @apply h-11 w-11 p-0;
-}
-
 .btn-primary {
   @apply btn bg-brand-500 text-white hover:bg-brand-600 active:bg-brand-700;
 }
@@ -107,8 +91,24 @@ body {
   @apply btn bg-rose-500 text-white hover:bg-rose-600 active:bg-rose-700 focus-visible:ring-rose-200;
 }
 
+.btn-sm {
+  @apply min-h-10 px-3 py-2 text-sm;
+}
+
+.btn-md {
+  @apply min-h-10 px-4 py-2.5 text-sm;
+}
+
+.btn-lg {
+  @apply min-h-11 px-5 py-3 text-base;
+}
+
+.btn-icon {
+  @apply h-11 w-11 p-0;
+}
+
 .field {
-  @apply w-full min-h-10 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm leading-5 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-brand-500 focus:ring-2 focus:ring-brand-200 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400;
+  @apply min-w-0 w-full min-h-10 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm leading-5 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-brand-500 focus:ring-2 focus:ring-brand-200 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400;
 }
 
 .field-error {
@@ -116,15 +116,15 @@ body {
 }
 
 .field-hint {
-  @apply mt-1.5 text-xs leading-5 text-slate-500;
+  @apply mt-1.5 break-words text-xs leading-5 text-slate-500;
 }
 
 .field-error-text {
-  @apply mt-1.5 text-xs font-medium leading-5 text-rose-600;
+  @apply mt-1.5 break-words text-xs font-medium leading-5 text-rose-600;
 }
 
 .label {
-  @apply mb-1.5 block text-sm font-medium text-slate-700;
+  @apply mb-1.5 block break-words text-sm font-medium text-slate-700;
 }
 
 .card {
@@ -141,6 +141,174 @@ body {
 
 .app-page-narrow {
   @apply mx-auto flex w-full max-w-md flex-1 flex-col px-4 py-6 sm:px-6 sm:py-8;
+}
+
+.schedule-page {
+  padding-bottom: max(8.5rem, calc(env(safe-area-inset-bottom) + 8.5rem));
+}
+
+.schedule-filter-panel,
+.schedule-page > section.mb-3.rounded-2xl.bg-white.p-2\.5.shadow-sm.ring-1.ring-slate-100,
+.app-page > section.mb-3.rounded-2xl.bg-white.p-2\.5.shadow-sm.ring-1.ring-slate-100 {
+  position: fixed;
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom) + 0.75rem);
+  z-index: 39;
+  width: calc(100vw - 1.5rem);
+  max-width: calc(48rem - 2rem);
+  padding: 0.625rem;
+  border-radius: 24px;
+  border: 1px solid rgba(226, 232, 240, 0.86);
+  background: rgba(255, 255, 255, 0.94);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 -18px 36px rgba(62, 56, 44, 0.08),
+    0 10px 28px rgba(15, 23, 42, 0.08);
+  transform: translateX(-50%);
+}
+
+.schedule-page > section.mb-3.rounded-2xl.bg-white.p-2\.5.shadow-sm.ring-1.ring-slate-100,
+.app-page > section.mb-3.rounded-2xl.bg-white.p-2\.5.shadow-sm.ring-1.ring-slate-100 {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 0.5rem;
+  margin-bottom: 0;
+}
+
+.schedule-page > section.mb-3.rounded-2xl.bg-white.p-2\.5.shadow-sm.ring-1.ring-slate-100 > .mt-2,
+.app-page > section.mb-3.rounded-2xl.bg-white.p-2\.5.shadow-sm.ring-1.ring-slate-100 > .mt-2 {
+  margin-top: 0;
+}
+
+.schedule-fab-shell {
+  pointer-events: none;
+  position: fixed;
+  inset-inline: 0;
+  bottom: calc(env(safe-area-inset-bottom) + 5.5rem);
+  z-index: 40;
+  display: flex;
+  width: 100%;
+  max-width: 48rem;
+  justify-content: flex-end;
+  margin-inline: auto;
+  padding-inline: 1rem;
+}
+
+.schedule-fab-shell-hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(0.5rem);
+}
+
+.schedule-fab-button {
+  pointer-events: auto;
+  display: flex;
+  width: 3.5rem;
+  height: 3.5rem;
+  flex-shrink: 0;
+  touch-action: manipulation;
+  align-items: center;
+  justify-content: center;
+  border-radius: 22px;
+  background: #4f6cf7;
+  color: #fff;
+  font-size: 1.875rem;
+  font-weight: 600;
+  line-height: 1;
+  box-shadow:
+    0 16px 30px rgba(79, 108, 247, 0.28),
+    0 0 0 1px rgba(255, 255, 255, 0.4);
+  transition:
+    transform 160ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    background-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.schedule-fab-button:hover {
+  background: #3a55de;
+}
+
+.schedule-fab-button:active {
+  transform: translateY(1px) scale(0.985);
+}
+
+.schedule-fab-button:focus-visible {
+  outline: none;
+  box-shadow:
+    0 16px 30px rgba(79, 108, 247, 0.28),
+    0 0 0 3px #c8d4ff;
+}
+
+.schedule-fab-button:disabled {
+  opacity: 0.6;
+}
+
+.schedule-page > header.mb-3 > button[aria-label="新建"],
+.schedule-page > header.mb-3 > button[title="新建"],
+.schedule-page > header.mb-3 > button[aria-label="取消"],
+.schedule-page > header.mb-3 > button[title="取消"],
+.app-page > header.mb-3 > button[aria-label="新建"],
+.app-page > header.mb-3 > button[title="新建"],
+.app-page > header.mb-3 > button[aria-label="取消"],
+.app-page > header.mb-3 > button[title="取消"] {
+  position: fixed;
+  right: max(1rem, calc((100vw - 48rem) / 2 + 1rem));
+  bottom: calc(env(safe-area-inset-bottom) + 5.5rem);
+  z-index: 40;
+  width: 3.5rem;
+  height: 3.5rem;
+  border-radius: 22px;
+  box-shadow:
+    0 16px 30px rgba(79, 108, 247, 0.28),
+    0 0 0 1px rgba(255, 255, 255, 0.4);
+}
+
+.app-page:has(
+    > section.mb-3.rounded-2xl.bg-white.p-2\.5.shadow-sm.ring-1.ring-slate-100
+      select
+  )
+  > header.mb-3
+  > button[aria-label="新建"],
+.app-page:has(
+    > section.mb-3.rounded-2xl.bg-white.p-2\.5.shadow-sm.ring-1.ring-slate-100
+      select
+  )
+  > header.mb-3
+  > button[title="新建"],
+.app-page:has(
+    > section.mb-3.rounded-2xl.bg-white.p-2\.5.shadow-sm.ring-1.ring-slate-100
+      select
+  )
+  > header.mb-3
+  > button[aria-label="取消"],
+.app-page:has(
+    > section.mb-3.rounded-2xl.bg-white.p-2\.5.shadow-sm.ring-1.ring-slate-100
+      select
+  )
+  > header.mb-3
+  > button[title="取消"] {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(0.5rem);
+}
+
+@media (min-width: 640px) {
+  .schedule-fab-shell {
+    padding-inline: 1.5rem;
+  }
+
+  .schedule-page > header.mb-3 > button[aria-label="新建"],
+  .schedule-page > header.mb-3 > button[title="新建"],
+  .schedule-page > header.mb-3 > button[aria-label="取消"],
+  .schedule-page > header.mb-3 > button[title="取消"],
+  .app-page > header.mb-3 > button[aria-label="新建"],
+  .app-page > header.mb-3 > button[title="新建"],
+  .app-page > header.mb-3 > button[aria-label="取消"],
+  .app-page > header.mb-3 > button[title="取消"] {
+    right: max(1.5rem, calc((100vw - 48rem) / 2 + 1.5rem));
+  }
 }
 
 .app-header {
@@ -212,6 +380,62 @@ body {
   @apply inline-flex min-h-6 max-w-full items-center rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600;
 }
 
+.tone-chip {
+  @apply inline-flex min-h-6 max-w-full items-center rounded-full px-2.5 py-1 text-xs font-semibold ring-1;
+}
+
+.tone-chip-muted {
+  @apply bg-slate-100 text-slate-600 ring-slate-200;
+}
+
+.tone-chip-info {
+  @apply bg-sky-50 text-sky-700 ring-sky-100;
+}
+
+.tone-chip-success {
+  @apply bg-emerald-50 text-emerald-700 ring-emerald-100;
+}
+
+.tone-chip-warning {
+  @apply bg-amber-50 text-amber-700 ring-amber-100;
+}
+
+.tone-chip-danger {
+  @apply bg-rose-50 text-rose-700 ring-rose-100;
+}
+
+.tone-chip-private {
+  @apply bg-violet-50 text-violet-700 ring-violet-100;
+}
+
+.status-badge {
+  @apply inline-flex min-h-6 max-w-full items-center rounded-full px-2.5 py-1 text-xs font-semibold ring-1;
+}
+
+.status-badge-muted {
+  @apply bg-slate-100 text-slate-600 ring-slate-200;
+}
+
+.status-badge-info {
+  @apply bg-sky-50 text-sky-700 ring-sky-100;
+}
+
+.status-badge-success {
+  @apply bg-emerald-50 text-emerald-700 ring-emerald-100;
+}
+
+.status-badge-warning {
+  @apply bg-amber-50 text-amber-700 ring-amber-100;
+}
+
+.status-badge-danger {
+  @apply bg-rose-50 text-rose-700 ring-rose-100;
+}
+
+.status-badge-private {
+  @apply bg-violet-50 text-violet-700 ring-violet-100;
+}
+
 .empty-state {
   @apply rounded-2xl bg-white px-5 py-8 text-center shadow-sm ring-1 ring-slate-100;
 }
@@ -220,12 +444,226 @@ body {
   @apply rounded-xl bg-slate-50 px-3 py-2 text-sm leading-6 text-slate-600;
 }
 
+.app-loading-screen {
+  @apply relative flex min-h-[100dvh] overflow-hidden bg-gradient-to-b from-emerald-50 via-white to-brand-50 px-6 py-10 text-slate-900;
+}
+
+.app-loading-bg {
+  @apply pointer-events-none absolute inset-0 overflow-hidden;
+}
+
+.app-loading-branch {
+  @apply absolute block h-px w-32 origin-left bg-emerald-200/70;
+}
+
+.app-loading-branch::before,
+.app-loading-branch::after {
+  content: "";
+  border-radius: 999px 0 999px 0;
+  @apply absolute block h-6 w-3 bg-emerald-200/80;
+}
+
+.app-loading-branch::before {
+  @apply left-8 -top-5 rotate-[-18deg];
+}
+
+.app-loading-branch::after {
+  @apply left-16 top-1 rotate-[28deg] bg-amber-100/80;
+}
+
+.app-loading-branch-left {
+  @apply -left-10 top-24 rotate-[-14deg];
+}
+
+.app-loading-branch-right {
+  @apply -right-8 top-14 rotate-[162deg];
+}
+
+.app-loading-panel {
+  @apply relative z-10 m-auto flex w-full max-w-xs flex-col items-center rounded-[2rem] bg-white/80 px-8 py-10 shadow-sm ring-1 ring-white/80 backdrop-blur;
+}
+
+.app-loading-mark {
+  @apply flex h-24 w-24 items-center justify-center rounded-[2rem] bg-white text-emerald-700 shadow-sm ring-1 ring-emerald-100;
+  animation: app-loading-float 2.8s ease-in-out infinite;
+}
+
+.app-loading-dot {
+  @apply h-2.5 w-2.5 rounded-full bg-emerald-500;
+  animation: app-loading-dot 1.15s ease-in-out infinite;
+}
+
+.app-loading-dot:nth-child(2) {
+  animation-delay: 0.14s;
+}
+
+.app-loading-dot:nth-child(3) {
+  animation-delay: 0.28s;
+}
+
+@keyframes app-loading-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+@keyframes app-loading-dot {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-5px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-loading-mark,
+  .app-loading-dot {
+    animation: none;
+  }
+}
+
+.info-note {
+  @apply rounded-xl bg-sky-50 px-3 py-2 text-sm leading-6 text-sky-700;
+}
+
+.warning-note {
+  @apply rounded-xl bg-amber-50 px-3 py-2 text-sm leading-6 text-amber-800;
+}
+
 .error-note {
   @apply rounded-xl bg-rose-50 px-3 py-2 text-sm leading-6 text-rose-700;
 }
 
 .success-note {
   @apply rounded-xl bg-emerald-50 px-3 py-2 text-sm leading-6 text-emerald-700;
+}
+
+.settings-row {
+  @apply flex min-w-0 items-start justify-between gap-3 rounded-xl px-1 py-1.5;
+}
+
+.settings-row-label {
+  @apply min-w-0 max-w-[46%] break-words text-sm leading-5 text-slate-500;
+}
+
+.settings-row-value {
+  @apply min-w-0 flex-1 break-words text-right text-sm font-medium leading-5;
+}
+
+.settings-family-code {
+  @apply inline-flex max-w-full min-w-0 items-center justify-end gap-2;
+}
+
+.settings-family-code-text {
+  @apply min-w-0 max-w-full break-all font-mono text-base tracking-widest;
+}
+
+.settings-action-grid {
+  @apply grid grid-cols-1 gap-2 pt-2 min-[390px]:grid-cols-2;
+}
+
+.dialog-panel {
+  @apply mx-4 max-w-full overflow-y-auto overscroll-contain break-words rounded-2xl bg-white p-6 shadow-2xl ring-1 ring-slate-200 sm:mx-0;
+  max-height: min(calc(100dvh - 1.5rem), 34rem);
+  padding-bottom: max(1.5rem, calc(env(safe-area-inset-bottom) + 1rem));
+}
+
+.dialog-actions {
+  @apply flex flex-wrap gap-3;
+}
+
+.dialog-actions > * {
+  flex: 1 1 0;
+  min-width: min(100%, 8rem);
+}
+
+.toast-viewport {
+  @apply pointer-events-none fixed inset-x-0 z-[9999] flex flex-col items-center gap-2 px-4;
+  bottom: max(5.75rem, calc(env(safe-area-inset-bottom) + 5rem));
+}
+
+.toast-bar {
+  @apply pointer-events-auto flex min-h-12 w-full max-w-sm min-w-0 items-center gap-2.5 rounded-2xl px-4 py-3 text-sm font-medium shadow-lg animate-toast-in sm:w-auto;
+}
+
+.toast-bar-success {
+  @apply bg-emerald-50 text-emerald-800 ring-1 ring-emerald-100;
+}
+
+.toast-bar-error {
+  @apply bg-rose-50 text-rose-800 ring-1 ring-rose-100;
+}
+
+.toast-bar-info {
+  @apply bg-sky-50 text-sky-800 ring-1 ring-sky-100;
+}
+
+.toast-message {
+  @apply min-w-0 flex-1 break-words text-left leading-snug;
+}
+
+.chat-action-dismiss-layer {
+  @apply fixed inset-0 z-[55] cursor-default bg-transparent;
+}
+
+.chat-action-menu {
+  @apply fixed z-[60] min-w-44 overflow-y-auto overscroll-contain rounded-2xl border border-white/80 bg-white/95 py-1 text-sm shadow-[0_18px_42px_rgba(70,62,48,0.14)] backdrop-blur-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200;
+  max-width: calc(100vw - 1rem);
+}
+
+.chat-input-actions-popover {
+  @apply absolute bottom-full left-3 mb-2 flex max-w-[calc(100vw-1.5rem)] flex-wrap items-center gap-2 overflow-y-auto overscroll-contain rounded-[22px] border border-white/80 bg-white/95 p-2 shadow-[0_18px_42px_rgba(70,62,48,0.14)] backdrop-blur-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 sm:left-4;
+}
+
+.chat-input-whisper-popover {
+  @apply absolute bottom-full left-3 right-3 mb-2 flex min-h-0 flex-col overflow-hidden rounded-[22px] border border-white/80 bg-white/95 shadow-[0_18px_46px_rgba(88,70,118,0.16)] backdrop-blur-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-200 sm:left-4 sm:right-4;
+}
+
+.chat-input-whisper-list {
+  @apply min-h-0 flex-1 overflow-y-auto py-1;
+}
+
+.assistant-action-row {
+  @apply flex flex-wrap gap-2;
+}
+
+.assistant-action-button {
+  @apply min-h-9 min-w-[7rem] flex-1 whitespace-normal break-words rounded-full px-3 py-1.5 text-xs font-semibold leading-4 transition active:scale-[0.98] disabled:opacity-60;
+}
+
+.sheet-backdrop {
+  @apply fixed inset-0 z-[70] flex items-end justify-center bg-slate-950/35 px-3 pt-10 backdrop-blur-sm sm:items-center;
+  padding-bottom: max(0.75rem, calc(env(safe-area-inset-bottom) + 0.75rem));
+}
+
+.sheet-panel {
+  @apply flex w-full max-w-xl flex-col overflow-hidden rounded-[28px] bg-white shadow-2xl shadow-slate-900/20;
+  max-height: min(calc(100dvh - 1.5rem), 680px);
+}
+
+.sheet-body-safe {
+  @apply min-h-0 flex-1 overflow-y-auto;
+  padding-bottom: max(1rem, calc(env(safe-area-inset-bottom) + 0.75rem));
+}
+
+.sheet-actions {
+  @apply grid grid-cols-2 gap-3 border-t border-slate-100 px-4 pt-3;
+  padding-bottom: max(0.75rem, calc(env(safe-area-inset-bottom) + 0.75rem));
+}
+
+@media (min-width: 640px) {
+  .toast-viewport {
+    @apply items-end;
+    bottom: max(1.5rem, calc(env(safe-area-inset-bottom) + 1.5rem));
+  }
 }
 
 @keyframes effect-float {

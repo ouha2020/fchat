@@ -125,11 +125,7 @@ export default function VerifyFamilyCodePage() {
           />
         </div>
 
-        {notice ? (
-          <div className="rounded-xl bg-sky-50 px-3 py-2 text-sm leading-6 text-sky-700">
-            {notice}
-          </div>
-        ) : null}
+        {notice ? <div className="info-note">{notice}</div> : null}
         {error ? (
           <div className="error-note">
             {error}

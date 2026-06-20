@@ -2,8 +2,19 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+  type PointerEvent,
+} from "react";
 
+import AppLoading from "@/components/AppLoading";
+import AudioBubble from "@/components/AudioBubble";
 import { useDialog } from "@/components/Dialog";
 import { useLanguage } from "@/components/LanguageProvider";
 import { useToast } from "@/components/Toast";
@@ -11,7 +22,10 @@ import { clearSession, loadSession, saveSession, type LocalSession } from "@/lib
 import { humanizeError } from "@/lib/errors";
 import { validateMember } from "@/lib/familyService";
 import { getJapanHoliday, type JapanHoliday } from "@/lib/japanHolidays";
+import { createGoogleMapUrl, getCurrentLocation } from "@/lib/locationService";
 import { listMembers } from "@/lib/memberService";
+import { uploadChatAudio } from "@/lib/messageService";
+import { startRecording, type RecordingHandle } from "@/lib/recordingService";
 import {
   createScheduleContextEvent,
   createScheduleItem,
@@ -29,6 +43,7 @@ import {
   snoozeScheduleReminder,
   updateScheduleItem,
 } from "@/lib/scheduleService";
+import { safeHttpUrl } from "@/lib/security";
 import { getSupabase, isSupabaseConfigured } from "@/lib/supabaseClient";
 import type { FamilyMember } from "@/types/member";
 import type {
@@ -91,6 +106,10 @@ const VISIBILITY_FILTERS: ScheduleVisibilityFilter[] = [
   "family",
   "private",
 ];
+const SCHEDULE_MAX_RECORD_MS = 60_000;
+const SCHEDULE_MIN_RECORD_MS = 600;
+const SCHEDULE_COMPOSER_ICON_BUTTON_CLASS =
+  "native-press inline-flex h-10 w-10 shrink-0 overflow-hidden rounded-[14px] bg-white bg-cover bg-center bg-no-repeat shadow-sm ring-1 ring-slate-200 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200";
 
 export default function SchedulePage() {
   const router = useRouter();
@@ -828,23 +847,29 @@ export default function SchedulePage() {
     }
   }
 
+  function resolveContextRecipient(item: ScheduleItem): string | null {
+    if (!session) return null;
+    return (
+      contextRecipientId ||
+      activeMembers.find((member) => {
+        if (member.id === session.member_id || member.status !== "active") {
+          return false;
+        }
+        if (item.visibility === "family") return true;
+        return (
+          member.id === item.creator_member_id ||
+          member.id === item.assignee_member_id
+        );
+      })?.id ||
+      null
+    );
+  }
+
   async function handleAddComment() {
     if (!session || !selectedItem) return;
     setBusy(`comment:${selectedItem.id}`);
     try {
-      const fallbackRecipient =
-        contextRecipientId ||
-        activeMembers.find((member) => {
-          if (member.id === session.member_id || member.status !== "active") {
-            return false;
-          }
-          if (selectedItem.visibility === "family") return true;
-          return (
-            member.id === selectedItem.creator_member_id ||
-            member.id === selectedItem.assignee_member_id
-          );
-        })?.id ||
-        null;
+      const fallbackRecipient = resolveContextRecipient(selectedItem);
       await createScheduleContextEvent(session, {
         schedule_item_id: selectedItem.id,
         event_type: "text",
@@ -859,6 +884,61 @@ export default function SchedulePage() {
       toast.success(t("scheduleCommentSuccess"));
     } catch (err) {
       toast.error(humanizeError(err, language));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleAddLocationRecord() {
+    if (!session || !selectedItem) return;
+    setBusy(`comment:${selectedItem.id}`);
+    try {
+      const fallbackRecipient = resolveContextRecipient(selectedItem);
+      const fix = await getCurrentLocation();
+      await createScheduleContextEvent(session, {
+        schedule_item_id: selectedItem.id,
+        event_type: "location",
+        visibility: contextVisibility,
+        recipient_member_id:
+          contextVisibility === "private" ? fallbackRecipient : null,
+        latitude: fix.latitude,
+        longitude: fix.longitude,
+        location_label: t("messageLocationShared"),
+      });
+      await refreshContextEvents(selectedItem.id);
+      notifyScheduleCollaboration(selectedItem.id, "commented");
+      toast.success(t("scheduleCommentSuccess"));
+    } catch (err) {
+      toast.error(humanizeError(err, language) || t("chatLocationError"));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleAddAudioRecord(
+    blob: Blob,
+    mimeType: string,
+    durationMs: number,
+  ) {
+    if (!session || !selectedItem) return;
+    setBusy(`comment:${selectedItem.id}`);
+    try {
+      const fallbackRecipient = resolveContextRecipient(selectedItem);
+      const url = await uploadChatAudio(session, blob, mimeType);
+      await createScheduleContextEvent(session, {
+        schedule_item_id: selectedItem.id,
+        event_type: "audio",
+        visibility: contextVisibility,
+        recipient_member_id:
+          contextVisibility === "private" ? fallbackRecipient : null,
+        audio_url: url,
+        audio_duration_ms: durationMs,
+      });
+      await refreshContextEvents(selectedItem.id);
+      notifyScheduleCollaboration(selectedItem.id, "commented");
+      toast.success(t("scheduleCommentSuccess"));
+    } catch (err) {
+      toast.error(humanizeError(err, language) || t("inputAudioSendFailed"));
     } finally {
       setBusy(null);
     }
@@ -915,6 +995,11 @@ export default function SchedulePage() {
     setSelectedDate((current) => shiftDateForView(current, viewMode, 1));
   }
 
+  function handleViewModeChange(mode: ScheduleViewMode) {
+    setShowForm(false);
+    setViewMode(mode);
+  }
+
   function handleTodayRange() {
     setSelectedDate(startOfDay(new Date()));
   }
@@ -939,11 +1024,7 @@ export default function SchedulePage() {
   }
 
   if (loading) {
-    return (
-      <div className="app-page">
-        <div className="status-note">{t("commonLoading")}</div>
-      </div>
-    );
+    return <AppLoading tone="schedule" message={t("commonLoading")} />;
   }
 
   if (loadError) {
@@ -965,7 +1046,7 @@ export default function SchedulePage() {
   if (!session) return null;
 
   return (
-    <div className="app-page">
+    <div className="app-page schedule-page">
       <header className="mb-3 flex items-center gap-3">
         <Link
           href="/chat"
@@ -985,9 +1066,18 @@ export default function SchedulePage() {
             })}
           </p>
         </div>
+      </header>
+
+      <div
+        className={
+          filtersOpen
+            ? "schedule-fab-shell schedule-fab-shell-hidden"
+            : "schedule-fab-shell"
+        }
+      >
         <button
           type="button"
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-brand-500 text-2xl font-semibold leading-none text-white shadow-sm transition hover:bg-brand-600 disabled:opacity-60"
+          className="schedule-fab-button"
           aria-label={showForm ? t("commonCancel") : t("scheduleNew")}
           title={showForm ? t("commonCancel") : t("scheduleNew")}
           onClick={() => {
@@ -1000,7 +1090,7 @@ export default function SchedulePage() {
         >
           {showForm ? "×" : "+"}
         </button>
-      </header>
+      </div>
 
       <MyTodaySection
         items={myOpenTodayItems}
@@ -1011,6 +1101,7 @@ export default function SchedulePage() {
       />
 
       <ScheduleFilters
+        docked
         searchText={searchText}
         assigneeFilter={assigneeFilter}
         typeFilter={typeFilter}
@@ -1032,7 +1123,7 @@ export default function SchedulePage() {
         selectedDate={selectedDate}
         t={t}
         language={language}
-        onViewModeChange={setViewMode}
+        onViewModeChange={handleViewModeChange}
         onPrevious={handlePreviousRange}
         onNext={handleNextRange}
         onToday={handleTodayRange}
@@ -1300,6 +1391,8 @@ export default function SchedulePage() {
           onDeclineNoteChange={setDeclineNote}
           onShowDeclineNoteChange={setShowDeclineNote}
           onAddComment={handleAddComment}
+          onAddLocation={handleAddLocationRecord}
+          onAddAudio={handleAddAudioRecord}
           onDeleteComment={handleDeleteComment}
           onRespondAssignment={handleRespondAssignment}
           onEdit={() => {
@@ -1513,6 +1606,8 @@ function ScheduleDetailPanel({
   onDeclineNoteChange,
   onShowDeclineNoteChange,
   onAddComment,
+  onAddLocation,
+  onAddAudio,
   onDeleteComment,
   onRespondAssignment,
   onEdit,
@@ -1554,6 +1649,8 @@ function ScheduleDetailPanel({
   onDeclineNoteChange: (value: string) => void;
   onShowDeclineNoteChange: (value: boolean) => void;
   onAddComment: () => void;
+  onAddLocation: () => Promise<void>;
+  onAddAudio: (blob: Blob, mimeType: string, durationMs: number) => Promise<void>;
   onDeleteComment: (commentId: string) => void;
   onRespondAssignment: (response: "accepted" | "declined") => void;
   onEdit: () => void;
@@ -1566,6 +1663,27 @@ function ScheduleDetailPanel({
   onToggle: () => void;
   onDelete: () => void;
 }) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const commentInputRef = useRef<HTMLTextAreaElement>(null);
+  const recordingHandleRef = useRef<RecordingHandle | null>(null);
+  const recordingPointerHeldRef = useRef(false);
+  const recordingTimeoutRef = useRef<number | null>(null);
+  const titleId = `schedule-detail-title-${item.id}`;
+  const composerOptionsId = `schedule-composer-options-${item.id}`;
+  const whisperPickerId = `schedule-composer-whisper-${item.id}`;
+  const [composerOptionsOpen, setComposerOptionsOpen] = useState(false);
+  const [whisperPickerOpen, setWhisperPickerOpen] = useState(false);
+  const [conversationExpanded, setConversationExpanded] = useState(false);
+  const [recordingActive, setRecordingActive] = useState(false);
+  const [composerNotice, setComposerNotice] = useState<string | null>(null);
+  const [viewportStyle, setViewportStyle] = useState<CSSProperties>({
+    height: "100dvh",
+  });
+  const detailPanelStyle: CSSProperties = {
+    height: "min(92dvh, calc(100% - 1rem))",
+    maxHeight: "min(92dvh, calc(100% - 1rem))",
+  };
   const canEdit =
     item.creator_member_id === session.member_id ||
     item.assignee_member_id === session.member_id ||
@@ -1594,8 +1712,22 @@ function ScheduleDetailPanel({
     contextRecipientOptions.find((member) => member.id === contextRecipientId) ??
     contextRecipientOptions[0] ??
     null;
+  const canPickWhisper = contextRecipientOptions.length > 0;
+  const composerBusy = commentBusy;
+  const whisperModeLabel =
+    contextVisibility === "private" && selectedContextRecipient
+      ? t("whisperModeLabel", { nickname: selectedContextRecipient.nickname })
+      : null;
+  const commentPlaceholder =
+    contextVisibility === "private"
+      ? selectedContextRecipient
+        ? t("scheduleRecordPrivatePlaceholder", {
+            nickname: selectedContextRecipient.nickname,
+          })
+        : t("scheduleRecordPrivate")
+      : t("scheduleRecordPlaceholder");
   const sendDisabled =
-    commentBusy ||
+    composerBusy ||
     commentText.trim().length === 0 ||
     (contextVisibility === "private" && !selectedContextRecipient);
   const recordRows = contextEvents
@@ -1626,23 +1758,225 @@ function ScheduleDetailPanel({
   const reminderTimeLabel = item.remind_at
     ? `${formatDate(item.remind_at, language)} ${formatTime(item.remind_at, language)}`
     : t("scheduleReminderNone");
+  const memberById = useMemo(
+    () => new Map(members.map((member) => [member.id, member])),
+    [members],
+  );
+
+  function clearRecordingTimeout() {
+    if (recordingTimeoutRef.current) {
+      window.clearTimeout(recordingTimeoutRef.current);
+      recordingTimeoutRef.current = null;
+    }
+  }
+
+  async function stopScheduleRecording(cancel = false) {
+    clearRecordingTimeout();
+    const handle = recordingHandleRef.current;
+    if (!handle) return;
+    recordingHandleRef.current = null;
+    setRecordingActive(false);
+
+    if (cancel) {
+      handle.cancel();
+      return;
+    }
+
+    try {
+      const result = await handle.stop();
+      if (result.durationMs < SCHEDULE_MIN_RECORD_MS) {
+        setComposerNotice(t("inputRecordingTooShort"));
+        return;
+      }
+      await onAddAudio(result.blob, result.mimeType, result.durationMs);
+    } catch (err) {
+      setComposerNotice(humanizeError(err, language) || t("inputAudioSendFailed"));
+    }
+  }
+
+  async function handleVoicePointerDown(event: PointerEvent<HTMLButtonElement>) {
+    if (composerBusy || recordingActive) return;
+    event.preventDefault();
+    const target = event.currentTarget;
+    const pointerId = event.pointerId;
+    recordingPointerHeldRef.current = true;
+    setComposerNotice(null);
+    setComposerOptionsOpen(false);
+    setWhisperPickerOpen(false);
+
+    try {
+      const handle = await startRecording();
+      recordingHandleRef.current = handle;
+      setRecordingActive(true);
+      try {
+        target.setPointerCapture?.(pointerId);
+      } catch {
+        // Pointer may have ended while the browser permission prompt was open.
+      }
+      recordingTimeoutRef.current = window.setTimeout(() => {
+        void stopScheduleRecording(false);
+      }, SCHEDULE_MAX_RECORD_MS);
+      if (!recordingPointerHeldRef.current) {
+        void stopScheduleRecording(false);
+      }
+    } catch (err) {
+      setComposerNotice(
+        humanizeError(err, language) ||
+          t("inputRecordStartError", {
+            message: err instanceof Error ? err.message : t("commonUnknownMember"),
+          }),
+      );
+    }
+  }
+
+  function handleVoicePointerUp(event: PointerEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    recordingPointerHeldRef.current = false;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    void stopScheduleRecording(false);
+  }
+
+  function handleVoicePointerCancel() {
+    recordingPointerHeldRef.current = false;
+    void stopScheduleRecording(true);
+  }
+
+  useEffect(() => {
+    setComposerOptionsOpen(false);
+    setWhisperPickerOpen(false);
+    setConversationExpanded(false);
+    setComposerNotice(null);
+  }, [item.id]);
+
+  useEffect(() => {
+    return () => {
+      if (recordingTimeoutRef.current) {
+        window.clearTimeout(recordingTimeoutRef.current);
+        recordingTimeoutRef.current = null;
+      }
+      recordingPointerHeldRef.current = false;
+      recordingHandleRef.current?.cancel();
+      recordingHandleRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const visualViewport = window.visualViewport;
+
+    function updateViewport() {
+      if (!visualViewport) {
+        setViewportStyle({ height: "100dvh" });
+        return;
+      }
+
+      setViewportStyle({
+        height: `${visualViewport.height}px`,
+        transform: `translateY(${visualViewport.offsetTop}px)`,
+      });
+    }
+
+    updateViewport();
+    visualViewport?.addEventListener("resize", updateViewport);
+    visualViewport?.addEventListener("scroll", updateViewport);
+    window.addEventListener("resize", updateViewport);
+    window.addEventListener("orientationchange", updateViewport);
+    return () => {
+      visualViewport?.removeEventListener("resize", updateViewport);
+      visualViewport?.removeEventListener("scroll", updateViewport);
+      window.removeEventListener("resize", updateViewport);
+      window.removeEventListener("orientationchange", updateViewport);
+    };
+  }, []);
+
+  useEffect(() => {
+    const restoreTarget =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    const frame = window.requestAnimationFrame(() => {
+      closeButtonRef.current?.focus({ preventScroll: true });
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      if (restoreTarget?.isConnected) {
+        restoreTarget.focus({ preventScroll: true });
+      }
+    };
+  }, [item.id]);
+
+  function handlePanelKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      if (editMode) {
+        onCancelEdit();
+        return;
+      }
+      onClose();
+      return;
+    }
+
+    if (event.key !== "Tab") return;
+    const panel = panelRef.current;
+    if (!panel) return;
+
+    const focusable = getFocusableElements(panel);
+    if (focusable.length === 0) {
+      event.preventDefault();
+      panel.focus({ preventScroll: true });
+      return;
+    }
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus({ preventScroll: true });
+      return;
+    }
+    if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus({ preventScroll: true });
+    }
+  }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end bg-slate-950/35 px-0 sm:items-center sm:px-6">
-      <div className="flex h-[92dvh] max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-3xl bg-slate-50 shadow-2xl sm:mx-auto sm:max-w-2xl sm:rounded-3xl">
+    <div
+      className="fixed inset-x-0 top-0 z-50 flex items-end overflow-hidden bg-slate-950/35 px-0 sm:items-center sm:px-6"
+      style={viewportStyle}
+    >
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        onKeyDown={handlePanelKeyDown}
+        className="flex w-full flex-col overflow-hidden rounded-t-3xl bg-slate-50 shadow-2xl focus:outline-none sm:mx-auto sm:max-w-2xl sm:rounded-3xl"
+        style={detailPanelStyle}
+      >
         <div className="shrink-0 p-4 pb-3 sm:p-5 sm:pb-3">
         <div className="mb-4 flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-xs font-semibold uppercase tracking-wide text-brand-600">
               {t("scheduleDetail")}
             </p>
-            <h2 className="mt-1 break-words text-xl font-bold text-slate-900">
+            <h2
+              id={titleId}
+              className="mt-1 break-words text-xl font-bold text-slate-900"
+            >
               {item.title}
             </h2>
           </div>
-          <button type="button" className="btn-ghost shrink-0 px-3" onClick={onClose}>
-            {t("commonCancel")}
-          </button>
+          {!editMode ? (
+            <button
+              ref={closeButtonRef}
+              type="button"
+              className="btn-ghost shrink-0 px-3"
+              onClick={onClose}
+            >
+              {t("commonCancel")}
+            </button>
+          ) : null}
         </div>
 
         {detailLoading ? (
@@ -1689,8 +2023,18 @@ function ScheduleDetailPanel({
             </div>
           </div>
         ) : (
-          <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:px-5">
-            <div className="shrink-0 rounded-2xl bg-white p-3 text-sm text-slate-700 ring-1 ring-slate-100">
+          <div
+            className={`flex min-h-0 flex-1 flex-col gap-2 px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:px-5 ${
+              conversationExpanded ? "overflow-hidden" : "overflow-y-auto"
+            }`}
+          >
+            <div
+              className={
+                conversationExpanded
+                  ? "hidden"
+                  : "shrink-0 rounded-2xl bg-white p-3 text-sm text-slate-700 ring-1 ring-slate-100"
+              }
+            >
               <div className="flex flex-wrap gap-2">
                 <DetailPill
                   label={t("scheduleType")}
@@ -1731,7 +2075,7 @@ function ScheduleDetailPanel({
               </div>
             </div>
 
-            {item.note ? (
+            {item.note && !conversationExpanded ? (
               <details className="shrink-0 rounded-2xl bg-white px-3 py-2 text-sm text-slate-700 ring-1 ring-slate-100">
                 <summary className="cursor-pointer list-none text-xs font-semibold text-slate-500">
                   {t("scheduleNote")}
@@ -1742,7 +2086,13 @@ function ScheduleDetailPanel({
               </details>
             ) : null}
 
-            <details className="shrink-0 rounded-2xl bg-white p-3 ring-1 ring-slate-100">
+            <details
+              className={
+                conversationExpanded
+                  ? "hidden"
+                  : "shrink-0 rounded-2xl bg-white p-3 ring-1 ring-slate-100"
+              }
+            >
               <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-sm">
                 <span className="font-semibold text-slate-900">
                   {t("scheduleReminderStatus")}
@@ -1834,84 +2184,172 @@ function ScheduleDetailPanel({
               )}
             </details>
 
-            <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[28px] bg-slate-100/80 ring-1 ring-slate-200">
-              <div className="flex shrink-0 items-center justify-between gap-2 px-4 py-3">
+            <section
+              className={`flex flex-col overflow-hidden rounded-[24px] bg-white shadow-[0_10px_28px_rgba(71,64,49,0.06)] ring-1 ring-slate-100 ${
+                conversationExpanded ? "min-h-0 flex-1" : "shrink-0"
+              }`}
+            >
+              <div className="flex shrink-0 items-center justify-between gap-2 border-b border-slate-100 bg-white px-4 py-3">
                 <h3 className="text-base font-semibold text-slate-900">
                   {t("scheduleConversation")}
                 </h3>
-                {collaborationLoading ? (
-                  <span className="text-xs text-slate-400">
-                    {t("commonLoading")}
-                  </span>
-                ) : null}
-              </div>
-
-              <div className="mx-3 mb-2 rounded-[22px] bg-white/80 p-3 text-sm text-slate-700 shadow-sm ring-1 ring-slate-100">
-                <div className="flex flex-wrap items-center justify-center gap-2 text-center">
-                  <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-100">
-                    {t("keeperName")}
-                  </span>
-                  <span className="text-xs font-medium text-slate-500">
-                    {t("scheduleAssigneeResponse")}
-                  </span>
-                  <span className={responseBadgeClass(response.status)}>
-                    {assigneeResponseLabel(response.status, t)}
-                  </span>
+                <div className="flex shrink-0 items-center gap-2">
+                  {collaborationLoading ? (
+                    <span className="text-xs text-slate-400">
+                      {t("commonLoading")}
+                    </span>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="native-press inline-flex h-8 w-8 items-center justify-center rounded-2xl bg-slate-50 text-slate-500 ring-1 ring-slate-200 transition hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+                    aria-label={
+                      conversationExpanded
+                        ? t("scheduleConversationCollapse")
+                        : t("scheduleConversationExpand")
+                    }
+                    title={
+                      conversationExpanded
+                        ? t("scheduleConversationCollapse")
+                        : t("scheduleConversationExpand")
+                    }
+                    onClick={() =>
+                      setConversationExpanded((expanded) => !expanded)
+                    }
+                  >
+                    {conversationExpanded ? (
+                      <svg
+                        aria-hidden="true"
+                        width="17"
+                        height="17"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="M8 3v5H3" />
+                        <path d="M16 3v5h5" />
+                        <path d="M8 21v-5H3" />
+                        <path d="M16 21v-5h5" />
+                      </svg>
+                    ) : (
+                      <svg
+                        aria-hidden="true"
+                        width="17"
+                        height="17"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="M15 3h6v6" />
+                        <path d="M9 21H3v-6" />
+                        <path d="M21 3l-7 7" />
+                        <path d="M3 21l7-7" />
+                      </svg>
+                    )}
+                  </button>
                 </div>
-                {response.note ? (
-                  <p className="mt-2 whitespace-pre-wrap break-words text-center text-slate-500">
-                    {response.note}
-                  </p>
-                ) : null}
-                {isAssignee && item.status === "active" ? (
-                  <div className="mt-3 flex flex-col gap-2">
-                    {showDeclineNote ? (
-                      <textarea
-                        className="field min-h-20 resize-none"
-                        value={declineNote}
-                        maxLength={300}
-                        placeholder={t("scheduleDeclineReason")}
-                        onChange={(event) =>
-                          onDeclineNoteChange(event.target.value)
-                        }
-                      />
-                    ) : null}
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        className="btn-secondary"
-                        disabled={responseBusy}
-                        onClick={() => onRespondAssignment("accepted")}
-                      >
-                        {t("scheduleAcceptAssignment")}
-                      </button>
-                      <button
-                        type="button"
-                        className="btn-ghost text-rose-600 hover:bg-rose-50"
-                        disabled={responseBusy}
-                        onClick={() => {
-                          if (!showDeclineNote) {
-                            onShowDeclineNoteChange(true);
-                            return;
-                          }
-                          onRespondAssignment("declined");
-                        }}
-                      >
-                        {t("scheduleDeclineAssignment")}
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
               </div>
 
               <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                 {contextEventsLoading ? (
-                  <div className="mx-3 flex min-h-0 flex-1 items-center justify-center rounded-[24px] bg-slate-50 text-sm text-slate-500">
+                  <div className="mx-3 my-3 flex min-h-40 flex-1 items-center justify-center rounded-[22px] bg-slate-50 text-sm text-slate-500 ring-1 ring-slate-100">
                     {t("commonLoading")}
                   </div>
-                ) : recordRows.length ? (
-                  <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3">
-                    {recordRows.map((row) => {
+                ) : (
+                  <div
+                    className={`flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 py-3 ${
+                      conversationExpanded
+                        ? "[&>*:first-child]:mt-auto"
+                        : "max-h-[34dvh]"
+                    }`}
+                  >
+                    <div className="flex items-start gap-2">
+                      <ScheduleConversationAvatar label="家" tone="keeper" />
+                      <div className="flex min-w-0 flex-1 flex-col items-start gap-1 sm:max-w-lg">
+                        <div className="flex max-w-full min-w-0 items-center gap-1.5 text-[11px] leading-4 text-slate-500">
+                          <span className="max-w-full truncate font-medium text-slate-700">
+                            {t("keeperName")}
+                          </span>
+                          <span className="text-slate-300">·</span>
+                          <span className="shrink-0">
+                            {t("scheduleAssigneeResponse")}
+                          </span>
+                        </div>
+                        <div className="w-full max-w-full rounded-[22px] rounded-bl-md bg-slate-50 px-3.5 py-3 text-sm text-slate-800 ring-1 ring-slate-100">
+                          <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                            <span className="rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-100">
+                              {itemTypeLabel(item.item_type, t)}
+                            </span>
+                            <span className={responseBadgeClass(response.status)}>
+                              {assigneeResponseLabel(response.status, t)}
+                            </span>
+                          </div>
+                          <h4 className="break-words text-base font-bold leading-6 text-slate-950">
+                            {item.title}
+                          </h4>
+                          <p className="mt-1 break-words text-xs leading-5 text-slate-600">
+                            {t("scheduleStartTime")}: {scheduleTimeRange}
+                          </p>
+                          {item.note ? (
+                            <p className="mt-1 whitespace-pre-wrap break-words text-xs leading-5 text-slate-600">
+                              {item.note}
+                            </p>
+                          ) : null}
+                          {response.note ? (
+                            <p className="mt-2 whitespace-pre-wrap break-words rounded-2xl bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600">
+                              {response.note}
+                            </p>
+                          ) : null}
+                          {isAssignee && item.status === "active" ? (
+                            <div className="mt-3 flex flex-col gap-2">
+                              {showDeclineNote ? (
+                                <textarea
+                                  className="field min-h-20 resize-none"
+                                  value={declineNote}
+                                  maxLength={300}
+                                  placeholder={t("scheduleDeclineReason")}
+                                  onChange={(event) =>
+                                    onDeclineNoteChange(event.target.value)
+                                  }
+                                />
+                              ) : null}
+                              <div className="grid grid-cols-2 gap-2">
+                                <button
+                                  type="button"
+                                  className="btn-secondary min-w-0 px-3"
+                                  disabled={responseBusy}
+                                  onClick={() => onRespondAssignment("accepted")}
+                                >
+                                  {t("scheduleAcceptAssignment")}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-ghost min-w-0 px-3 text-rose-600 hover:bg-rose-50"
+                                  disabled={responseBusy}
+                                  onClick={() => {
+                                    if (!showDeclineNote) {
+                                      onShowDeclineNoteChange(true);
+                                      return;
+                                    }
+                                    onRespondAssignment("declined");
+                                  }}
+                                >
+                                  {t("scheduleDeclineAssignment")}
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+
+                    {recordRows.length ? (
+                      recordRows.map((row) => {
                       const event = row.event;
                       const senderMemberId = event.sender_member_id ?? null;
                       const isMine = senderMemberId === session.member_id;
@@ -1922,13 +2360,23 @@ function ScheduleDetailPanel({
                         ? scheduleTimelineFallback(event, t)
                         : event.text_content ?? scheduleTimelineFallback(event, t);
                       const isPrivate = event.visibility === "private";
+                      const senderMember = senderMemberId
+                        ? memberById.get(senderMemberId) ?? null
+                        : null;
+                      const avatarUrl = safeHttpUrl(senderMember?.avatar_url ?? null);
+                      const audioUrl = event.audio_url
+                        ? safeHttpUrl(event.audio_url)
+                        : null;
+                      const isAudioRecord =
+                        event.event_type === "audio" && Boolean(audioUrl);
+                      const isLocationRecord = event.event_type === "location";
                       const avatarLabel = (isMine ? t("membersMe") : nickname).slice(0, 1);
                       const canDeleteRecord =
                         isMine && ["text", "audio", "location"].includes(event.event_type);
                       if (isSystem) {
                         return (
-                          <div key={row.id} className="flex justify-center px-3">
-                            <div className="max-w-[90%] rounded-full bg-white px-3 py-1.5 text-center text-[11px] font-medium text-slate-500 ring-1 ring-slate-100">
+                          <div key={row.id} className="flex justify-start pl-11 pr-3">
+                            <div className="max-w-[90%] rounded-2xl bg-slate-50 px-3 py-1.5 text-left text-[11px] font-medium text-slate-500 ring-1 ring-slate-100">
                               <span className="break-words">{text}</span>
                               <span className="ml-1 text-slate-400">
                                 {formatTime(createdAt, language)}
@@ -1941,7 +2389,7 @@ function ScheduleDetailPanel({
                         <div key={row.id}>
                           <div
                             className={`mb-1 flex items-center gap-1 text-[11px] text-slate-500 ${
-                              isMine ? "justify-end pr-10" : "pl-10"
+                              isMine ? "justify-end pr-11" : "pl-11"
                             }`}
                           >
                             <span className="max-w-28 truncate">
@@ -1969,29 +2417,33 @@ function ScheduleDetailPanel({
                             }`}
                           >
                             {!isMine ? (
-                              <div
-                                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                              <ScheduleConversationAvatar
+                                label={avatarLabel}
+                                avatarUrl={avatarUrl}
+                                tone={
                                   event.sender_type === "keeper"
-                                    ? "bg-emerald-100 text-emerald-700"
-                                    : "bg-slate-200 text-slate-700"
-                                }`}
-                              >
-                                {avatarLabel}
-                              </div>
+                                    ? "keeper"
+                                    : "member"
+                                }
+                              />
                             ) : null}
                             <div
-                              className={`max-w-[76%] rounded-[18px] px-3 py-2 text-sm shadow-sm ${
-                                isMine
-                                  ? "rounded-br-md bg-brand-600 text-white"
-                                  : event.sender_type === "keeper"
-                                    ? "rounded-bl-md bg-emerald-50 text-slate-800 ring-1 ring-emerald-100"
-                                    : "rounded-bl-md bg-white text-slate-800 ring-1 ring-slate-100"
-                              }`}
+                              className={
+                                isAudioRecord
+                                  ? "max-w-[78%]"
+                                  : `max-w-[78%] rounded-[20px] px-3.5 py-2.5 text-sm shadow-[0_10px_24px_rgba(77,67,50,0.08)] ${
+                                      isMine
+                                        ? "rounded-br-md bg-brand-600 text-white ring-1 ring-white/20"
+                                        : event.sender_type === "keeper"
+                                          ? "rounded-bl-md bg-white/95 text-slate-800 ring-1 ring-emerald-100/80"
+                                          : "rounded-bl-md bg-white/95 text-slate-800 ring-1 ring-white/80"
+                                    }`
+                              }
                             >
                               {isPrivate ? (
                                 <div
                                   className={`mb-1 inline-flex rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
-                                    isMine
+                                    isMine && !isAudioRecord
                                       ? "bg-white/20 text-white"
                                       : "bg-violet-100 text-violet-700"
                                   }`}
@@ -2000,94 +2452,278 @@ function ScheduleDetailPanel({
                                 </div>
                               ) : null}
                               {isPrivate && isMine && event.recipient_nickname ? (
-                                <p className="mb-1 text-[11px] text-white/80">
+                                <p
+                                  className={`mb-1 text-[11px] ${
+                                    isAudioRecord
+                                      ? "text-violet-600"
+                                      : "text-white/80"
+                                  }`}
+                                >
                                   {t("messageWhisperTo", {
                                     nickname: event.recipient_nickname,
                                   })}
                                 </p>
                               ) : null}
-                              <p className="whitespace-pre-wrap break-words leading-6">
-                                {text}
-                              </p>
+                              {isAudioRecord ? (
+                                <AudioBubble
+                                  messageId={event.id}
+                                  url={audioUrl!}
+                                  durationMs={event.audio_duration_ms}
+                                  isMine={isMine}
+                                />
+                              ) : isLocationRecord ? (
+                                <ScheduleLocationBubble
+                                  event={event}
+                                  isMine={isMine}
+                                  t={t}
+                                />
+                              ) : (
+                                <p className="whitespace-pre-wrap break-words leading-6">
+                                  {text}
+                                </p>
+                              )}
                             </div>
                             {isMine ? (
-                              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-600 text-xs font-bold text-white">
-                                {avatarLabel}
-                              </div>
+                              <ScheduleConversationAvatar
+                                label={avatarLabel}
+                                avatarUrl={avatarUrl}
+                                tone="mine"
+                              />
                             ) : null}
                           </div>
                         </div>
                       );
-                    })}
-                  </div>
-                ) : (
-                  <div className="mx-3 flex min-h-0 flex-1 items-center justify-center rounded-[24px] bg-slate-50 text-center text-sm text-slate-500">
-                    {t("scheduleConversationEmpty")}
+                      })
+                    ) : (
+                      <div className="flex justify-start pl-11 pr-3">
+                        <div className="max-w-[90%] rounded-2xl bg-slate-50 px-3 py-1.5 text-left text-[11px] font-medium text-slate-500 ring-1 ring-slate-100">
+                          {t("scheduleConversationEmpty")}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
                 {canComment ? (
-                  <div className="shrink-0 rounded-t-[24px] bg-white p-2 shadow-[0_-8px_20px_rgba(15,23,42,0.04)] ring-1 ring-slate-200">
-                    <div className="mb-2 flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        className={`h-8 rounded-full px-3 text-xs font-semibold transition ${
-                          contextVisibility === "family"
-                            ? "bg-brand-600 text-white"
-                            : "bg-slate-100 text-slate-600"
-                        }`}
-                        onClick={() => onContextVisibilityChange("family")}
+                  <div className="relative z-20 shrink-0 overflow-visible border-t border-slate-100 bg-white px-3 py-2 sm:px-4">
+                    {composerOptionsOpen ? (
+                      <div
+                        id={composerOptionsId}
+                        className="chat-input-actions-popover native-scroll"
+                        role="menu"
+                        aria-label={t("scheduleRecordOptions")}
                       >
-                        {t("scheduleRecordPublic")}
-                      </button>
-                      <button
-                        type="button"
-                        className={`h-8 rounded-full px-3 text-xs font-semibold transition ${
-                          contextVisibility === "private"
-                            ? "bg-violet-600 text-white"
-                            : "bg-slate-100 text-slate-600"
-                        }`}
-                        onClick={() => {
-                          onContextVisibilityChange("private");
-                          if (!contextRecipientId && selectedContextRecipient) {
-                            onContextRecipientChange(selectedContextRecipient.id);
+                        <button
+                          type="button"
+                          className={SCHEDULE_COMPOSER_ICON_BUTTON_CLASS}
+                          style={{ backgroundImage: "url(/ui-icons/location.png)" }}
+                          aria-label={t("inputSendLocation")}
+                          title={t("inputSendLocation")}
+                          role="menuitem"
+                          disabled={composerBusy || recordingActive}
+                          onClick={() => {
+                            setComposerOptionsOpen(false);
+                            setWhisperPickerOpen(false);
+                            void onAddLocation();
+                          }}
+                        />
+                        <button
+                          type="button"
+                          className={SCHEDULE_COMPOSER_ICON_BUTTON_CLASS}
+                          style={{
+                            backgroundImage: "url(/ui-icons/whisper-lock.png)",
+                          }}
+                          aria-label={t("inputWhisper")}
+                          title={
+                            canPickWhisper
+                              ? t("inputWhisper")
+                              : t("inputWhisperNoMembers")
                           }
-                        }}
-                        disabled={contextRecipientOptions.length === 0}
-                      >
-                        {t("scheduleRecordPrivate")}
-                      </button>
-                    </div>
-                    {contextVisibility === "private" ? (
-                      <select
-                        className="mb-2 h-9 w-full rounded-full border border-violet-100 bg-violet-50 px-3 text-xs font-semibold text-violet-700 outline-none"
-                        value={contextRecipientId || selectedContextRecipient?.id || ""}
-                        onChange={(event) => onContextRecipientChange(event.target.value)}
-                      >
-                        {contextRecipientOptions.map((member) => (
-                          <option key={member.id} value={member.id}>
-                            {t("scheduleRecordRecipient", {
-                              nickname: member.nickname,
-                            })}
-                          </option>
-                        ))}
-                      </select>
+                          role="menuitem"
+                          aria-haspopup="dialog"
+                          aria-expanded={whisperPickerOpen}
+                          aria-controls={
+                            whisperPickerOpen ? whisperPickerId : undefined
+                          }
+                          disabled={
+                            composerBusy || recordingActive || !canPickWhisper
+                          }
+                          onClick={() => {
+                            setWhisperPickerOpen((open) => !open);
+                            if (!contextRecipientId && selectedContextRecipient) {
+                              onContextRecipientChange(selectedContextRecipient.id);
+                            }
+                            onContextVisibilityChange("private");
+                          }}
+                        />
+                      </div>
                     ) : null}
-                    <div className="flex items-end gap-2">
-                      <textarea
-                        className="min-h-10 flex-1 resize-none rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none transition placeholder:text-slate-400 focus:border-brand-200 focus:bg-white focus:ring-2 focus:ring-brand-100"
-                        value={commentText}
-                        maxLength={300}
-                        rows={1}
-                        placeholder={t("scheduleRecordPlaceholder")}
-                        onChange={(event) =>
-                          onCommentTextChange(event.target.value)
+                    {whisperPickerOpen ? (
+                      <div
+                        id={whisperPickerId}
+                        className="chat-input-whisper-popover"
+                        role="dialog"
+                        aria-label={t("inputWhisperPick")}
+                      >
+                        <div className="flex items-center gap-2 border-b border-violet-50 px-3 py-2 text-sm font-semibold text-violet-800">
+                          <span
+                            aria-hidden="true"
+                            className="h-5 w-5 shrink-0 rounded-md bg-cover bg-center"
+                            style={{
+                              backgroundImage: "url(/ui-icons/whisper-lock.png)",
+                            }}
+                          />
+                          <span>{t("inputWhisperPick")}</span>
+                        </div>
+                        <div className="native-scroll max-h-48 overflow-y-auto p-2">
+                          {contextRecipientOptions.map((member) => (
+                            <button
+                              key={member.id}
+                              type="button"
+                              className="flex min-h-10 w-full items-center gap-2 rounded-[14px] px-2 text-left text-sm text-slate-700 transition hover:bg-violet-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-200"
+                              onClick={() => {
+                                onContextRecipientChange(member.id);
+                                onContextVisibilityChange("private");
+                                setComposerOptionsOpen(false);
+                                setWhisperPickerOpen(false);
+                                commentInputRef.current?.focus({
+                                  preventScroll: true,
+                                });
+                              }}
+                            >
+                              <ScheduleConversationAvatar
+                                label={member.nickname.slice(0, 1)}
+                                avatarUrl={safeHttpUrl(member.avatar_url)}
+                              />
+                              <span className="min-w-0 flex-1 truncate font-semibold">
+                                {member.nickname}
+                              </span>
+                              {member.id === contextRecipientId ? (
+                                <span className="shrink-0 rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-700">
+                                  {t("inputWhisperCurrent")}
+                                </span>
+                              ) : null}
+                            </button>
+                          ))}
+                        </div>
+                        <button
+                          type="button"
+                          className="w-full border-t border-slate-100 px-3 py-2 text-sm font-semibold text-slate-500 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-slate-200"
+                          onClick={() => setWhisperPickerOpen(false)}
+                        >
+                          {t("commonCancel")}
+                        </button>
+                      </div>
+                    ) : null}
+                    {whisperModeLabel ? (
+                      <div className="mb-2 flex items-center gap-2 rounded-2xl bg-violet-50/90 px-3 py-2 text-xs font-semibold text-violet-700 ring-1 ring-violet-100">
+                        <span className="min-w-0 flex-1 truncate">
+                          {whisperModeLabel}
+                        </span>
+                        <button
+                          type="button"
+                          className="shrink-0 text-violet-500 underline-offset-2 hover:underline"
+                          onClick={() => {
+                            onContextVisibilityChange("family");
+                            onContextRecipientChange("");
+                            setWhisperPickerOpen(false);
+                          }}
+                        >
+                          {t("whisperExit")}
+                        </button>
+                      </div>
+                    ) : null}
+                    {recordingActive || composerNotice ? (
+                      <div
+                        className={`mb-2 rounded-2xl px-3 py-2 text-xs font-semibold ring-1 ${
+                          recordingActive
+                            ? "bg-brand-50 text-brand-700 ring-brand-100"
+                            : "bg-rose-50 text-rose-700 ring-rose-100"
+                        }`}
+                      >
+                        {recordingActive ? t("inputRecordingHoldHint") : composerNotice}
+                      </div>
+                    ) : null}
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        className={`${SCHEDULE_COMPOSER_ICON_BUTTON_CLASS} ${
+                          composerOptionsOpen || contextVisibility === "private"
+                            ? "ring-2 ring-brand-200"
+                            : ""
+                        }`}
+                        style={{ backgroundImage: "url(/ui-icons/plus.png)" }}
+                        aria-label={t("scheduleRecordOptions")}
+                        title={t("scheduleRecordOptions")}
+                        aria-haspopup="menu"
+                        aria-expanded={composerOptionsOpen}
+                        aria-controls={
+                          composerOptionsOpen ? composerOptionsId : undefined
                         }
+                        disabled={composerBusy || recordingActive}
+                        onClick={() => {
+                          setComposerNotice(null);
+                          setWhisperPickerOpen(false);
+                          setComposerOptionsOpen((open) => !open);
+                        }}
                       />
                       <button
                         type="button"
-                        className="h-10 shrink-0 rounded-2xl bg-brand-600 px-4 text-sm font-semibold text-white shadow-sm transition disabled:bg-brand-300"
+                        className={`${SCHEDULE_COMPOSER_ICON_BUTTON_CLASS} ${
+                          recordingActive ? "ring-2 ring-brand-300" : ""
+                        }`}
+                        style={{ backgroundImage: "url(/ui-icons/voice.png)" }}
+                        aria-label={
+                          recordingActive
+                            ? t("inputStopRecording")
+                            : t("inputRecordVoice")
+                        }
+                        title={
+                          recordingActive
+                            ? t("inputStopRecording")
+                            : t("inputRecordVoice")
+                        }
+                        disabled={composerBusy}
+                        onPointerDown={(event) => {
+                          void handleVoicePointerDown(event);
+                        }}
+                        onPointerUp={handleVoicePointerUp}
+                        onPointerCancel={handleVoicePointerCancel}
+                        onPointerLeave={() => {
+                          recordingPointerHeldRef.current = false;
+                          if (recordingActive) void stopScheduleRecording(false);
+                        }}
+                      />
+                      <textarea
+                        ref={commentInputRef}
+                        className="field max-h-32 min-h-[44px] flex-1 resize-none rounded-[18px] border-slate-200 bg-slate-50/80 py-3 shadow-none focus:border-brand-300 focus:bg-white"
+                        value={commentText}
+                        maxLength={300}
+                        rows={1}
+                        placeholder={commentPlaceholder}
+                        style={{ fontSize: 16 }}
+                        onChange={(event) =>
+                          onCommentTextChange(event.target.value)
+                        }
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" && !event.shiftKey) {
+                            event.preventDefault();
+                            if (!sendDisabled) {
+                              setComposerOptionsOpen(false);
+                              setWhisperPickerOpen(false);
+                              onAddComment();
+                            }
+                          }
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="btn-primary native-press h-10 shrink-0 rounded-[16px] px-4 shadow-[0_10px_18px_rgba(79,108,247,0.22)]"
                         disabled={sendDisabled}
-                        onClick={onAddComment}
+                        onClick={() => {
+                          setComposerOptionsOpen(false);
+                          setWhisperPickerOpen(false);
+                          onAddComment();
+                        }}
                       >
                         {commentBusy ? t("commonLoading") : t("commonSend")}
                       </button>
@@ -2098,7 +2734,7 @@ function ScheduleDetailPanel({
 
             </section>
 
-            {isRecurring ? (
+            {isRecurring && !conversationExpanded ? (
               <div className="shrink-0">
                 <ScopeSelect
                   label={t("scheduleDeleteScope")}
@@ -2109,13 +2745,11 @@ function ScheduleDetailPanel({
               </div>
             ) : null}
 
-            <div className="shrink-0 grid grid-cols-2 gap-2">
-              {canEdit ? (
+            {canEdit && !conversationExpanded ? (
+              <div className="grid shrink-0 grid-cols-3 gap-2">
                 <button type="button" className="btn-secondary" onClick={onEdit}>
                   {t("scheduleEdit")}
                 </button>
-              ) : null}
-              {canEdit ? (
                 <button
                   type="button"
                   className="btn-secondary"
@@ -2124,22 +2758,107 @@ function ScheduleDetailPanel({
                 >
                   {item.status === "done" ? t("scheduleRestore") : t("scheduleDone")}
                 </button>
-              ) : null}
-              {canEdit ? (
                 <button
                   type="button"
-                  className="btn-ghost col-span-2 text-rose-600 hover:bg-rose-50"
+                  className="btn-ghost text-rose-600 hover:bg-rose-50"
                   disabled={itemBusy}
                   onClick={onDelete}
                 >
                   {t("scheduleDelete")}
                 </button>
-              ) : null}
-            </div>
+              </div>
+            ) : null}
           </div>
         )}
       </div>
     </div>
+  );
+}
+
+function ScheduleConversationAvatar({
+  label,
+  avatarUrl,
+  tone = "member",
+}: {
+  label: string;
+  avatarUrl?: string | null;
+  tone?: "keeper" | "member" | "mine";
+}) {
+  const toneClass =
+    tone === "keeper"
+      ? "bg-emerald-100 text-emerald-700 ring-emerald-50"
+      : tone === "mine"
+        ? "bg-brand-600 text-white ring-white/30"
+        : "bg-white/90 text-slate-700 ring-white/80";
+
+  return (
+    <div
+      className={`flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full text-sm font-bold shadow-[0_8px_18px_rgba(71,64,49,0.08)] ring-1 ${toneClass}`}
+      aria-hidden="true"
+    >
+      {avatarUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={avatarUrl}
+          alt=""
+          className="h-full w-full object-cover"
+          draggable={false}
+        />
+      ) : (
+        label
+      )}
+    </div>
+  );
+}
+
+function ScheduleLocationBubble({
+  event,
+  isMine,
+  t,
+}: {
+  event: ScheduleContextEvent;
+  isMine: boolean;
+  t: ReturnType<typeof useLanguage>["t"];
+}) {
+  const mapUrl =
+    event.latitude != null && event.longitude != null
+      ? createGoogleMapUrl(event.latitude, event.longitude)
+      : null;
+  const detail = event.location_label || t("messageLocationShared");
+
+  return (
+    <a
+      href={mapUrl ?? "#"}
+      target={mapUrl ? "_blank" : undefined}
+      rel={mapUrl ? "noreferrer" : undefined}
+      onClick={(event) => {
+        if (!mapUrl) event.preventDefault();
+      }}
+      className="flex min-w-40 max-w-full flex-col gap-1 no-underline sm:max-w-56"
+    >
+      <span className="flex items-center gap-1.5 text-sm font-semibold">
+        <span
+          aria-hidden="true"
+          className="h-4 w-4 shrink-0 rounded-md bg-cover bg-center"
+          style={{ backgroundImage: "url(/ui-icons/location.png)" }}
+        />
+        <span>{t("messageLocationTitle")}</span>
+      </span>
+      <span
+        className={`text-xs leading-5 ${
+          isMine ? "text-brand-50" : "text-slate-700"
+        }`}
+      >
+        {detail}
+      </span>
+      <span
+        className={`text-xs font-medium leading-5 ${
+          isMine ? "text-brand-100" : "text-brand-500"
+        }`}
+      >
+        {t("messageOpenMap")}
+      </span>
+    </a>
   );
 }
 
@@ -2496,16 +3215,16 @@ function ScheduleRangeControl({
   const holiday = viewMode !== "month" ? getJapanHoliday(selectedDate) : null;
 
   return (
-    <section className="mb-3 rounded-2xl bg-white p-2.5 shadow-sm ring-1 ring-slate-100">
-      <div className="grid grid-cols-3 gap-1 rounded-xl bg-slate-100 p-1">
+    <section className="mb-3 rounded-[22px] bg-white/95 p-2.5 shadow-sm ring-1 ring-slate-100">
+      <div className="grid grid-cols-3 gap-1 rounded-2xl bg-slate-100/80 p-1">
         {VIEW_MODES.map((mode) => (
           <button
             key={mode}
             type="button"
-            className={`h-9 rounded-lg text-sm font-semibold transition ${
+            className={`h-9 rounded-xl text-sm font-semibold transition ${
               viewMode === mode
-                ? "bg-white text-brand-700 shadow-sm"
-                : "text-slate-600 hover:bg-white/60"
+                ? "bg-white text-brand-700 shadow-sm ring-1 ring-white/80"
+                : "text-slate-600 hover:bg-white/70"
             }`}
             onClick={() => onViewModeChange(mode)}
           >
@@ -2516,7 +3235,7 @@ function ScheduleRangeControl({
       <div className="mt-2 flex items-center gap-2">
         <button
           type="button"
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-50 text-lg font-semibold text-slate-600 ring-1 ring-slate-200"
+          className="native-press flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-slate-50 text-lg font-semibold text-slate-600 ring-1 ring-slate-200 transition hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
           aria-label={t("schedulePrevious")}
           onClick={onPrevious}
         >
@@ -2524,22 +3243,24 @@ function ScheduleRangeControl({
         </button>
         <button
           type="button"
-          className="min-w-0 flex-1 rounded-xl bg-slate-50 px-3 py-2 text-center ring-1 ring-slate-200"
+          className="native-press flex min-h-10 min-w-0 flex-1 items-center justify-between gap-2 rounded-2xl bg-gradient-to-r from-slate-50 to-white px-3 py-2 text-left ring-1 ring-slate-200 transition hover:from-white hover:to-brand-50/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
           onClick={onToday}
         >
-          <span className="block truncate text-sm font-semibold text-slate-900">
+          <span className="min-w-0 flex-1 truncate text-sm font-bold text-slate-900">
             {rangeTitle(viewMode, selectedDate, language)}
           </span>
-          {includesToday ? (
-            <span className="mt-0.5 inline-flex rounded-full bg-brand-50 px-2 py-0.5 text-[11px] font-semibold text-brand-700">
-              {t("scheduleTodayButton")}
-            </span>
-          ) : null}
-          {holiday ? <HolidayChip holiday={holiday} /> : null}
+          <span className="flex shrink-0 items-center gap-1.5">
+            {includesToday ? (
+              <span className="inline-flex min-h-6 items-center rounded-full bg-brand-50 px-2.5 py-0.5 text-[11px] font-bold text-brand-700 ring-1 ring-brand-100">
+                {t("scheduleTodayButton")}
+              </span>
+            ) : null}
+            {holiday ? <HolidayChip holiday={holiday} compact /> : null}
+          </span>
         </button>
         <button
           type="button"
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-50 text-lg font-semibold text-slate-600 ring-1 ring-slate-200"
+          className="native-press flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-slate-50 text-lg font-semibold text-slate-600 ring-1 ring-slate-200 transition hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
           aria-label={t("scheduleNext")}
           onClick={onNext}
         >
@@ -2551,6 +3272,7 @@ function ScheduleRangeControl({
 }
 
 function ScheduleFilters({
+  docked = false,
   searchText,
   assigneeFilter,
   typeFilter,
@@ -2566,6 +3288,7 @@ function ScheduleFilters({
   onToggleOpen,
   onClear,
 }: {
+  docked?: boolean;
   searchText: string;
   assigneeFilter: ScheduleAssigneeFilter;
   typeFilter: ScheduleTypeFilter;
@@ -2581,13 +3304,101 @@ function ScheduleFilters({
   onToggleOpen: () => void;
   onClear: () => void;
 }) {
+  const filterFields = (
+    <div
+      className={`grid grid-cols-1 gap-2 sm:grid-cols-3 ${
+        docked ? "mb-2" : "mt-2"
+      }`}
+    >
+      <label>
+        <span className="sr-only">{t("scheduleAssignee")}</span>
+        <select
+          className="field h-10 rounded-xl"
+          value={assigneeFilter}
+          onChange={(event) =>
+            onAssigneeFilterChange(
+              event.target.value as ScheduleAssigneeFilter,
+            )
+          }
+        >
+          <option value="all">{t("scheduleAllAssignees")}</option>
+          {members.map((member) => (
+            <option key={member.id} value={member.id}>
+              {member.nickname}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        <span className="sr-only">{t("scheduleType")}</span>
+        <select
+          className="field h-10 rounded-xl"
+          value={typeFilter}
+          onChange={(event) =>
+            onTypeFilterChange(event.target.value as ScheduleTypeFilter)
+          }
+        >
+          {TYPE_FILTERS.map((value) => (
+            <option key={value} value={value}>
+              {typeFilterLabel(value, t)}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        <span className="sr-only">{t("scheduleVisibility")}</span>
+        <select
+          className="field h-10 rounded-xl"
+          value={visibilityFilter}
+          onChange={(event) =>
+            onVisibilityFilterChange(
+              event.target.value as ScheduleVisibilityFilter,
+            )
+          }
+        >
+          {VISIBILITY_FILTERS.map((value) => (
+            <option key={value} value={value}>
+              {visibilityFilterLabel(value, t)}
+            </option>
+          ))}
+        </select>
+      </label>
+    </div>
+  );
+  const activeFilterNotice = hasActiveFilters ? (
+    <div
+      className={`flex items-center justify-between gap-2 rounded-xl bg-slate-50 px-3 py-2 ${
+        docked ? "mb-2" : "mt-2"
+      }`}
+    >
+      <span className="truncate text-xs font-medium text-slate-500">
+        {t("scheduleFiltersActive")}
+      </span>
+      <button
+        type="button"
+        className="shrink-0 text-sm font-semibold text-brand-600"
+        onClick={onClear}
+      >
+        {t("scheduleClearFilters")}
+      </button>
+    </div>
+  ) : null;
+
   return (
-    <section className="mb-3 rounded-2xl bg-white p-2.5 shadow-sm ring-1 ring-slate-100">
+    <section
+      className={
+        docked
+          ? "schedule-filter-panel"
+          : "mb-3 rounded-2xl bg-white p-2.5 shadow-sm ring-1 ring-slate-100"
+      }
+    >
+      {docked ? activeFilterNotice : null}
+      {docked && open ? filterFields : null}
       <div className="flex items-center gap-2">
         <label className="min-w-0 flex-1">
           <span className="sr-only">{t("scheduleSearch")}</span>
           <input
-            className="field h-10 rounded-xl"
+            className={`field rounded-xl ${docked ? "h-11" : "h-10"}`}
             value={searchText}
             maxLength={40}
             placeholder={t("scheduleSearchPlaceholder")}
@@ -2596,7 +3407,7 @@ function ScheduleFilters({
         </label>
         <button
           type="button"
-          className={`h-10 shrink-0 rounded-xl px-3 text-sm font-semibold transition ${
+          className={`${docked ? "h-11 rounded-[16px]" : "h-10 rounded-xl"} shrink-0 px-3 text-sm font-semibold transition ${
             open || hasActiveFilters
               ? "bg-brand-50 text-brand-700 ring-1 ring-brand-100"
               : "bg-slate-50 text-slate-700 ring-1 ring-slate-200"
@@ -2607,77 +3418,8 @@ function ScheduleFilters({
           {hasActiveFilters ? t("scheduleFiltersActive") : t("scheduleFilters")}
         </button>
       </div>
-      {open ? (
-        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
-          <label>
-            <span className="sr-only">{t("scheduleAssignee")}</span>
-            <select
-              className="field h-10 rounded-xl"
-              value={assigneeFilter}
-              onChange={(event) =>
-                onAssigneeFilterChange(
-                  event.target.value as ScheduleAssigneeFilter,
-                )
-              }
-            >
-              <option value="all">{t("scheduleAllAssignees")}</option>
-              {members.map((member) => (
-                <option key={member.id} value={member.id}>
-                  {member.nickname}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span className="sr-only">{t("scheduleType")}</span>
-            <select
-              className="field h-10 rounded-xl"
-              value={typeFilter}
-              onChange={(event) =>
-                onTypeFilterChange(event.target.value as ScheduleTypeFilter)
-              }
-            >
-              {TYPE_FILTERS.map((value) => (
-                <option key={value} value={value}>
-                  {typeFilterLabel(value, t)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span className="sr-only">{t("scheduleVisibility")}</span>
-            <select
-              className="field h-10 rounded-xl"
-              value={visibilityFilter}
-              onChange={(event) =>
-                onVisibilityFilterChange(
-                  event.target.value as ScheduleVisibilityFilter,
-                )
-              }
-            >
-              {VISIBILITY_FILTERS.map((value) => (
-                <option key={value} value={value}>
-                  {visibilityFilterLabel(value, t)}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-      ) : null}
-      {hasActiveFilters ? (
-        <div className="mt-2 flex items-center justify-between gap-2 rounded-xl bg-slate-50 px-3 py-2">
-          <span className="truncate text-xs font-medium text-slate-500">
-            {t("scheduleFiltersActive")}
-          </span>
-          <button
-            type="button"
-            className="shrink-0 text-sm font-semibold text-brand-600"
-            onClick={onClear}
-          >
-            {t("scheduleClearFilters")}
-          </button>
-        </div>
-      ) : null}
+      {!docked && open ? filterFields : null}
+      {!docked ? activeFilterNotice : null}
     </section>
   );
 }
@@ -3202,6 +3944,26 @@ function LockBadge() {
   );
 }
 
+function getFocusableElements(root: HTMLElement): HTMLElement[] {
+  const selector = [
+    "a[href]",
+    "button:not([disabled])",
+    "textarea:not([disabled])",
+    "input:not([disabled])",
+    "select:not([disabled])",
+    '[tabindex]:not([tabindex="-1"])',
+  ].join(",");
+
+  return Array.from(root.querySelectorAll<HTMLElement>(selector)).filter(
+    (element) =>
+      !element.hasAttribute("hidden") &&
+      element.getAttribute("aria-hidden") !== "true" &&
+      (element.offsetWidth > 0 ||
+        element.offsetHeight > 0 ||
+        element === document.activeElement),
+  );
+}
+
 function defaultFormState(session: LocalSession | null): ScheduleFormState {
   const now = new Date();
   now.setMinutes(Math.ceil(now.getMinutes() / 15) * 15, 0, 0);
@@ -3215,7 +3977,7 @@ function defaultFormState(session: LocalSession | null): ScheduleFormState {
     endDate: "",
     endTime: "",
     assigneeMemberId: session?.member_id ?? "",
-    reminderOffsets: [],
+    reminderOffsets: [0],
     recurrenceRule: "none",
   };
 }
@@ -3315,6 +4077,10 @@ function scheduleTimelineFallback(
   t: ReturnType<typeof useLanguage>["t"],
 ): string {
   switch (event.event_type) {
+    case "audio":
+      return t("chatAudioMessage");
+    case "location":
+      return t("messageLocationShared");
     case "created":
       return t("scheduleTimelineCreated");
     case "assigned":

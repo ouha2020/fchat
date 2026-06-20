@@ -1,5 +1,5 @@
-const PRECACHE = "family-chat-precache-v10";
-const RUNTIME = "family-chat-runtime-v10";
+const PRECACHE = "family-chat-precache-v12";
+const RUNTIME = "family-chat-runtime-v12";
 
 const PUSH_RECEIVED = "family-chat:push-received";
 const SCHEDULE_REMINDER_RECEIVED = "family-chat:schedule-reminder";
@@ -13,11 +13,8 @@ const PRECACHE_URLS = [
   "/ui-icons/location.png",
   "/ui-icons/me.png",
   "/ui-icons/members.png",
-  "/ui-icons/notify-off.png",
-  "/ui-icons/notify-on.png",
   "/ui-icons/plus.png",
   "/ui-icons/schedule.png",
-  "/ui-icons/settings.png",
   "/ui-icons/voice.png",
 ];
 
@@ -193,12 +190,23 @@ function readPushData(event) {
 }
 
 function isStaticAsset(url) {
+  if (url.pathname.startsWith("/_next/static/")) {
+    return !isLocalDevelopmentUrl(url) && !url.searchParams.has("v");
+  }
+
   return (
-    url.pathname.startsWith("/_next/static/") ||
     url.pathname.startsWith("/ui-icons/") ||
     url.pathname === "/icon.png" ||
     url.pathname === "/apple-icon.png" ||
     url.pathname === "/manifest.webmanifest"
+  );
+}
+
+function isLocalDevelopmentUrl(url) {
+  return (
+    url.hostname === "localhost" ||
+    url.hostname === "127.0.0.1" ||
+    url.hostname === "::1"
   );
 }
 

@@ -155,7 +155,7 @@ export default function DialogProvider({ children }: { children: ReactNode }) {
     <DialogContext.Provider value={value}>
       {children}
       {modal.type !== "none" && (
-        <Backdrop onClose={close}>
+        <Backdrop label={getModalLabel(modal)} onClose={close}>
           {modal.type === "confirm" && (
             <ConfirmDialogBody
               opts={modal.opts}
@@ -221,20 +221,62 @@ export function useDialog(): DialogContextValue {
   return ctx;
 }
 
+function getModalLabel(modal: ModalState): string {
+  switch (modal.type) {
+    case "confirm":
+      return modal.opts.title;
+    case "alert":
+      return modal.title;
+    case "prompt":
+      return modal.opts.title;
+    case "adminPassword":
+      return "修改管理密码";
+    case "resetAdminPassword":
+      return "重置管理密码";
+    case "accountPassword":
+      return "修改登录密码";
+    case "none":
+    default:
+      return "对话框";
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /*  Backdrop                                                           */
 /* ------------------------------------------------------------------ */
 
 function Backdrop({
   children,
+  label,
   onClose,
 }: {
   children: ReactNode;
+  label: string;
   onClose: () => void;
 }) {
+  const panelRef = useRef<HTMLDivElement>(null);
   const [viewportStyle, setViewportStyle] = useState<CSSProperties>({
     height: "100dvh",
   });
+
+  useEffect(() => {
+    const restoreTarget =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    const frame = window.requestAnimationFrame(() => {
+      if (
+        panelRef.current &&
+        !panelRef.current.contains(document.activeElement)
+      ) {
+        panelRef.current.focus({ preventScroll: true });
+      }
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      restoreTarget?.focus({ preventScroll: true });
+    };
+  }, []);
 
   useEffect(() => {
     const visualViewport = window.visualViewport;
@@ -269,8 +311,13 @@ function Backdrop({
     >
       {/* Stop propagation so clicking inside the dialog doesn't close it */}
       <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={label}
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-md animate-dialog-in"
+        className="w-full max-w-md animate-dialog-in focus:outline-none"
       >
         {children}
       </div>
@@ -290,12 +337,12 @@ function ConfirmDialogBody({
   onResolve: (v: boolean) => void;
 }) {
   return (
-    <div className="mx-4 rounded-2xl bg-white p-6 shadow-2xl ring-1 ring-slate-200 sm:mx-0">
+    <div className="dialog-panel">
       <h2 className="text-lg font-bold text-slate-900">{opts.title}</h2>
       <p className="mt-2 text-sm leading-relaxed text-slate-600 whitespace-pre-line">
         {opts.message}
       </p>
-      <div className="mt-5 flex gap-3">
+      <div className="dialog-actions mt-5">
         <button
           type="button"
           className="btn-secondary flex-1"
@@ -329,7 +376,7 @@ function AlertDialogBody({
   onDone: () => void;
 }) {
   return (
-    <div className="mx-4 rounded-2xl bg-white p-6 shadow-2xl ring-1 ring-slate-200 sm:mx-0">
+    <div className="dialog-panel">
       <h2 className="text-lg font-bold text-slate-900">{title}</h2>
       <p className="mt-2 text-sm leading-relaxed text-slate-600 whitespace-pre-line">
         {message}
@@ -378,7 +425,7 @@ function PromptDialogBody({
   return (
     <form
       onSubmit={submit}
-      className="mx-4 rounded-2xl bg-white p-6 shadow-2xl ring-1 ring-slate-200 sm:mx-0"
+      className="dialog-panel"
     >
       <h2 className="text-lg font-bold text-slate-900">{opts.title}</h2>
       {opts.message && (
@@ -401,7 +448,7 @@ function PromptDialogBody({
           {error}
         </p>
       )}
-      <div className="mt-4 flex gap-3">
+      <div className="dialog-actions mt-4">
         <button
           type="button"
           className="btn-secondary flex-1"
@@ -465,7 +512,7 @@ function AdminPasswordDialogBody({
   return (
     <form
       onSubmit={handleSubmit}
-      className="mx-4 rounded-2xl bg-white p-6 shadow-2xl ring-1 ring-slate-200 sm:mx-0"
+      className="dialog-panel"
     >
       <h2 className="text-lg font-bold text-slate-900">修改管理密码</h2>
 
@@ -558,7 +605,7 @@ function AdminPasswordDialogBody({
         </p>
       )}
 
-      <div className="mt-5 flex gap-3">
+      <div className="dialog-actions mt-5">
         <button
           type="button"
           className="btn-secondary flex-1"
@@ -613,7 +660,7 @@ function ResetAdminPasswordDialogBody({
   return (
     <form
       onSubmit={handleSubmit}
-      className="mx-4 rounded-2xl bg-white p-6 shadow-2xl ring-1 ring-slate-200 sm:mx-0"
+      className="dialog-panel"
     >
       <h2 className="text-lg font-bold text-slate-900">重置管理密码</h2>
       <p className="mt-1 text-sm leading-relaxed text-slate-500">
@@ -673,7 +720,7 @@ function ResetAdminPasswordDialogBody({
         ) : null}
       </div>
 
-      <div className="mt-5 flex gap-3">
+      <div className="dialog-actions mt-5">
         <button
           type="button"
           className="btn-secondary flex-1"
@@ -724,7 +771,7 @@ function AccountPasswordDialogBody({
   return (
     <form
       onSubmit={handleSubmit}
-      className="mx-4 rounded-2xl bg-white p-6 shadow-2xl ring-1 ring-slate-200 sm:mx-0"
+      className="dialog-panel"
     >
       <h2 className="text-lg font-bold text-slate-900">修改登录密码</h2>
       <p className="mt-1 text-sm leading-relaxed text-slate-500">
@@ -784,7 +831,7 @@ function AccountPasswordDialogBody({
         ) : null}
       </div>
 
-      <div className="mt-5 flex gap-3">
+      <div className="dialog-actions mt-5">
         <button
           type="button"
           className="btn-secondary flex-1"

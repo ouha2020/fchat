@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { useLanguage } from "@/components/LanguageProvider";
 import { formatDuration } from "@/lib/recordingService";
 
 interface Props {
@@ -22,6 +23,7 @@ export default function AudioBubble({
   isMine,
   highlighted,
 }: Props) {
+  const { t } = useLanguage();
   const [playing, setPlaying] = useState(false);
   const [played, setPlayed] = useState(isMine);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -84,20 +86,36 @@ export default function AudioBubble({
 
   // Pseudo-random but stable bar heights derived from the URL hash.
   const heights = useMemo(() => makeWaveform(url, BAR_COUNT), [url]);
+  const durationLabel = formatDuration(durationMs ?? 0);
+  const actionLabel = playing ? t("audioPause") : t("audioPlay");
+  const audioLabel = [
+    actionLabel,
+    t("chatAudioMessage"),
+    durationLabel,
+    !isMine && !played ? t("audioUnplayed") : null,
+  ]
+    .filter(Boolean)
+    .join(" / ");
 
   return (
     <button
       type="button"
       onClick={toggle}
+      aria-label={audioLabel}
+      aria-pressed={playing}
+      title={audioLabel}
       style={{ width: `${width}px`, maxWidth: "100%" }}
-      className={`relative flex items-center gap-2 rounded-full px-3 py-2 text-sm shadow-sm transition active:scale-[0.98] ${baseColors} ${
+      className={`relative flex min-w-0 items-center gap-2 rounded-full px-3 py-2 text-sm shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 focus-visible:ring-offset-2 active:scale-[0.98] ${baseColors} ${
         isMine ? "flex-row-reverse" : "flex-row"
       } ${highlighted ? "important-message-highlight" : ""}`}
     >
       {!isMine && !played ? (
-        <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-rose-500 ring-2 ring-white" />
+        <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-rose-500 ring-2 ring-white">
+          <span className="sr-only">{t("audioUnplayed")}</span>
+        </span>
       ) : null}
       <span
+        aria-hidden="true"
         className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${buttonRing}`}
       >
         {playing ? (
@@ -111,7 +129,10 @@ export default function AudioBubble({
           </svg>
         )}
       </span>
-      <span className="flex min-w-0 flex-1 items-center justify-center gap-[3px] overflow-hidden">
+      <span
+        aria-hidden="true"
+        className="flex min-w-0 flex-1 items-center justify-center gap-[3px] overflow-hidden"
+      >
         {heights.map((h, i) => (
           <span
             key={i}
@@ -130,7 +151,7 @@ export default function AudioBubble({
         ))}
       </span>
       <span className={`min-w-[2.25rem] shrink-0 text-right text-xs tabular-nums ${subColors}`}>
-        {formatDuration(durationMs ?? 0)}
+        {durationLabel}
       </span>
     </button>
   );

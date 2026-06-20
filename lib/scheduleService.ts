@@ -457,8 +457,14 @@ function parseCreateInput(input: CreateScheduleItemInput): CreateScheduleItemInp
   if (input.ends_at && Date.parse(input.ends_at) <= Date.parse(input.starts_at)) {
     throw new Error("invalid_schedule_time");
   }
+  if (input.remind_at && Number.isNaN(Date.parse(input.remind_at))) {
+    throw new Error("invalid_schedule_time");
+  }
   const startsAt = new Date(input.starts_at).toISOString();
-  const reminderOffsets = normalizeReminderOffsets(input.reminder_offsets);
+  const reminderOffsets =
+    input.reminder_offsets === undefined
+      ? reminderOffsetsFromRemindAt(startsAt, input.remind_at)
+      : normalizeReminderOffsets(input.reminder_offsets);
 
   return {
     title,
@@ -518,6 +524,21 @@ function earliestReminderIso(
   const startMs = new Date(startsAt).getTime();
   const maxOffset = Math.max(...offsets);
   return new Date(startMs - maxOffset * 60_000).toISOString();
+}
+
+function reminderOffsetsFromRemindAt(
+  startsAt: string,
+  remindAt?: string | null,
+): ScheduleReminderOffset[] {
+  if (!remindAt) return [];
+
+  const diffMinutes = Math.round(
+    (new Date(startsAt).getTime() - new Date(remindAt).getTime()) / 60_000,
+  );
+
+  return REMINDER_OFFSETS.has(diffMinutes)
+    ? ([diffMinutes] as ScheduleReminderOffset[])
+    : [];
 }
 
 function normalizeCollaboration(value: unknown): ScheduleCollaboration {

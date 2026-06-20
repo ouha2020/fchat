@@ -19,5 +19,8 @@ export async function listMembers(
     p_include_removed: options.includeRemoved ?? false,
   });
   if (error) throw error;
-  return (data ?? []) as FamilyMember[];
+  return ((data ?? []) as FamilyMember[]).map((member) => ({
+    ...member,
+    avatar_url: member.avatar_url ?? null,
+  }));
 }

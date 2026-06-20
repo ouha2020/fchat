@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
 import { useDialog } from "@/components/Dialog";
@@ -52,6 +52,9 @@ type RecordingState =
 const MAX_RECORD_MS = 60_000;
 const MIN_RECORD_MS = 600;
 const CONSENT_KEY = "family-chat:voice-recording-consent:v1";
+const POPOVER_VIEWPORT_MARGIN = 8;
+const POPOVER_MAX_HEIGHT = 320;
+const POPOVER_MIN_HEIGHT = 72;
 const iconButtonClass =
   "native-icon-button native-press inline-flex h-10 w-10 shrink-0 overflow-hidden rounded-[14px] bg-white bg-cover bg-center bg-no-repeat ring-1 ring-white/80 hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200";
 const inputShellClass =
@@ -80,7 +83,9 @@ export default function ChatInput({
   });
   const [actionsOpen, setActionsOpen] = useState(false);
   const [whisperPickerOpen, setWhisperPickerOpen] = useState(false);
+  const [popoverMaxHeight, setPopoverMaxHeight] = useState(POPOVER_MAX_HEIGHT);
   const [privacyNotice, setPrivacyNotice] = useState<string | null>(null);
+  const inputShellRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
   const moreButtonRef = useRef<HTMLButtonElement>(null);
@@ -136,12 +141,14 @@ export default function ChatInput({
     if (recordingState.status !== "recording") return;
     if (recordingState.stopping) return;
     if (recordingState.elapsedMs < MAX_RECORD_MS) return;
-    void stopRecording("max");
+    void stopRecording();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recordingState]);
 
   useEffect(() => {
     if (recordingState.status !== "recording") return;
+    const visualViewport = window.visualViewport;
+    let viewportFrame = 0;
 
     function discardForPrivacy() {
       const current = recordingStateRef.current;
@@ -156,15 +163,32 @@ export default function ChatInput({
       if (document.visibilityState !== "visible") discardForPrivacy();
     }
 
+    function queueViewportDiscard() {
+      if (viewportFrame) return;
+      viewportFrame = window.requestAnimationFrame(() => {
+        viewportFrame = 0;
+        discardForPrivacy();
+      });
+    }
+
     document.addEventListener("visibilitychange", handleVisibilityChange);
     window.addEventListener("blur", discardForPrivacy);
     window.addEventListener("pagehide", discardForPrivacy);
     window.addEventListener("beforeunload", discardForPrivacy);
+    visualViewport?.addEventListener("resize", queueViewportDiscard);
+    visualViewport?.addEventListener("scroll", queueViewportDiscard);
+    window.addEventListener("resize", queueViewportDiscard);
+    window.addEventListener("orientationchange", queueViewportDiscard);
     return () => {
+      if (viewportFrame) window.cancelAnimationFrame(viewportFrame);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("blur", discardForPrivacy);
       window.removeEventListener("pagehide", discardForPrivacy);
       window.removeEventListener("beforeunload", discardForPrivacy);
+      visualViewport?.removeEventListener("resize", queueViewportDiscard);
+      visualViewport?.removeEventListener("scroll", queueViewportDiscard);
+      window.removeEventListener("resize", queueViewportDiscard);
+      window.removeEventListener("orientationchange", queueViewportDiscard);
     };
   }, [recordingState.status, t]);
 
@@ -186,6 +210,7 @@ export default function ChatInput({
       if (event.key === "Escape") {
         setActionsOpen(false);
         setWhisperPickerOpen(false);
+        moreButtonRef.current?.focus({ preventScroll: true });
       }
     }
 
@@ -195,6 +220,62 @@ export default function ChatInput({
       document.removeEventListener("pointerdown", handlePointerDown);
       document.removeEventListener("keydown", handleEscape);
     };
+  }, [actionsOpen, whisperPickerOpen]);
+
+  useLayoutEffect(() => {
+    if (!actionsOpen && !whisperPickerOpen) return;
+    const visualViewport = window.visualViewport;
+    let frame = 0;
+
+    const updateMaxHeight = () => {
+      frame = 0;
+      const shellRect = inputShellRef.current?.getBoundingClientRect();
+      const viewportTop = visualViewport?.offsetTop ?? 0;
+      const viewportHeight = visualViewport?.height ?? window.innerHeight;
+      const fallbackTop = viewportTop + viewportHeight;
+      const shellTop = shellRect?.top ?? fallbackTop;
+      const availableHeight =
+        shellTop - viewportTop - POPOVER_VIEWPORT_MARGIN * 2;
+      const nextHeight = Math.floor(
+        Math.min(
+          POPOVER_MAX_HEIGHT,
+          Math.max(POPOVER_MIN_HEIGHT, availableHeight),
+        ),
+      );
+      setPopoverMaxHeight((current) =>
+        current === nextHeight ? current : nextHeight,
+      );
+    };
+
+    const queueUpdate = () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(updateMaxHeight);
+    };
+
+    queueUpdate();
+    visualViewport?.addEventListener("resize", queueUpdate);
+    visualViewport?.addEventListener("scroll", queueUpdate);
+    window.addEventListener("resize", queueUpdate);
+    window.addEventListener("orientationchange", queueUpdate);
+
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      visualViewport?.removeEventListener("resize", queueUpdate);
+      visualViewport?.removeEventListener("scroll", queueUpdate);
+      window.removeEventListener("resize", queueUpdate);
+      window.removeEventListener("orientationchange", queueUpdate);
+    };
+  }, [actionsOpen, whisperPickerOpen]);
+
+  useEffect(() => {
+    if (!actionsOpen && !whisperPickerOpen) return;
+    const frame = window.requestAnimationFrame(() => {
+      const target = whisperPickerOpen
+        ? whisperPickerRef.current
+        : moreMenuRef.current;
+      target?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, [actionsOpen, whisperPickerOpen]);
 
   useEffect(() => {
@@ -240,7 +321,7 @@ export default function ChatInput({
       const current = recordingStateRef.current;
       if (current.status !== "recording" || current.stopping) return;
       if (isInZone(e.clientX, e.clientY)) {
-        void stopRecording("manual");
+        void stopRecording();
       } else {
         handleCancelRecording();
       }
@@ -320,7 +401,7 @@ export default function ChatInput({
     }
   }
 
-  async function stopRecording(reason: "manual" | "max") {
+  async function stopRecording() {
     const current = recordingStateRef.current;
     if (current.status !== "recording" || current.stopping) return;
 
@@ -547,14 +628,19 @@ export default function ChatInput({
 
   return (
     <div
+      ref={inputShellRef}
       className={inputShellClass}
       style={{ paddingBottom: "max(env(safe-area-inset-bottom), 6px)" }}
     >
       {actionsOpen ? (
         <div
+          id="chat-input-actions-menu"
           ref={moreMenuRef}
-          className="absolute bottom-full left-3 mb-2 flex items-center gap-2 rounded-[22px] border border-white/80 bg-white/95 p-2 shadow-[0_18px_42px_rgba(70,62,48,0.14)] backdrop-blur-xl sm:left-4"
+          tabIndex={-1}
+          className="chat-input-actions-popover native-scroll"
+          style={{ maxHeight: popoverMaxHeight }}
           role="menu"
+          aria-label={t("inputMoreActions")}
         >
           <button
             type="button"
@@ -584,6 +670,11 @@ export default function ChatInput({
             aria-label={t("inputWhisper")}
             title={canPickWhisper ? t("inputWhisper") : t("inputWhisperNoMembers")}
             role="menuitem"
+            aria-haspopup="dialog"
+            aria-expanded={whisperPickerOpen}
+            aria-controls={
+              whisperPickerOpen ? "chat-input-whisper-picker" : undefined
+            }
             disabled={disabled || sending || !canPickWhisper}
             onClick={handleOpenWhisperPicker}
           />
@@ -608,8 +699,11 @@ export default function ChatInput({
       ) : null}
       {whisperPickerOpen ? (
         <div
+          id="chat-input-whisper-picker"
           ref={whisperPickerRef}
-          className="absolute bottom-full left-3 right-3 mb-2 max-h-72 overflow-hidden rounded-[22px] border border-white/80 bg-white/95 shadow-[0_18px_46px_rgba(88,70,118,0.16)] backdrop-blur-xl sm:left-4 sm:right-4"
+          tabIndex={-1}
+          className="chat-input-whisper-popover"
+          style={{ maxHeight: popoverMaxHeight }}
           role="dialog"
           aria-label={t("inputWhisperPick")}
         >
@@ -621,7 +715,7 @@ export default function ChatInput({
             />
             <span className="truncate">{t("inputWhisperPick")}</span>
           </div>
-          <div className="native-scroll max-h-52 overflow-y-auto py-1">
+          <div className="native-scroll chat-input-whisper-list">
             {whisperCandidates.map((member) => (
               <button
                 key={member.id}
@@ -682,6 +776,7 @@ export default function ChatInput({
           disabled={disabled || sending}
           aria-haspopup="menu"
           aria-expanded={actionsOpen}
+          aria-controls={actionsOpen ? "chat-input-actions-menu" : undefined}
           onClick={() => {
             setWhisperPickerOpen(false);
             setActionsOpen((open) => !open);

@@ -62,8 +62,8 @@ export default function KeeperRequestSheet({
   }
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-end justify-center bg-slate-950/35 px-3 pb-3 pt-10 backdrop-blur-sm sm:items-center">
-      <div className="w-full max-w-xl overflow-hidden rounded-[28px] bg-white shadow-2xl shadow-slate-900/20">
+    <div className="sheet-backdrop">
+      <div className="sheet-panel">
         <div className="flex items-center justify-between gap-3 border-b border-emerald-50 px-4 py-3">
           <div className="min-w-0">
             <p className="text-xs font-semibold text-emerald-600">
@@ -83,7 +83,7 @@ export default function KeeperRequestSheet({
           </button>
         </div>
 
-        <div className="max-h-[min(78dvh,680px)] space-y-4 overflow-y-auto px-4 py-4">
+        <div className="sheet-body-safe space-y-4 px-4 py-4">
           <label className="block space-y-1.5">
             <span className="text-sm font-semibold text-slate-700">
               {t("keeperRequestContent")}
@@ -205,7 +205,7 @@ export default function KeeperRequestSheet({
           </label>
         </div>
 
-        <div className="grid grid-cols-2 gap-3 border-t border-slate-100 px-4 py-3">
+        <div className="sheet-actions">
           <button
             type="button"
             className="btn-secondary h-12"

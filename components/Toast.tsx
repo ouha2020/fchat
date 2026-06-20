@@ -10,6 +10,8 @@ import {
   type ReactNode,
 } from "react";
 
+import { cx } from "./ui/classNames";
+
 type ToastType = "success" | "error" | "info";
 
 interface ToastItem {
@@ -72,7 +74,7 @@ export default function ToastProvider({ children }: { children: ReactNode }) {
       <div
         role="status"
         aria-live="polite"
-        className="pointer-events-none fixed inset-x-0 bottom-20 z-[9999] flex flex-col items-center gap-2 px-4 sm:bottom-6 sm:items-end"
+        className="toast-viewport"
       >
         {toasts.map((item) => (
           <ToastBar key={item.id} item={item} onDismiss={() => remove(item.id)} />
@@ -93,19 +95,14 @@ function ToastBar({
     <button
       type="button"
       onClick={onDismiss}
-      className="pointer-events-auto flex w-full max-w-sm items-center gap-2.5 rounded-2xl px-4 py-3 text-sm font-medium shadow-lg animate-toast-in sm:w-auto"
-      style={
-        item.type === "success"
-          ? { background: "#ecfdf5", color: "#065f46" }
-          : item.type === "error"
-            ? { background: "#fff1f2", color: "#9f1239" }
-            : { background: "#eef2ff", color: "#3730a3" }
-      }
+      className={cx("toast-bar", `toast-bar-${item.type}`)}
+      aria-label={`关闭提示：${item.message}`}
+      title="关闭提示"
     >
-      <span className="text-base leading-none">
+      <span aria-hidden="true" className="text-base leading-none">
         {item.type === "success" ? "✓" : item.type === "error" ? "✕" : "ℹ"}
       </span>
-      <span className="flex-1 text-left leading-snug">{item.message}</span>
+      <span className="toast-message">{item.message}</span>
     </button>
   );
 }

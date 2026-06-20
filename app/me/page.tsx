@@ -5,12 +5,14 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
+import AppLoading from "@/components/AppLoading";
 import { useLanguage } from "@/components/LanguageProvider";
 import { useToast } from "@/components/Toast";
 import { clearSession, loadSession, saveSession, type LocalSession } from "@/lib/authLocal";
 import { updateMemberAvatar, uploadAvatar } from "@/lib/avatarService";
 import { humanizeError } from "@/lib/errors";
 import { validateMember } from "@/lib/familyService";
+import { notifyMemberProfileChanged } from "@/lib/memberProfileEvents";
 import { getPersonalDashboard } from "@/lib/personalDashboardService";
 import { isSupabaseConfigured } from "@/lib/supabaseClient";
 import type {
@@ -143,6 +145,11 @@ export default function MePage() {
             }
           : current,
       );
+      notifyMemberProfileChanged({
+        familyId: session.family_id,
+        memberId: session.member_id,
+        avatarUrl: savedUrl,
+      });
       toast.success(t("meAvatarUpdated"));
     } catch (err) {
       toast.error(humanizeError(err, language) || t("meAvatarUploadFailed"));
@@ -169,6 +176,11 @@ export default function MePage() {
             }
           : current,
       );
+      notifyMemberProfileChanged({
+        familyId: session.family_id,
+        memberId: session.member_id,
+        avatarUrl: null,
+      });
       toast.success(t("meAvatarRemoved"));
     } catch (err) {
       toast.error(humanizeError(err, language) || t("meAvatarUploadFailed"));
@@ -178,11 +190,7 @@ export default function MePage() {
   }
 
   if (loading) {
-    return (
-      <div className="app-page">
-        <div className="status-note">{t("commonLoading")}</div>
-      </div>
-    );
+    return <AppLoading tone="profile" message={t("commonLoading")} />;
   }
 
   if (loadError || !session || !dashboard) {
@@ -206,14 +214,14 @@ export default function MePage() {
   return (
     <div className="app-page">
       <header className="app-header">
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <Link href="/chat" className="back-link">
             {t("commonBackToChat")}
           </Link>
           <h1 className="page-title mt-2">
             {t("meTitle")}
           </h1>
-          <p className="mt-1 truncate text-sm text-slate-500">
+          <p className="mt-1 break-words text-sm leading-5 text-slate-500">
             {profile.nickname} · {roleLabel(profile.role, t)} ·{" "}
             {profile.family_name}
           </p>
@@ -229,15 +237,15 @@ export default function MePage() {
       </header>
 
       <section className="section-card mb-4">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-col gap-3 min-[390px]:flex-row min-[390px]:items-center min-[390px]:justify-between">
           <div className="min-w-0">
             <p className="text-xs font-semibold text-brand-600">
               {t("meIdentity")}
             </p>
-            <h2 className="mt-1 truncate text-lg font-bold text-slate-900">
+            <h2 className="mt-1 break-words text-lg font-bold leading-tight text-slate-900">
               {profile.nickname}
             </h2>
-            <p className="mt-1 text-sm text-slate-500">
+            <p className="mt-1 break-words text-sm leading-5 text-slate-500">
               {roleLabel(profile.role, t)} ·{" "}
               {profile.is_admin ? t("commonAdmin") : t("meMember")}
             </p>
@@ -266,10 +274,14 @@ export default function MePage() {
             />
           </div>
         </div>
-        <div className="mt-3 flex flex-wrap gap-2">
+        <div
+          className={`mt-3 grid grid-cols-1 gap-2 ${
+            profile.avatar_url ? "min-[390px]:grid-cols-2" : ""
+          }`}
+        >
           <button
             type="button"
-            className="btn-secondary flex-1 px-3 text-sm"
+            className="btn-secondary min-w-0 px-3 text-sm"
             disabled={avatarBusy}
             onClick={() => avatarInputRef.current?.click()}
           >
@@ -282,7 +294,7 @@ export default function MePage() {
           {profile.avatar_url ? (
             <button
               type="button"
-              className="btn-ghost flex-1 px-3 text-sm text-rose-600 hover:bg-rose-50"
+              className="btn-ghost min-w-0 px-3 text-sm text-rose-600 hover:bg-rose-50"
               disabled={avatarBusy}
               onClick={() => {
                 void handleRemoveAvatar();
@@ -292,7 +304,7 @@ export default function MePage() {
             </button>
           ) : null}
         </div>
-        <p className="mt-3 rounded-xl bg-slate-50 p-3 text-sm leading-6 text-slate-500">
+        <p className="info-note mt-3">
           {t("meIdentitySaved")}
         </p>
         <div className="mt-3 grid grid-cols-1 gap-2 min-[420px]:grid-cols-3">
@@ -325,7 +337,10 @@ export default function MePage() {
         onOpen={openSchedule}
         footer={
           dashboard.upcoming.length >= 8 ? (
-            <Link href="/schedule" className="text-sm font-semibold text-brand-600">
+            <Link
+              href="/schedule"
+              className="inline-flex min-h-9 items-center rounded-full px-1 text-sm font-semibold text-brand-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+            >
               {t("meViewSchedule")}
             </Link>
           ) : null
@@ -372,20 +387,22 @@ function DashboardSection({
   done?: boolean;
 }) {
   return (
-    <section className="section-card mb-4">
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <h2 className="text-base font-semibold text-slate-900">{title}</h2>
+    <section className="section-card mb-4 min-w-0">
+      <div className="mb-3 flex flex-col items-start gap-2 min-[390px]:flex-row min-[390px]:items-center min-[390px]:justify-between">
+        <h2 className="min-w-0 break-words text-base font-semibold text-slate-900">
+          {title}
+        </h2>
         {footer}
       </div>
       {items.length === 0 ? (
-        <p className="text-sm text-slate-500">{empty}</p>
+        <p className="status-note">{empty}</p>
       ) : (
         <div className="flex flex-col gap-2">
           {items.map((item) => (
             <button
               key={item.id}
               type="button"
-              className={`w-full rounded-2xl bg-white p-3 text-left ring-1 ring-slate-100 transition hover:ring-brand-200 ${
+              className={`min-w-0 w-full rounded-2xl bg-white p-3 text-left ring-1 ring-slate-100 transition hover:ring-brand-200 ${
                 done ? "opacity-75" : ""
               }`}
               onClick={() => onOpen(item)}
@@ -408,15 +425,19 @@ function DashboardSection({
                     >
                       {item.title}
                     </span>
-                    {item.visibility === "private" ? <LockBadge /> : null}
+                    {item.visibility === "private" ? (
+                      <LockBadge label={t("scheduleVisibilityPrivate")} />
+                    ) : null}
                   </div>
-                  <div className="mt-1 flex flex-wrap gap-1.5">
-                    <span className="meta-chip">{itemTypeLabel(item.item_type, t)}</span>
-                    <span className="meta-chip">
+                  <div className="mt-1 flex min-w-0 flex-wrap gap-1.5">
+                    <span className="meta-chip min-w-0 whitespace-normal break-words">
+                      {itemTypeLabel(item.item_type, t)}
+                    </span>
+                    <span className="meta-chip min-w-0 whitespace-normal break-words">
                       {t("scheduleAssignee")}: {item.assignee_nickname}
                     </span>
                     {item.recurrence_rule && item.recurrence_rule !== "none" ? (
-                      <span className="meta-chip">
+                      <span className="meta-chip min-w-0 whitespace-normal break-words">
                         {recurrenceLabel(item.recurrence_rule, t)}
                       </span>
                     ) : null}
@@ -431,9 +452,10 @@ function DashboardSection({
   );
 }
 
-function LockBadge() {
+function LockBadge({ label }: { label: string }) {
   return (
     <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-violet-50 text-violet-600 ring-1 ring-violet-100">
+      <span className="sr-only">{label}</span>
       <svg
         aria-hidden="true"
         viewBox="0 0 24 24"

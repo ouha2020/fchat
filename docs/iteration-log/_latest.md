@@ -1,57 +1,57 @@
-# UI Iteration Log — Phase 1 Orchestration Review
+# UI Iteration Log - Phase 3 ImportantNoticeBar
 
 ## 基本信息
 
-- 日期：2026-05-25
+- 日期：2026-05-25 JST
 - 执行者：Codex Orchestrator
-- 任务来源：`/goal Act as the Orchestrator for this UI refactor.`
-- 优先级：P1 audit orchestration
-- 范围：读取治理文档，调度并审阅 Phase 1 worker 报告，更新 `PHASE_STATUS.md` 和 `TASKS_UI.md`；不做页面、组件、业务逻辑、权限、数据库、Push 或 Service Worker 实现。
+- 任务来源：用户确认继续执行 UI refactor 治理任务。
+- 优先级：P2
+- 范围：`components/ImportantNoticeBar.tsx`
 
 ## audit
 
-- 阅读文件：`AGENTS.md`、`UI_RULES.md`、`DESIGN_SYSTEM.md`、`TASKS_UI.md`、`CODEX_UI_LOOP.md`、`PHASE_STATUS.md`、`docs/iteration-log/_latest.md`。
-- 相关报告：`docs/agent-reports/20260525-phase1-page-inventory.md`、`20260525-phase1-component-inventory.md`、`20260525-phase1-style-semantics.md`、`20260525-phase1-mobile-widths.md`、`20260525-phase1-chat-layering.md`、`20260525-phase1-schedule-layering.md`。
-- 数据流/权限边界：本轮只读审计；聊天、日程、Push、Realtime、Storage、Auth、RPC/RLS 均未改动。
-- 不可破坏项：不重写聊天/日程/Push/Realtime/Storage，不把敏感信息放入 URL、日志或 Push payload，不让 worker 写入实现文件。
+- 阅读文件：`TASKS_UI.md`、`PHASE_STATUS.md`、`DESIGN_SYSTEM.md`、`components/ImportantNoticeBar.tsx`、相关 i18n key 和重要通知服务引用。
+- 当前问题：展开按钮缺少 `aria-controls`；展开列表没有 list/listitem 语义；固定 `120px` 列表高度偏死；移除按钮使用视觉字符；row 焦点态不明显；长已读名单存在移动端稳定性风险。
+- 数据流 / 权限边界：本轮只处理组件 UI/a11y，不改重要通知 RPC、消息可见性、Push、Service Worker、Realtime、Storage、权限或数据库。
 
 ## select
 
-- 选中任务：Phase 1 全量 UI 审计收敛。
-- 本轮目标：完成 worker 并行审计、审阅报告、把有效发现同步回任务池。
-- 非目标：不进入 Phase 2/3 实现，不修改页面/组件/服务/API/RPC/schema。
+- 选中任务：Phase 3 P2 `ImportantNoticeBar` 审计。
+- 本轮目标：保证展开态、长标题/预览、已读状态和移除按钮在 360px/390px/430px 下稳定。
+- 非目标：不改重要通知列表获取、read-state 请求、移除 RPC、消息定位或通知投递逻辑。
 
 ## implement
 
-- 修改内容：创建并维护 `PHASE_STATUS.md`；创建 `docs/agent-reports/README.md`；调度 W1-W6 只读审计；审阅并接受 6 份报告；将 Phase 1 任务标记完成；把后续最小任务补入 `TASKS_UI.md`。
-- 修改文件：`PHASE_STATUS.md`、`TASKS_UI.md`、`docs/iteration-log/_latest.md`、`docs/agent-reports/README.md`、6 份 `docs/agent-reports/*.md`。
-- 未修改但检查过的文件：治理文档、页面/组件/服务文件由 worker 静态审计读取；Orchestrator 未修改实现文件。
+- 为展开按钮增加 `useId`、`aria-controls` 和展开/收起可读 label。
+- 展开列表增加 `role="list"`，每条通知增加 `role="listitem"`。
+- 展开列表从固定 `max-h-[120px]` 改为 `max-h-[32dvh]` 并保持内部滚动。
+- 通知 row 增加焦点 ring、`min-h-10` 和 title，长 sender/preview/read-state 保持单行截断。
+- 移除按钮从文本符号改为 inline SVG，SVG 标记 `aria-hidden`，按钮保留 `aria-label` / `title`。
+- 已读名单分隔符改为 ASCII `, ` 和 `/`，并用 `title` 保存完整 read-state 文本。
+- 临时新增 `/important-notice-smoke` 进行浏览器验证，验证后已删除并清理 `.next`。
 
 ## validate
 
-- `npm run lint`：未运行，本轮仅文档与报告。
-- `npm run typecheck`：未运行，本轮仅文档与报告。
-- `npm run test`：未运行；项目当前无自动化 test 脚本。
-- `npm run build`：未运行，本轮仅文档与报告。
-- `npm run test:e2e`：未运行；项目当前无该脚本。
-- `npm run test:lhci`：未运行；项目当前无该脚本。
-- `git diff --check`：passed，退出码 0；仅输出既有工作区 LF/CRLF warning，未发现 whitespace error。
-- 手动 360px：未完成；W4 尝试 in-app Browser 时被 `net::ERR_BLOCKED_BY_CLIENT` 阻断。
-- 手动 390px：未完成；同上。
-- 手动 430px：未完成；同上。
-- 其他手动回归：未执行，本轮无 UI 代码改动。
+- 浏览器 360px：临时 `/important-notice-smoke` 通过；无横向滚动，展开后 3 个 listitem，移除按钮 40px，选择和移除交互可用。
+- 浏览器 390px：通过；无横向滚动或溢出元素。
+- 浏览器 430px：通过；无横向滚动或溢出元素。
+- 浏览器 console：无 error / warning。
+- `npm run lint`：通过。
+- `npm run typecheck`：通过。
+- `npm run build`：通过，37 routes/static pages，临时 smoke route 未进入最终路由表。
+- `git diff --check`：通过，仅有既有 LF/CRLF working-copy warnings。
 
 ## review
 
-- UX review：报告集中识别了 Dialog、ChatInput、ChatMessage action menu、AssistantActionCard、schedule detail sheet、settings rows、image-preview toolbar 等移动端风险。
-- A11y review：报告补充了 Dialog/Sheet modal 语义、message action menu focus、RoleSelect selected state、私密锁标识读屏文本等任务。
-- Performance review：本轮未改运行时代码；后续仍需检查聊天长列表、日程详情打开、动画/阴影移动端负担。
-- Security review：本轮未改安全边界；报告提醒 `lib/pushNotificationService.ts` Push diagnostics query 中包含 member token 的风险，应另起安全任务，不当作 UI polish。
-- Architecture review：未替换聊天、日程、Push、Realtime、Storage 架构；Phase 2 后仍要求每次只选一个最小任务。
+- UX review：重要通知仍保持紧凑顶部条，不扩展成大卡片；展开列表可滚动，长内容用截断保持聊天可见区域。
+- A11y review：展开状态、列表语义、移除按钮名称和焦点态补齐；视觉移除图标不重复进入读屏树。
+- Performance review：只改组件属性和少量 class，无新增请求、订阅或重组件。
+- Security review：未改重要通知权限、RPC、Push payload、媒体 URL、token、日志或数据库。
 
 ## record
 
-- 新增/调整任务：`TASKS_UI.md` Phase 1 标记完成；Phase 2-7 补充 Dialog/Sheet/Toast 层级、tone matrix、ChatInput compact、action menu clamp、schedule sheet keyboard/a11y、browser width 补测等任务。
-- 风险：当前工作树已有大量既有改动；W4 宽度浏览器验证被阻断；Phase 2 尚未开始实现。
-- 下一步：从 Phase 2 选择一个最小设计系统任务，建议先做 `app/globals.css` 语义类分类或 Dialog/Sheet/Toast 层级规则文档。
-- 回滚说明：本轮均为文档/报告改动，可按文件回滚；不涉及代码、数据库或生产配置。
+- 新增报告：`docs/agent-reports/20260525-phase3-important-notice-bar-orchestrator.md`。
+- 更新任务账本：`TASKS_UI.md` 中 `ImportantNoticeBar` P2 标记完成。
+- 更新设计系统：记录 `ImportantNoticeBar` 展开、长文本、读状态和移除按钮语义基线。
+- 风险：真实 authenticated `/chat` 中重要通知 read-state 拉取和移除 RPC 未执行；本轮未修改这些链路。
+- 下一步：低风险页面可继续账号与家庭流程页面审计；高风险项仍应在具备真实设备/会话时验证 PWA `/chat?mid=` 和 authenticated `/schedule`。

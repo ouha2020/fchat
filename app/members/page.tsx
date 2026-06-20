@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import AppLoading from "@/components/AppLoading";
 import { useLanguage } from "@/components/LanguageProvider";
 import { useDialog } from "@/components/Dialog";
 import { useToast } from "@/components/Toast";
@@ -145,6 +146,10 @@ export default function MembersPage() {
     }
   }
 
+  if (loading) {
+    return <AppLoading tone="members" message={t("commonLoading")} />;
+  }
+
   return (
     <div className="app-page">
       <header className="app-header">
@@ -156,9 +161,7 @@ export default function MembersPage() {
         </div>
       </header>
 
-      {loading ? (
-        <div className="status-note">{t("commonLoading")}</div>
-      ) : loadError ? (
+      {loadError ? (
         <div className="section-card text-center">
           <h2 className="text-lg font-bold text-slate-900">
             {t("chatLoadFailedTitle")}
@@ -166,17 +169,17 @@ export default function MembersPage() {
           <p className="mt-2 text-sm leading-relaxed text-slate-500">
             {loadError}
           </p>
-          <div className="mt-5 grid grid-cols-2 gap-3">
+          <div className="mt-5 grid grid-cols-1 gap-3 min-[390px]:grid-cols-2">
             <button
               type="button"
-              className="btn-primary"
+              className="btn-primary min-w-0"
               onClick={() => setRetryNonce((value) => value + 1)}
             >
               {t("chatRetry")}
             </button>
             <button
               type="button"
-              className="btn-secondary"
+              className="btn-secondary min-w-0"
               onClick={() => {
                 clearSession();
                 router.replace("/");
@@ -188,26 +191,28 @@ export default function MembersPage() {
         </div>
       ) : (
         <ul className="section-card divide-y divide-slate-100 p-0">
-          <li className="flex items-center gap-3 px-4 py-3">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-base font-semibold text-emerald-700">
-              係
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                <span className="truncate font-semibold text-slate-900">
-                  {t("keeperName")}
-                </span>
-                <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
-                  {t("membersKeeperRole")}
+          <li className="flex flex-col gap-3 px-4 py-3 min-[430px]:flex-row min-[430px]:items-center">
+            <div className="flex min-w-0 flex-1 items-center gap-3">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-base font-semibold text-emerald-700">
+                係
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                  <span className="min-w-0 max-w-full break-words font-semibold leading-5 text-slate-900">
+                    {t("keeperName")}
+                  </span>
+                  <span className="status-badge status-badge-success">
+                    {t("membersKeeperRole")}
+                  </span>
+                </div>
+                <span className="line-clamp-2 break-words text-xs leading-5 text-slate-500">
+                  {t("membersKeeperDescription")}
                 </span>
               </div>
-              <span className="line-clamp-1 text-xs text-slate-500">
-                {t("membersKeeperDescription")}
-              </span>
             </div>
             <Link
               href="/chat?keeper=1"
-              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-sm font-bold text-emerald-700 shadow-sm ring-1 ring-emerald-100 transition hover:bg-emerald-100 active:bg-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-200"
+              className="ml-14 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-sm font-bold text-emerald-700 shadow-sm ring-1 ring-emerald-100 transition hover:bg-emerald-100 active:bg-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-200 min-[430px]:ml-0"
               aria-label={t("keeperTalk")}
               title={t("keeperTalk")}
             >
@@ -217,36 +222,38 @@ export default function MembersPage() {
           {members.map((m) => (
             <li
               key={m.id}
-              className="flex items-center gap-3 px-4 py-3"
+              className="flex flex-col gap-3 px-4 py-3 min-[430px]:flex-row min-[430px]:items-center"
             >
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-200 text-base font-semibold text-slate-700">
-                {m.nickname.slice(0, 1).toUpperCase()}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                  <span className="truncate font-semibold text-slate-900">
-                    {m.nickname}
-                  </span>
-                  <RoleBadge role={m.role} />
-                  {m.is_admin ? (
-                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">
-                      {t("membersAdmin")}
-                    </span>
-                  ) : null}
-                  {session?.member_id === m.id ? (
-                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
-                      {t("membersMe")}
-                    </span>
-                  ) : null}
+              <div className="flex min-w-0 flex-1 items-center gap-3">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-200 text-base font-semibold text-slate-700">
+                  {m.nickname.slice(0, 1).toUpperCase()}
                 </div>
-                <span className="text-xs text-slate-500">
-                  {t("membersLastActive", {
-                    time: formatRelative(m.last_active_at, language),
-                  })}
-                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                    <span className="min-w-0 max-w-full break-words font-semibold leading-5 text-slate-900">
+                      {m.nickname}
+                    </span>
+                    <RoleBadge role={m.role} />
+                    {m.is_admin ? (
+                      <span className="status-badge status-badge-success">
+                        {t("membersAdmin")}
+                      </span>
+                    ) : null}
+                    {session?.member_id === m.id ? (
+                      <span className="status-badge status-badge-muted">
+                        {t("membersMe")}
+                      </span>
+                    ) : null}
+                  </div>
+                  <span className="break-words text-xs leading-5 text-slate-500">
+                    {t("membersLastActive", {
+                      time: formatRelative(m.last_active_at, language),
+                    })}
+                  </span>
+                </div>
               </div>
               {session?.member_id !== m.id ? (
-                <div className="flex shrink-0 items-center gap-1.5">
+                <div className="ml-14 flex min-w-0 flex-wrap items-center gap-2 min-[430px]:ml-0 min-[430px]:shrink-0">
                   <Link
                     href={`/chat?whisper=${encodeURIComponent(m.id)}`}
                     className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-50 p-2 shadow-sm ring-1 ring-violet-100 transition hover:bg-violet-100 active:bg-violet-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-200"
@@ -263,7 +270,7 @@ export default function MembersPage() {
                   {session?.is_admin ? (
                     <button
                       type="button"
-                      className="btn-ghost h-9 px-3 text-sm text-rose-600 hover:bg-rose-50"
+                      className="btn-ghost min-h-10 min-w-0 px-3 text-sm text-rose-600 hover:bg-rose-50"
                       disabled={busyId === m.id}
                       onClick={() => handleRemove(m)}
                     >

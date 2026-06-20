@@ -2,9 +2,9 @@ import { useLanguage } from "@/components/LanguageProvider";
 import type { FamilyRole } from "@/types/family";
 
 const COLOR: Record<FamilyRole, string> = {
-  father: "bg-sky-100 text-sky-700",
-  mother: "bg-rose-100 text-rose-700",
-  child: "bg-amber-100 text-amber-700",
+  father: "bg-sky-50 text-sky-700 ring-sky-100",
+  mother: "bg-rose-50 text-rose-700 ring-rose-100",
+  child: "bg-amber-50 text-amber-700 ring-amber-100",
 };
 
 const ROLE_KEYS: Record<FamilyRole, "roleFather" | "roleMother" | "roleChild"> = {
@@ -15,11 +15,13 @@ const ROLE_KEYS: Record<FamilyRole, "roleFather" | "roleMother" | "roleChild"> =
 
 export default function RoleBadge({ role }: { role: FamilyRole }) {
   const { t } = useLanguage();
+  const label = t(ROLE_KEYS[role]);
   return (
     <span
-      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${COLOR[role]}`}
+      className={`tone-chip ${COLOR[role]}`}
+      title={label}
     >
-      {t(ROLE_KEYS[role])}
+      {label}
     </span>
   );
 }

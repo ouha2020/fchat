@@ -21,6 +21,8 @@ interface SignResponse {
 
 const signedUrlCache = new Map<string, { url: string; expiresAt: number }>();
 const SIGNED_URL_TTL_MS = 4 * 60 * 1000;
+const SIGNED_URL_RETRY_MS = 15 * 1000;
+const SIGNED_URL_MAX_RETRIES = 3;
 
 export async function resolveMediaUrl(
   session: LocalSession | null,
@@ -56,6 +58,11 @@ export async function resolveMediaUrl(
     }),
   });
   const payload = (await res.json().catch(() => null)) as SignResponse | null;
+  // 4xx means the ref is gone or access was revoked — retrying won't help,
+  // so resolve to null. Server hiccups (5xx) throw so callers can retry.
+  if (res.status >= 500) {
+    throw new Error(`media sign failed: ${res.status}`);
+  }
   if (!res.ok || !payload?.url) return null;
   const signedUrl = safeHttpUrl(payload.url);
   if (!signedUrl) return null;
@@ -84,6 +91,7 @@ export function useResolvedMediaUrl(
   useEffect(() => {
     let cancelled = false;
     let refreshTimer: number | null = null;
+    let retriesLeft = SIGNED_URL_MAX_RETRIES;
     const isStorageRef = isStorageBackedMediaRef(ref ?? null) && Boolean(session);
 
     const clearRefreshTimer = () => {
@@ -99,12 +107,20 @@ export function useResolvedMediaUrl(
         .then((resolved) => {
           if (cancelled) return;
           setUrl(resolved);
+          // null here is a permanent failure (ref deleted / access revoked);
+          // retrying would just poll the sign endpoint forever.
           if (isStorageRef && resolved) {
+            retriesLeft = SIGNED_URL_MAX_RETRIES;
             refreshTimer = window.setTimeout(resolve, SIGNED_URL_TTL_MS);
           }
         })
         .catch(() => {
-          if (!cancelled) setUrl(null);
+          if (cancelled) return;
+          setUrl(null);
+          if (isStorageRef && retriesLeft > 0) {
+            retriesLeft -= 1;
+            refreshTimer = window.setTimeout(resolve, SIGNED_URL_RETRY_MS);
+          }
         });
     };
 

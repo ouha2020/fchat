@@ -229,7 +229,14 @@ function PreviewIcon({
   );
 
   if (message?.message_type === "image" && message.image_url && !message.deleted_at) {
-    if (!imageUrl) return null;
+    if (!imageUrl) {
+      return (
+        <span
+          aria-hidden="true"
+          className="flex h-9 w-9 shrink-0 animate-pulse rounded-xl bg-white/70 ring-1 ring-white/80"
+        />
+      );
+    }
     return (
       // eslint-disable-next-line @next/next/no-img-element
       <img

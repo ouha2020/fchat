@@ -2824,7 +2824,6 @@ function ScheduleContextAudioBubble({
   const audioUrl = useResolvedMediaUrl(session, event.audio_url, {
     contextEventId: event.id,
   });
-  if (!audioUrl) return null;
 
   return (
     <AudioBubble

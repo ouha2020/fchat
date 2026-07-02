@@ -7,7 +7,7 @@ import { formatDuration } from "@/lib/recordingService";
 
 interface Props {
   messageId: string;
-  url: string;
+  url: string | null;
   durationMs: number | null;
   isMine: boolean;
   highlighted?: boolean;
@@ -47,6 +47,7 @@ export default function AudioBubble({
 
   function toggle(e: React.MouseEvent) {
     e.stopPropagation();
+    if (!url) return;
     if (!audioRef.current || audioRef.current.src !== url) {
       audioRef.current?.pause();
       const a = new Audio(url);
@@ -85,10 +86,16 @@ export default function AudioBubble({
     : "bg-brand-500/10 text-brand-600 hover:bg-brand-500/20";
   const barColor = isMine ? "bg-white/80" : "bg-slate-400";
 
-  // Pseudo-random but stable bar heights derived from the URL hash.
-  const heights = useMemo(() => makeWaveform(url, BAR_COUNT), [url]);
+  // Pseudo-random but stable bar heights. Seeded by the message id — signed
+  // media URLs rotate every few minutes, so seeding by URL would reshuffle
+  // the bars while the bubble is on screen.
+  const heights = useMemo(() => makeWaveform(messageId, BAR_COUNT), [messageId]);
   const durationLabel = formatDuration(durationMs ?? 0);
-  const actionLabel = playing ? t("audioPause") : t("audioPlay");
+  const actionLabel = url
+    ? playing
+      ? t("audioPause")
+      : t("audioPlay")
+    : t("commonLoading");
   const audioLabel = [
     actionLabel,
     t("chatAudioMessage"),
@@ -102,11 +109,12 @@ export default function AudioBubble({
     <button
       type="button"
       onClick={toggle}
+      disabled={!url}
       aria-label={audioLabel}
       aria-pressed={playing}
       title={audioLabel}
       style={{ width: `${width}px`, maxWidth: "100%" }}
-      className={`relative flex min-w-0 items-center gap-2 rounded-full px-3 py-2 text-sm shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 focus-visible:ring-offset-2 active:scale-[0.98] ${baseColors} ${
+      className={`relative flex min-w-0 items-center gap-2 rounded-full px-3 py-2 text-sm shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 focus-visible:ring-offset-2 active:scale-[0.98] disabled:cursor-wait disabled:opacity-75 ${baseColors} ${
         isMine ? "flex-row-reverse" : "flex-row"
       } ${highlighted ? "important-message-highlight" : ""}`}
     >

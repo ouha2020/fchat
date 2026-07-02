@@ -60,6 +60,7 @@ import {
   forceRefreshMessages,
   getMessageById,
   getMessagesByIds,
+  listMessagesBefore,
   loadCachedMessagesForSession,
   markMessagesDelivered,
   markMessagesRead,
@@ -810,6 +811,10 @@ export default function ChatPage() {
   const loadingOlderMessagesRef = useRef(false);
   const preserveScrollRef = useRef<{ scrollTop: number; scrollHeight: number } | null>(null);
   const suppressBottomScrollUntilRef = useRef(0);
+  // Whether the user is within ~120px of the newest message. Auto-scroll to
+  // bottom must not fire while they are reading history further up.
+  const isNearBottomRef = useRef(true);
+  const reachedHistoryStartRef = useRef(false);
   const bottomScrollTimeoutsRef = useRef<number[]>([]);
   const isIOSRef = useRef(false);
   const membersRef = useRef<FamilyMember[]>([]);
@@ -1662,7 +1667,7 @@ export default function ChatPage() {
     }
   }, [handleSyncedMessages, language, session]);
 
-  const loadOlderCachedMessages = useCallback(async () => {
+  const loadOlderMessages = useCallback(async () => {
     const activeSession = sessionRef.current;
     const scroller = scrollRef.current;
     if (!activeSession || !scroller || loadingOlderMessagesRef.current) return;
@@ -1677,15 +1682,41 @@ export default function ChatPage() {
     suppressBottomScrollUntilRef.current = Date.now() + 1200;
 
     try {
+      const currentMessages = messagesRef.current;
       const cached = await loadCachedMessagesForSession(activeSession, nextLimit);
       const visible = filterVisibleMessages(cached, activeSession);
-      const currentMessages = messagesRef.current;
-      const merged = mergeMessagesById(visible, currentMessages);
-      if (merged.length <= currentMessages.length) {
+      let merged = mergeMessagesById(visible, currentMessages);
+      if (merged.length > currentMessages.length) {
+        cachedMessageLimitRef.current = nextLimit;
+        setMessages(merged);
+        return;
+      }
+
+      // The local cache is exhausted (it only retains recent messages) —
+      // back-fill older history from the server, keyset-paged from the
+      // oldest message currently in view.
+      const oldest = currentMessages[0];
+      if (!oldest || reachedHistoryStartRef.current) {
         preserveScrollRef.current = null;
         return;
       }
-      cachedMessageLimitRef.current = nextLimit;
+      const older = await listMessagesBefore(
+        activeSession,
+        oldest.created_at,
+        oldest.id,
+        CACHED_MESSAGE_PAGE_SIZE,
+      );
+      if (older.length < CACHED_MESSAGE_PAGE_SIZE) {
+        reachedHistoryStartRef.current = true;
+      }
+      merged = mergeMessagesById(
+        filterVisibleMessages(older, activeSession),
+        messagesRef.current,
+      );
+      if (merged.length <= messagesRef.current.length) {
+        preserveScrollRef.current = null;
+        return;
+      }
       setMessages(merged);
     } catch {
       preserveScrollRef.current = null;
@@ -2008,7 +2039,25 @@ export default function ChatPage() {
     });
   }, []);
 
-  // Auto scroll to bottom on new messages.
+  // Track how close the user is to the newest message. All auto-scroll
+  // decisions below consult this so reading history is never interrupted.
+  useEffect(() => {
+    if (loading) return;
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+    const measure = () => {
+      const distanceFromBottom =
+        scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+      isNearBottomRef.current = distanceFromBottom < 120;
+    };
+    measure();
+    scroller.addEventListener("scroll", measure, { passive: true });
+    return () => scroller.removeEventListener("scroll", measure);
+  }, [loading]);
+
+  // Auto scroll to bottom on new messages — but only when the user is already
+  // near the bottom (or on first render / own sends). Yanking the view down
+  // while they read old messages was the "jumps back to recent chat" bug.
   useLayoutEffect(() => {
     if (loading || messages.length === 0) return;
     const preserve = preserveScrollRef.current;
@@ -2022,11 +2071,17 @@ export default function ChatPage() {
       didInitialScrollRef.current = true;
       return;
     }
-    const shouldScrollImmediately =
-      !didInitialScrollRef.current ||
-      forceImmediateBottomScrollRef.current ||
-      isIOSRef.current;
-    scrollToBottom(shouldScrollImmediately ? "auto" : "smooth");
+    const forceScroll =
+      !didInitialScrollRef.current || forceImmediateBottomScrollRef.current;
+    if (
+      !forceScroll &&
+      (!isNearBottomRef.current ||
+        Date.now() < suppressBottomScrollUntilRef.current)
+    ) {
+      didInitialScrollRef.current = true;
+      return;
+    }
+    scrollToBottom(forceScroll || isIOSRef.current ? "auto" : "smooth");
     forceImmediateBottomScrollRef.current = false;
     didInitialScrollRef.current = true;
   }, [loading, messages.length, scrollToBottom]);
@@ -2043,9 +2098,13 @@ export default function ChatPage() {
 
     let frame = 0;
     const observer = new ResizeObserver(() => {
+      // Content grows when images/audio bubbles finish loading — only follow
+      // it when the user is already at the bottom.
+      const shouldStickToBottom = isNearBottomRef.current;
       window.cancelAnimationFrame(frame);
       frame = window.requestAnimationFrame(() => {
         if (Date.now() < suppressBottomScrollUntilRef.current) return;
+        if (!shouldStickToBottom) return;
         scrollToBottom("auto");
       });
     });
@@ -2063,31 +2122,21 @@ export default function ChatPage() {
     if (!scroller) return;
 
     let frame = 0;
-    let wasNearBottom = true;
-    const rememberBottomProximity = () => {
-      const distanceFromBottom =
-        scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
-      wasNearBottom = distanceFromBottom < 120;
-    };
     const observer = new ResizeObserver(() => {
-      const shouldStickToBottom = wasNearBottom;
+      // Scroller resizes when the keyboard opens/closes — keep the newest
+      // message in view only if the user was already reading it.
+      const shouldStickToBottom = isNearBottomRef.current;
       window.cancelAnimationFrame(frame);
       frame = window.requestAnimationFrame(() => {
         if (Date.now() < suppressBottomScrollUntilRef.current) return;
         if (shouldStickToBottom) scrollToBottom("auto");
-        rememberBottomProximity();
       });
     });
 
-    rememberBottomProximity();
     observer.observe(scroller);
-    scroller.addEventListener("scroll", rememberBottomProximity, {
-      passive: true,
-    });
     return () => {
       window.cancelAnimationFrame(frame);
       observer.disconnect();
-      scroller.removeEventListener("scroll", rememberBottomProximity);
     };
   }, [loading, scrollToBottom]);
 
@@ -2681,7 +2730,7 @@ export default function ChatPage() {
   function handleMessagesScroll() {
     const scroller = scrollRef.current;
     if (!scroller || scroller.scrollTop > 32) return;
-    void loadOlderCachedMessages();
+    void loadOlderMessages();
   }
 
   function handleSelectImportant(notification: ImportantNotification) {

@@ -38,6 +38,24 @@ export async function listMessages(
   return ((data ?? []) as Message[]).map(normalizeMessage).reverse();
 }
 
+export async function listMessagesBefore(
+  session: LocalSession,
+  beforeCreatedAt: string,
+  beforeId: string,
+  limit = 100,
+): Promise<Message[]> {
+  const sb = getSupabase();
+  const { data, error } = await sb.rpc("list_messages_before", {
+    p_member_id: session.member_id,
+    p_member_token: session.member_token,
+    p_before_created_at: beforeCreatedAt,
+    p_before_id: beforeId,
+    p_limit: limit,
+  });
+  if (error) throw error;
+  return ((data ?? []) as Message[]).map(normalizeMessage).reverse();
+}
+
 export async function listMessagesDelta(
   session: LocalSession,
   cursorUpdatedAt: string | null,

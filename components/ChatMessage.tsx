@@ -388,7 +388,18 @@ function Bubble({
   );
 
   if (message.message_type === "image" && message.image_url) {
-    if (!imageUrl) return null;
+    if (!imageUrl) {
+      return (
+        <div
+          {...actionHandlers}
+          role="status"
+          className={`relative max-w-full overflow-hidden rounded-[20px] shadow-[0_10px_24px_rgba(77,67,50,0.1)] ${isPrivate ? "ring-2 ring-violet-200" : ""} ${actionClass} ${highlightClass}`}
+        >
+          <div className="h-40 w-48 max-w-full animate-pulse rounded-[20px] bg-slate-200/80" />
+          <span className="sr-only">{t("commonLoading")}</span>
+        </div>
+      );
+    }
     const previewHref = `/image-preview?mid=${encodeURIComponent(message.id)}`;
 
     return (
@@ -422,7 +433,6 @@ function Bubble({
   }
 
   if (message.message_type === "audio" && message.audio_url) {
-    if (!audioUrl) return null;
     return (
       <div
         {...actionHandlers}

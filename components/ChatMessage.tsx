@@ -5,6 +5,7 @@ import { useRef } from "react";
 
 import AssistantActionCardView from "./AssistantActionCard";
 import AudioBubble from "./AudioBubble";
+import LinkifiedText from "./LinkifiedText";
 import { useLanguage } from "@/components/LanguageProvider";
 import { formatTime } from "@/lib/format";
 import { createGoogleMapUrl } from "@/lib/locationService";
@@ -509,7 +510,16 @@ function Bubble({
           className={isMine ? "text-violet-50/90" : "text-violet-700"}
         />
       ) : null}
-      <span>{message.content}</span>
+      <span>
+        <LinkifiedText
+          text={message.content ?? ""}
+          linkClassName={
+            isMine
+              ? "text-white decoration-white/60 hover:decoration-white"
+              : "text-brand-600 decoration-brand-300 hover:decoration-brand-500"
+          }
+        />
+      </span>
       {isEffect ? (
         <span aria-hidden className="text-xs opacity-70">
           ✦

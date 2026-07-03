@@ -11,6 +11,7 @@ import { useToast } from "@/components/Toast";
 import { clearSession, loadSession, saveSession, type LocalSession } from "@/lib/authLocal";
 import { updateMemberAvatar, uploadAvatar } from "@/lib/avatarService";
 import { humanizeError } from "@/lib/errors";
+import { prepareAvatarImage } from "@/lib/imageCompression";
 import { validateMember } from "@/lib/familyService";
 import { useResolvedMediaUrl } from "@/lib/mediaClient";
 import { notifyMemberProfileChanged } from "@/lib/memberProfileEvents";
@@ -137,7 +138,10 @@ export default function MePage() {
     if (!file || !session) return;
     setAvatarBusy(true);
     try {
-      const url = await uploadAvatar(session, file);
+      // Phone photos routinely exceed the 2MB upload cap — resize/re-encode
+      // first (also converts HEIC), same as chat images.
+      const prepared = await prepareAvatarImage(file);
+      const url = await uploadAvatar(session, prepared);
       const savedUrl = await updateMemberAvatar(session, url);
       setDashboard((current) =>
         current
@@ -272,7 +276,7 @@ export default function MePage() {
               ref={avatarInputRef}
               className="hidden"
               type="file"
-              accept="image/jpeg,image/png,image/webp"
+              accept="image/*"
               onChange={(event) => {
                 void handleAvatarFile(event.target.files?.[0] ?? null);
               }}

@@ -174,6 +174,25 @@ export default function SchedulePage() {
   const seenScheduleEventIdsRef = useRef<Set<string>>(new Set());
   const syncWarningShownRef = useRef(false);
   const urlReadyRef = useRef(false);
+  const pageRef = useRef<HTMLDivElement | null>(null);
+  const filterDockRef = useRef<HTMLElement | null>(null);
+
+  // The bottom-docked filter panel's height varies (expanded fields stack
+  // vertically on narrow screens; the active-filter notice adds a row).
+  // Publish its measured height so the floating "+" button and the page's
+  // bottom padding stay clear of it instead of trusting fixed offsets.
+  useEffect(() => {
+    const dock = filterDockRef.current;
+    const page = pageRef.current;
+    if (!dock || !page || typeof ResizeObserver === "undefined") return;
+    const apply = () => {
+      page.style.setProperty("--schedule-dock-h", `${dock.offsetHeight}px`);
+    };
+    apply();
+    const observer = new ResizeObserver(apply);
+    observer.observe(dock);
+    return () => observer.disconnect();
+  }, [loading, session]);
 
   const activeMembers = useMemo(
     () => members.filter((member) => member.status === "active"),
@@ -1046,7 +1065,7 @@ export default function SchedulePage() {
   if (!session) return null;
 
   return (
-    <div className="app-page schedule-page">
+    <div ref={pageRef} className="app-page schedule-page">
       <header className="mb-3 flex items-center gap-3">
         <Link
           href="/chat"
@@ -1102,6 +1121,7 @@ export default function SchedulePage() {
 
       <ScheduleFilters
         docked
+        sectionRef={filterDockRef}
         searchText={searchText}
         assigneeFilter={assigneeFilter}
         typeFilter={typeFilter}
@@ -3297,6 +3317,7 @@ function ScheduleRangeControl({
 
 function ScheduleFilters({
   docked = false,
+  sectionRef,
   searchText,
   assigneeFilter,
   typeFilter,
@@ -3313,6 +3334,7 @@ function ScheduleFilters({
   onClear,
 }: {
   docked?: boolean;
+  sectionRef?: React.Ref<HTMLElement>;
   searchText: string;
   assigneeFilter: ScheduleAssigneeFilter;
   typeFilter: ScheduleTypeFilter;
@@ -3410,6 +3432,7 @@ function ScheduleFilters({
 
   return (
     <section
+      ref={sectionRef}
       className={
         docked
           ? "schedule-filter-panel"

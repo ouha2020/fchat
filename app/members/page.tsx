@@ -134,7 +134,7 @@ export default function MembersPage() {
     try {
       const { data } = await getSupabaseAuth().auth.getSession();
       if (!data.session) {
-        toast.info("请先用创建家庭的邮箱账号登录");
+        toast.info(t("authNeedOwnerLogin"));
         router.push("/login");
         return;
       }

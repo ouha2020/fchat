@@ -150,7 +150,7 @@ export default function JoinPage() {
     <div className="app-page-narrow">
       <header className="app-header-stack">
         <Link href="/" className="back-link">
-          返回首页
+          {t("authBackHome")}
         </Link>
         <h1 className="page-title">加入家庭</h1>
         <p className="page-subtitle">

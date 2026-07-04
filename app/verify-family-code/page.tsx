@@ -5,14 +5,17 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import EnvWarning from "@/components/EnvWarning";
+import { useLanguage } from "@/components/LanguageProvider";
 import { useToast } from "@/components/Toast";
 import { ensureFamilyCode, verifyFamilyCode } from "@/lib/accountClient";
 import { saveSession } from "@/lib/authLocal";
+import { humanizeError } from "@/lib/errors";
 import { getSupabaseAuth } from "@/lib/supabaseAuthClient";
 
 export default function VerifyFamilyCodePage() {
   const router = useRouter();
   const toast = useToast();
+  const { language, t } = useLanguage();
   const [familyCode, setFamilyCode] = useState("");
   const [checking, setChecking] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -20,7 +23,7 @@ export default function VerifyFamilyCodePage() {
   const [notice, setNotice] = useState<string | null>(() => {
     if (typeof window === "undefined") return null;
     return new URLSearchParams(window.location.search).get("sent")
-      ? "家庭代码已发送到你的邮箱。请查看邮箱，并输入家庭代码继续创建家庭。"
+      ? t("authCodeSentNotice")
       : null;
   });
 
@@ -41,16 +44,16 @@ export default function VerifyFamilyCodePage() {
           return;
         }
         if (status.status === "verified") {
-          setNotice("家庭代码已验证，可以继续创建家庭。");
+          setNotice(t("authCodeVerifiedNotice"));
           return;
         }
         if (status.status === "expired") {
-          setError("家庭代码已过期，请重新发送。");
+          setError(t("error_family_code_expired"));
           return;
         }
-        setNotice("家庭代码已发送到你的邮箱，请输入家庭代码继续创建家庭。");
+        setNotice(t("authCodeSentNotice"));
       } catch (err) {
-        setError(err instanceof Error ? err.message : "网络不稳定，请稍后再试");
+        setError(humanizeError(err, language));
       } finally {
         if (!cancelled) setChecking(false);
       }
@@ -59,22 +62,22 @@ export default function VerifyFamilyCodePage() {
     return () => {
       cancelled = true;
     };
-  }, [router]);
+  }, [language, router, t]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     if (!familyCode.trim()) {
-      setError("请输入家庭代码");
+      setError(t("authFamilyCodeRequired"));
       return;
     }
     setLoading(true);
     try {
       await verifyFamilyCode(familyCode);
-      toast.success("家庭代码验证成功");
+      toast.success(t("authCodeVerifySuccess"));
       router.replace("/create-family");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "家庭代码不正确，请检查邮箱中的代码。");
+      setError(humanizeError(err, language));
     } finally {
       setLoading(false);
     }
@@ -85,9 +88,9 @@ export default function VerifyFamilyCodePage() {
     setLoading(true);
     try {
       await ensureFamilyCode(true);
-      setNotice("家庭代码已重新发送到邮箱。");
+      setNotice(t("authCodeResent"));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "家庭代码邮件发送失败，请稍后重试。");
+      setError(humanizeError(err, language));
     } finally {
       setLoading(false);
     }
@@ -97,11 +100,11 @@ export default function VerifyFamilyCodePage() {
     <div className="app-page-narrow">
       <header className="app-header-stack">
         <Link href="/" className="back-link">
-          返回首页
+          {t("authBackHome")}
         </Link>
-        <h1 className="page-title">验证家庭代码</h1>
+        <h1 className="page-title">{t("authVerifyTitle")}</h1>
         <p className="page-subtitle">
-          请输入发送到你邮箱中的家庭代码。
+          {t("authVerifySubtitle")}
         </p>
       </header>
 
@@ -109,11 +112,13 @@ export default function VerifyFamilyCodePage() {
 
       <form onSubmit={onSubmit} className="section-card flex flex-col gap-4">
         {checking ? (
-          <div className="text-sm text-slate-500">正在检查账号状态…</div>
+          <div className="text-sm text-slate-500">{t("authCheckingAccount")}</div>
         ) : null}
 
         <div>
-          <label className="label" htmlFor="family-code">家庭代码</label>
+          <label className="label" htmlFor="family-code">
+            {t("authFamilyCodeLabel")}
+          </label>
           <input
             id="family-code"
             className="field tracking-widest uppercase"
@@ -133,7 +138,7 @@ export default function VerifyFamilyCodePage() {
         ) : null}
 
         <button type="submit" className="btn-primary" disabled={loading || checking}>
-          {loading ? "验证中…" : "验证家庭代码"}
+          {loading ? t("authVerifyBusy") : t("authVerifyButton")}
         </button>
         <button
           type="button"
@@ -141,7 +146,7 @@ export default function VerifyFamilyCodePage() {
           disabled={loading || checking}
           onClick={handleResend}
         >
-          重新发送家庭代码
+          {t("authResendButton")}
         </button>
       </form>
     </div>

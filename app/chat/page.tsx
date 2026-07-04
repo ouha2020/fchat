@@ -56,6 +56,12 @@ import {
 } from "@/lib/memberProfileEvents";
 import { useResolvedMediaUrl } from "@/lib/mediaClient";
 import {
+  filterVisibleMessages,
+  hasAssistantCardMessage,
+  isMessageVisibleToSession,
+  mergeMessagesById,
+} from "@/lib/messageList";
+import {
   deleteMessage,
   forceRefreshMessages,
   getMessageById,
@@ -209,58 +215,6 @@ function writeScheduleAttentionDot(
   }
 }
 
-function isAssistantCardSystemMessage(message: Message): boolean {
-  const payload = message.system_event_payload ?? {};
-  return (
-    message.message_type === "system" &&
-    (message.system_event_type === "assistant_card_created" ||
-      message.system_event_type === "assistant_card_confirmed" ||
-      message.system_event_type === "assistant_card_cancelled" ||
-      (payload.actor_type === "assistant" &&
-        typeof payload.card_id === "string" &&
-        typeof payload.status === "string"))
-  );
-}
-
-function isAssistantScheduleActionDoneMessage(message: Message): boolean {
-  const payload = message.system_event_payload ?? {};
-  return (
-    message.message_type === "system" &&
-    message.system_event_type === "assistant_action_done" &&
-    payload.actor_type === "assistant" &&
-    typeof payload.schedule_item_id === "string"
-  );
-}
-
-function isMessageVisibleToSession(
-  message: Message,
-  activeSession: LocalSession,
-): boolean {
-  if (isAssistantCardSystemMessage(message)) {
-    return message.sender_member_id === activeSession.member_id;
-  }
-  if (
-    isAssistantScheduleActionDoneMessage(message) &&
-    !message.recipient_member_id
-  ) {
-    return message.sender_member_id === activeSession.member_id;
-  }
-  return (
-    !message.recipient_member_id ||
-    message.sender_member_id === activeSession.member_id ||
-    message.recipient_member_id === activeSession.member_id
-  );
-}
-
-function filterVisibleMessages(
-  rows: Message[],
-  activeSession: LocalSession,
-): Message[] {
-  return rows.filter((message) =>
-    isMessageVisibleToSession(message, activeSession),
-  );
-}
-
 function closeMessageNotifications({
   familyId,
   messageIds,
@@ -295,26 +249,8 @@ function closeMessageNotifications({
     .catch(() => undefined);
 }
 
-function sortMessagesByCreatedAt(rows: Message[]): Message[] {
-  return [...rows].sort(
-    (a, b) =>
-      new Date(a.created_at).getTime() - new Date(b.created_at).getTime() ||
-      a.id.localeCompare(b.id),
-  );
-}
-
 function isRealtimeProblemStatus(status: string): boolean {
   return status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED";
-}
-
-function mergeMessagesById(existing: Message[], incoming: Message[]): Message[] {
-  const byId = new Map(existing.map((message) => [message.id, message]));
-  incoming.forEach((message) => byId.set(message.id, message));
-  return sortMessagesByCreatedAt([...byId.values()]);
-}
-
-function hasAssistantCardMessage(rows: Message[]): boolean {
-  return rows.some(isAssistantCardSystemMessage);
 }
 
 function latestOrdinaryVisibleMessage(rows: Message[], currentMessageId?: string): Message | null {

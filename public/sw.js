@@ -1,5 +1,5 @@
-const PRECACHE = "family-chat-precache-v13";
-const RUNTIME = "family-chat-runtime-v13";
+const PRECACHE = "family-chat-precache-v14";
+const RUNTIME = "family-chat-runtime-v14";
 
 const PUSH_RECEIVED = "family-chat:push-received";
 const SCHEDULE_REMINDER_RECEIVED = "family-chat:schedule-reminder";
@@ -211,14 +211,18 @@ function isLocalDevelopmentUrl(url) {
 }
 
 async function networkFirstNavigation(request) {
+  // Timeouts matter as much as the retry: on a broken connection path
+  // (stale VPN tunnel, blackholed QUIC session) fetch can hang for minutes
+  // without rejecting, leaving the user staring at a blank page. Abort and
+  // fall back instead — the offline page keeps probing and recovers itself.
   try {
-    return await fetch(request.clone());
+    return await fetchWithTimeout(request.clone(), 12000);
   } catch {
     // Transient failures (Wi-Fi/cellular handoff, VPN wake-up) usually
     // recover within moments — retry once before surfacing the offline page.
     try {
       await sleep(600);
-      return await fetch(request);
+      return await fetchWithTimeout(request, 8000);
     } catch {
       return (
         (await caches.match("/offline")) ||
@@ -229,6 +233,14 @@ async function networkFirstNavigation(request) {
       );
     }
   }
+}
+
+function fetchWithTimeout(request, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(request, { signal: controller.signal }).finally(() => {
+    clearTimeout(timer);
+  });
 }
 
 function sleep(ms) {

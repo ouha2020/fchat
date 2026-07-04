@@ -74,11 +74,18 @@ export async function resolveMediaUrl(
   return signedUrl;
 }
 
-export function useResolvedMediaUrl(
+export type MediaResolveStatus = "loading" | "ready" | "error";
+
+export interface ResolvedMedia {
+  url: string | null;
+  status: MediaResolveStatus;
+}
+
+export function useResolvedMedia(
   session: LocalSession | null,
   ref: string | null | undefined,
   options: ResolveMediaOptions = {},
-): string | null {
+): ResolvedMedia {
   const stableOptions = useMemo(
     () => ({
       messageId: options.messageId ?? null,
@@ -86,7 +93,7 @@ export function useResolvedMediaUrl(
     }),
     [options.messageId, options.contextEventId],
   );
-  const [url, setUrl] = useState<string | null>(() => safeDirectMediaUrl(ref));
+  const [media, setMedia] = useState<ResolvedMedia>(() => initialMedia(ref));
 
   useEffect(() => {
     let cancelled = false;
@@ -106,9 +113,9 @@ export function useResolvedMediaUrl(
       resolveMediaUrl(session, ref, stableOptions)
         .then((resolved) => {
           if (cancelled) return;
-          setUrl(resolved);
           // null here is a permanent failure (ref deleted / access revoked);
           // retrying would just poll the sign endpoint forever.
+          setMedia({ url: resolved, status: resolved ? "ready" : "error" });
           if (isStorageRef && resolved) {
             retriesLeft = SIGNED_URL_MAX_RETRIES;
             refreshTimer = window.setTimeout(resolve, SIGNED_URL_TTL_MS);
@@ -116,15 +123,17 @@ export function useResolvedMediaUrl(
         })
         .catch(() => {
           if (cancelled) return;
-          setUrl(null);
           if (isStorageRef && retriesLeft > 0) {
             retriesLeft -= 1;
+            setMedia({ url: null, status: "loading" });
             refreshTimer = window.setTimeout(resolve, SIGNED_URL_RETRY_MS);
+          } else {
+            setMedia({ url: null, status: "error" });
           }
         });
     };
 
-    setUrl(safeDirectMediaUrl(ref));
+    setMedia(initialMedia(ref));
     resolve();
     return () => {
       cancelled = true;
@@ -132,7 +141,22 @@ export function useResolvedMediaUrl(
     };
   }, [session, ref, stableOptions]);
 
-  return url;
+  return media;
+}
+
+export function useResolvedMediaUrl(
+  session: LocalSession | null,
+  ref: string | null | undefined,
+  options: ResolveMediaOptions = {},
+): string | null {
+  return useResolvedMedia(session, ref, options).url;
+}
+
+function initialMedia(ref: string | null | undefined): ResolvedMedia {
+  if (!ref?.trim()) return { url: null, status: "error" };
+  const direct = safeDirectMediaUrl(ref);
+  if (direct) return { url: direct, status: "ready" };
+  return { url: null, status: "loading" };
 }
 
 function safeDirectMediaUrl(ref: string | null | undefined): string | null {

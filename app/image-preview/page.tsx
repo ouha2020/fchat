@@ -9,7 +9,7 @@ import { useDialog } from "@/components/Dialog";
 import { loadSession, type LocalSession } from "@/lib/authLocal";
 import { setChatBackground } from "@/lib/chatBackground";
 import { getMessageById } from "@/lib/messageService";
-import { useResolvedMediaUrl } from "@/lib/mediaClient";
+import { useResolvedMedia } from "@/lib/mediaClient";
 import { safeHttpUrl } from "@/lib/security";
 
 export default function ImagePreviewPage() {
@@ -34,30 +34,40 @@ function ImagePreviewContent() {
   const lastTouchAtRef = useRef(0);
   const [session, setSession] = useState<LocalSession | null>(null);
   const [mediaRef, setMediaRef] = useState<string | null>(legacySrc);
+  // Distinguishes "still figuring out which image to show" from "there is
+  // conclusively nothing to show" so the error screen doesn't flash while
+  // the message lookup and URL signing are in flight.
+  const [refMissing, setRefMissing] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const src = useResolvedMediaUrl(session, mediaRef, {
+  const media = useResolvedMedia(session, mediaRef, {
     messageId,
   });
+  const src = media.url;
 
   useEffect(() => {
+    setRefMissing(false);
     const currentSession = loadSession();
     setSession(currentSession);
     if (!messageId || !currentSession) {
       setMediaRef(legacySrc);
+      if (!legacySrc) setRefMissing(true);
       return;
     }
     let cancelled = false;
     getMessageById(currentSession, messageId)
       .then((message) => {
         if (cancelled) return;
-        setMediaRef(
+        const ref =
           message?.message_type === "image" && !message.deleted_at
             ? message.image_url
-            : null,
-        );
+            : null;
+        setMediaRef(ref);
+        if (!ref) setRefMissing(true);
       })
       .catch(() => {
-        if (!cancelled) setMediaRef(null);
+        if (cancelled) return;
+        setMediaRef(null);
+        setRefMissing(true);
       });
     return () => {
       cancelled = true;
@@ -154,7 +164,7 @@ function ImagePreviewContent() {
             onTouchEnd={handlePreviewTouchEnd}
           />
         </div>
-      ) : (
+      ) : refMissing || (mediaRef !== null && media.status === "error") ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
           <div>
             <h1 className="text-lg font-semibold">{t("previewErrorTitle")}</h1>
@@ -166,6 +176,10 @@ function ImagePreviewContent() {
           >
             {t("previewBackChat")}
           </Link>
+        </div>
+      ) : (
+        <div className="flex flex-1 items-center justify-center px-6">
+          <p className="text-sm text-white/70">{t("commonLoading")}</p>
         </div>
       )}
     </main>

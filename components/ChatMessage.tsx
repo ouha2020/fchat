@@ -9,7 +9,7 @@ import LinkifiedText from "./LinkifiedText";
 import { useLanguage } from "@/components/LanguageProvider";
 import { formatTime } from "@/lib/format";
 import { createGoogleMapUrl } from "@/lib/locationService";
-import { useResolvedMediaUrl } from "@/lib/mediaClient";
+import { useResolvedMedia, useResolvedMediaUrl } from "@/lib/mediaClient";
 import { safeGoogleMapsUrl } from "@/lib/security";
 import {
   getSystemMessageTone,
@@ -377,27 +377,41 @@ function Bubble({
   const highlightClass = highlighted
     ? "important-message-highlight"
     : "";
-  const imageUrl = useResolvedMediaUrl(
+  const imageMedia = useResolvedMedia(
     session,
     message.message_type === "image" ? message.image_url : null,
     { messageId: message.id },
   );
-  const audioUrl = useResolvedMediaUrl(
+  const audioMedia = useResolvedMedia(
     session,
     message.message_type === "audio" ? message.audio_url : null,
     { messageId: message.id },
   );
+  const imageUrl = imageMedia.url;
 
   if (message.message_type === "image" && message.image_url) {
     if (!imageUrl) {
+      const failed = imageMedia.status === "error";
       return (
         <div
           {...actionHandlers}
           role="status"
           className={`relative max-w-full overflow-hidden rounded-[20px] shadow-[0_10px_24px_rgba(77,67,50,0.1)] ${isPrivate ? "ring-2 ring-violet-200" : ""} ${actionClass} ${highlightClass}`}
         >
-          <div className="h-40 w-48 max-w-full animate-pulse rounded-[20px] bg-slate-200/80" />
-          <span className="sr-only">{t("commonLoading")}</span>
+          <div
+            className={`flex h-40 w-48 max-w-full items-center justify-center rounded-[20px] bg-slate-200/80 ${
+              failed ? "" : "animate-pulse"
+            }`}
+          >
+            {failed ? (
+              <span className="text-xs font-medium text-slate-500">
+                {t("mediaLoadFailed")}
+              </span>
+            ) : null}
+          </div>
+          <span className="sr-only">
+            {failed ? t("mediaLoadFailed") : t("commonLoading")}
+          </span>
         </div>
       );
     }
@@ -444,10 +458,11 @@ function Bubble({
         ) : null}
         <AudioBubble
           messageId={message.id}
-          url={audioUrl}
+          url={audioMedia.url}
           durationMs={message.audio_duration_ms}
           isMine={isMine}
           highlighted={highlighted}
+          loadFailed={audioMedia.status === "error"}
         />
       </div>
     );

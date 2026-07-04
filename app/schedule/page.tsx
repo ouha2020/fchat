@@ -23,7 +23,7 @@ import { humanizeError } from "@/lib/errors";
 import { validateMember } from "@/lib/familyService";
 import { getJapanHoliday, type JapanHoliday } from "@/lib/japanHolidays";
 import { createGoogleMapUrl, getCurrentLocation } from "@/lib/locationService";
-import { useResolvedMediaUrl } from "@/lib/mediaClient";
+import { useResolvedMedia, useResolvedMediaUrl } from "@/lib/mediaClient";
 import { listMembers } from "@/lib/memberService";
 import { uploadChatAudio } from "@/lib/messageService";
 import { startRecording, type RecordingHandle } from "@/lib/recordingService";
@@ -2841,16 +2841,17 @@ function ScheduleContextAudioBubble({
   event: ScheduleContextEvent;
   isMine: boolean;
 }) {
-  const audioUrl = useResolvedMediaUrl(session, event.audio_url, {
+  const audioMedia = useResolvedMedia(session, event.audio_url, {
     contextEventId: event.id,
   });
 
   return (
     <AudioBubble
       messageId={event.id}
-      url={audioUrl}
+      url={audioMedia.url}
       durationMs={event.audio_duration_ms}
       isMine={isMine}
+      loadFailed={audioMedia.status === "error"}
     />
   );
 }

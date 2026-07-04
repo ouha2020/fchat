@@ -153,9 +153,7 @@ body {
   );
 }
 
-.schedule-filter-panel,
-.schedule-page > section.mb-3.rounded-2xl.bg-white.p-2\.5.shadow-sm.ring-1.ring-slate-100,
-.app-page > section.mb-3.rounded-2xl.bg-white.p-2\.5.shadow-sm.ring-1.ring-slate-100 {
+.schedule-filter-panel {
   position: fixed;
   left: 50%;
   bottom: calc(env(safe-area-inset-bottom) + 0.75rem);
@@ -173,19 +171,6 @@ body {
     0 -18px 36px rgba(62, 56, 44, 0.08),
     0 10px 28px rgba(15, 23, 42, 0.08);
   transform: translateX(-50%);
-}
-
-.schedule-page > section.mb-3.rounded-2xl.bg-white.p-2\.5.shadow-sm.ring-1.ring-slate-100,
-.app-page > section.mb-3.rounded-2xl.bg-white.p-2\.5.shadow-sm.ring-1.ring-slate-100 {
-  display: flex;
-  flex-direction: column-reverse;
-  gap: 0.5rem;
-  margin-bottom: 0;
-}
-
-.schedule-page > section.mb-3.rounded-2xl.bg-white.p-2\.5.shadow-sm.ring-1.ring-slate-100 > .mt-2,
-.app-page > section.mb-3.rounded-2xl.bg-white.p-2\.5.shadow-sm.ring-1.ring-slate-100 > .mt-2 {
-  margin-top: 0;
 }
 
 .schedule-fab-shell {
@@ -255,69 +240,9 @@ body {
   opacity: 0.6;
 }
 
-.schedule-page > header.mb-3 > button[aria-label="新建"],
-.schedule-page > header.mb-3 > button[title="新建"],
-.schedule-page > header.mb-3 > button[aria-label="取消"],
-.schedule-page > header.mb-3 > button[title="取消"],
-.app-page > header.mb-3 > button[aria-label="新建"],
-.app-page > header.mb-3 > button[title="新建"],
-.app-page > header.mb-3 > button[aria-label="取消"],
-.app-page > header.mb-3 > button[title="取消"] {
-  position: fixed;
-  right: max(1rem, calc((100vw - 48rem) / 2 + 1rem));
-  bottom: calc(env(safe-area-inset-bottom) + 5.5rem);
-  z-index: 40;
-  width: 3.5rem;
-  height: 3.5rem;
-  border-radius: 22px;
-  box-shadow:
-    0 16px 30px rgba(79, 108, 247, 0.28),
-    0 0 0 1px rgba(255, 255, 255, 0.4);
-}
-
-.app-page:has(
-    > section.mb-3.rounded-2xl.bg-white.p-2\.5.shadow-sm.ring-1.ring-slate-100
-      select
-  )
-  > header.mb-3
-  > button[aria-label="新建"],
-.app-page:has(
-    > section.mb-3.rounded-2xl.bg-white.p-2\.5.shadow-sm.ring-1.ring-slate-100
-      select
-  )
-  > header.mb-3
-  > button[title="新建"],
-.app-page:has(
-    > section.mb-3.rounded-2xl.bg-white.p-2\.5.shadow-sm.ring-1.ring-slate-100
-      select
-  )
-  > header.mb-3
-  > button[aria-label="取消"],
-.app-page:has(
-    > section.mb-3.rounded-2xl.bg-white.p-2\.5.shadow-sm.ring-1.ring-slate-100
-      select
-  )
-  > header.mb-3
-  > button[title="取消"] {
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(0.5rem);
-}
-
 @media (min-width: 640px) {
   .schedule-fab-shell {
     padding-inline: 1.5rem;
-  }
-
-  .schedule-page > header.mb-3 > button[aria-label="新建"],
-  .schedule-page > header.mb-3 > button[title="新建"],
-  .schedule-page > header.mb-3 > button[aria-label="取消"],
-  .schedule-page > header.mb-3 > button[title="取消"],
-  .app-page > header.mb-3 > button[aria-label="新建"],
-  .app-page > header.mb-3 > button[title="新建"],
-  .app-page > header.mb-3 > button[aria-label="取消"],
-  .app-page > header.mb-3 > button[title="取消"] {
-    right: max(1.5rem, calc((100vw - 48rem) / 2 + 1.5rem));
   }
 }
 

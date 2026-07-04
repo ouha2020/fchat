@@ -230,7 +230,7 @@ export default function MembersPage() {
                   session={session}
                   avatarRef={m.avatar_url}
                   name={m.nickname}
-                  className="h-11 w-11 bg-slate-200 text-base font-semibold text-slate-700"
+                  className="h-11 w-11 rounded-full bg-slate-200 text-base font-semibold text-slate-700"
                 />
                 <div className="min-w-0 flex-1">
                   <div className="flex min-w-0 flex-wrap items-center gap-1.5">

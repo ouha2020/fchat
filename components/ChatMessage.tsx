@@ -6,10 +6,11 @@ import { useRef } from "react";
 import AssistantActionCardView from "./AssistantActionCard";
 import AudioBubble from "./AudioBubble";
 import LinkifiedText from "./LinkifiedText";
+import MemberAvatarCircle from "./MemberAvatarCircle";
 import { useLanguage } from "@/components/LanguageProvider";
 import { formatTime } from "@/lib/format";
 import { createGoogleMapUrl } from "@/lib/locationService";
-import { useResolvedMedia, useResolvedMediaUrl } from "@/lib/mediaClient";
+import { useResolvedMedia } from "@/lib/mediaClient";
 import { safeGoogleMapsUrl } from "@/lib/security";
 import {
   getSystemMessageTone,
@@ -246,27 +247,17 @@ function MemberAvatar({
   isMine: boolean;
 }) {
   const { t } = useLanguage();
-  const avatarUrl = useResolvedMediaUrl(session, sender?.avatar_url ?? null);
-  const placeholder = (sender?.nickname ?? "?").slice(0, 1).toUpperCase();
-  const shellClass = `flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full text-sm font-semibold sm:h-9 sm:w-9 sm:text-base ${
-    isMine
-      ? "bg-brand-500 text-white shadow-[0_8px_18px_rgba(79,108,247,0.22)] ring-1 ring-white/30"
-      : "bg-white/90 text-slate-700 shadow-[0_8px_18px_rgba(71,64,49,0.08)] ring-1 ring-white/80"
-  }`;
   const avatar = (
-    <div className={shellClass}>
-      {avatarUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={avatarUrl}
-          alt=""
-          className="h-full w-full object-cover"
-          draggable={false}
-        />
-      ) : (
-        placeholder
-      )}
-    </div>
+    <MemberAvatarCircle
+      session={session}
+      avatarRef={sender?.avatar_url ?? null}
+      name={sender?.nickname ?? "?"}
+      className={`h-8 w-8 rounded-full text-sm font-semibold sm:h-9 sm:w-9 sm:text-base ${
+        isMine
+          ? "bg-brand-500 text-white shadow-[0_8px_18px_rgba(79,108,247,0.22)] ring-1 ring-white/30"
+          : "bg-white/90 text-slate-700 shadow-[0_8px_18px_rgba(71,64,49,0.08)] ring-1 ring-white/80"
+      }`}
+    />
   );
 
   if (isMine) {

@@ -6,14 +6,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import AppLoading from "@/components/AppLoading";
+import { useDialog } from "@/components/Dialog";
 import { useLanguage } from "@/components/LanguageProvider";
+import MemberAvatarCircle from "@/components/MemberAvatarCircle";
 import { useToast } from "@/components/Toast";
 import { clearSession, loadSession, saveSession, type LocalSession } from "@/lib/authLocal";
 import { updateMemberAvatar, uploadAvatar } from "@/lib/avatarService";
 import { humanizeError } from "@/lib/errors";
 import { prepareAvatarImage } from "@/lib/imageCompression";
 import { validateMember } from "@/lib/familyService";
-import { useResolvedMediaUrl } from "@/lib/mediaClient";
 import { notifyMemberProfileChanged } from "@/lib/memberProfileEvents";
 import { getPersonalDashboard } from "@/lib/personalDashboardService";
 import { isSupabaseConfigured } from "@/lib/supabaseClient";
@@ -25,6 +26,7 @@ import type {
 export default function MePage() {
   const router = useRouter();
   const toast = useToast();
+  const dialog = useDialog();
   const { language, t } = useLanguage();
   const [session, setSession] = useState<LocalSession | null>(null);
   const [dashboard, setDashboard] = useState<PersonalDashboard | null>(null);
@@ -33,10 +35,6 @@ export default function MePage() {
   const [avatarBusy, setAvatarBusy] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
-  const profileAvatarUrl = useResolvedMediaUrl(
-    session,
-    dashboard?.profile.avatar_url ?? null,
-  );
 
   const refreshDashboard = useCallback(
     async (activeSession: LocalSession, quiet = false) => {
@@ -170,7 +168,12 @@ export default function MePage() {
 
   async function handleRemoveAvatar() {
     if (!session || !dashboard?.profile.avatar_url) return;
-    if (!window.confirm(t("meAvatarRemoveConfirm"))) return;
+    const ok = await dialog.confirm({
+      title: t("meAvatarRemove"),
+      message: t("meAvatarRemoveConfirm"),
+      danger: true,
+    });
+    if (!ok) return;
     setAvatarBusy(true);
     try {
       await updateMemberAvatar(session, null);
@@ -260,18 +263,12 @@ export default function MePage() {
             </p>
           </div>
           <div className="flex shrink-0 flex-col items-center gap-2">
-            <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-3xl bg-brand-50 text-xl font-bold text-brand-700 ring-1 ring-brand-100">
-              {profileAvatarUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={profileAvatarUrl}
-                  alt={profile.nickname}
-                  className="h-full w-full object-cover"
-                />
-              ) : (
-                profile.nickname.slice(0, 1).toUpperCase()
-              )}
-            </div>
+            <MemberAvatarCircle
+              session={session}
+              avatarRef={profile.avatar_url}
+              name={profile.nickname}
+              className="h-16 w-16 rounded-3xl bg-brand-50 text-xl font-bold text-brand-700 ring-1 ring-brand-100"
+            />
             <input
               ref={avatarInputRef}
               className="hidden"

@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 
 import AppLoading from "@/components/AppLoading";
 import { useLanguage } from "@/components/LanguageProvider";
+import MemberAvatarCircle from "@/components/MemberAvatarCircle";
 import { useDialog } from "@/components/Dialog";
 import { useToast } from "@/components/Toast";
 import RoleBadge from "@/components/RoleBadge";
@@ -225,9 +226,12 @@ export default function MembersPage() {
               className="flex flex-col gap-3 px-4 py-3 min-[430px]:flex-row min-[430px]:items-center"
             >
               <div className="flex min-w-0 flex-1 items-center gap-3">
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-200 text-base font-semibold text-slate-700">
-                  {m.nickname.slice(0, 1).toUpperCase()}
-                </div>
+                <MemberAvatarCircle
+                  session={session}
+                  avatarRef={m.avatar_url}
+                  name={m.nickname}
+                  className="h-11 w-11 bg-slate-200 text-base font-semibold text-slate-700"
+                />
                 <div className="min-w-0 flex-1">
                   <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                     <span className="min-w-0 max-w-full break-words font-semibold leading-5 text-slate-900">

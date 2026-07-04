@@ -3,6 +3,9 @@
 import { IMAGE_MIME_TYPES, MAX_UPLOAD_BYTES } from "@/lib/validation";
 
 const MAX_IMAGE_DIMENSION = 1600;
+// Avatars render at 64px and below — 512px keeps retina headroom while
+// making the upload comfortably small.
+const AVATAR_MAX_DIMENSION = 512;
 const MAX_SOURCE_IMAGE_BYTES = 8 * 1024 * 1024;
 const SKIP_COMPRESSION_BYTES = 900 * 1024;
 const TARGET_BYTES = Math.floor(MAX_UPLOAD_BYTES * 0.82);
@@ -22,6 +25,14 @@ interface LoadedImage {
 }
 
 export async function prepareChatImage(file: File): Promise<File> {
+  return prepareImage(file, MAX_IMAGE_DIMENSION);
+}
+
+export async function prepareAvatarImage(file: File): Promise<File> {
+  return prepareImage(file, AVATAR_MAX_DIMENSION);
+}
+
+async function prepareImage(file: File, maxDimension: number): Promise<File> {
   const sourceMime = normalizeMime(file.type) || mimeFromName(file.name);
   const isAcceptedMime = IMAGE_MIME_TYPES.includes(
     sourceMime as (typeof IMAGE_MIME_TYPES)[number],
@@ -39,7 +50,7 @@ export async function prepareChatImage(file: File): Promise<File> {
     const { width, height } = fitInside(
       loaded.width,
       loaded.height,
-      MAX_IMAGE_DIMENSION,
+      maxDimension,
     );
     if (
       isAcceptedMime &&

@@ -144,7 +144,13 @@ body {
 }
 
 .schedule-page {
-  padding-bottom: max(8.5rem, calc(env(safe-area-inset-bottom) + 8.5rem));
+  /* Reserve room for the bottom-docked filter panel plus the floating "+"
+     button. --schedule-dock-h is measured from the panel's real height (it
+     grows when the filter fields are expanded or the active-filter notice
+     shows, especially on narrow screens where the fields stack). */
+  padding-bottom: calc(
+    env(safe-area-inset-bottom) + var(--schedule-dock-h, 4.75rem) + 5.75rem
+  );
 }
 
 .schedule-filter-panel,
@@ -186,7 +192,11 @@ body {
   pointer-events: none;
   position: fixed;
   inset-inline: 0;
-  bottom: calc(env(safe-area-inset-bottom) + 5.5rem);
+  /* Sit just above the docked filter panel, whatever its current height —
+     a fixed offset used to land on top of the "clear filters" row. */
+  bottom: calc(
+    env(safe-area-inset-bottom) + var(--schedule-dock-h, 4.75rem) + 1.5rem
+  );
   z-index: 40;
   display: flex;
   width: 100%;

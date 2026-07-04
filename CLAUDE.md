@@ -10,16 +10,22 @@ npm run dev              # localhost:3000 — needs .env.local
 npm run build            # production build (also runs typecheck via Next)
 npm run lint             # next lint
 npm run typecheck        # tsc --noEmit (build also covers this)
+npm test                 # vitest run — unit tests, colocated as lib/*.test.ts
 ```
 
-There are no automated tests; verification is manual through the running app plus `npm run build`.
+Unit tests (Vitest, node environment, `@` alias via `vitest.config.ts`) cover the
+pure logic in `lib/` — linkify, mediaRefs, security, effects. UI verification is
+still manual through the running app. CI (`.github/workflows/ci.yml`) runs
+typecheck + lint + tests on every PR and push to main. When touching `lib/`
+logic, extend the colocated test file; DB/RPC behavior has no test harness — it
+is verified against the live project via MCP `execute_sql`.
 
 `.env.local` must define `NEXT_PUBLIC_SUPABASE_URL` and either `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (preferred, new naming) or `NEXT_PUBLIC_SUPABASE_ANON_KEY`. `lib/supabaseClient.ts` reads either.
 
 ## Branch / deploy workflow
 
 - Develop on **`claude/family-chat-webapp-AYGTc`** (per harness instructions). Never push to `main` directly.
-- `main` is wired to Vercel auto-deploy. Ship via PR + merge with the GitHub MCP tools (`mcp__github__create_pull_request` then `mcp__github__merge_pull_request`).
+- Open a PR (`gh pr create`) and **stop there — never merge it yourself**. The user reviews and merges personally; `main` is wired to Vercel auto-deploy, so merging is deploying.
 - `vercel.json` pins `framework: nextjs` so Vercel doesn't fall back to a static-site preset that hunts for a `build/` directory.
 
 ## Supabase project

@@ -1,5 +1,5 @@
-const PRECACHE = "family-chat-precache-v12";
-const RUNTIME = "family-chat-runtime-v12";
+const PRECACHE = "family-chat-precache-v13";
+const RUNTIME = "family-chat-runtime-v13";
 
 const PUSH_RECEIVED = "family-chat:push-received";
 const SCHEDULE_REMINDER_RECEIVED = "family-chat:schedule-reminder";
@@ -212,16 +212,27 @@ function isLocalDevelopmentUrl(url) {
 
 async function networkFirstNavigation(request) {
   try {
-    return await fetch(request);
+    return await fetch(request.clone());
   } catch {
-    return (
-      (await caches.match("/offline")) ||
-      new Response("Offline", {
-        status: 503,
-        headers: { "Content-Type": "text/plain; charset=utf-8" },
-      })
-    );
+    // Transient failures (Wi-Fi/cellular handoff, VPN wake-up) usually
+    // recover within moments — retry once before surfacing the offline page.
+    try {
+      await sleep(600);
+      return await fetch(request);
+    } catch {
+      return (
+        (await caches.match("/offline")) ||
+        new Response("Offline", {
+          status: 503,
+          headers: { "Content-Type": "text/plain; charset=utf-8" },
+        })
+      );
+    }
   }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function cacheFirst(request) {

@@ -15,6 +15,8 @@ import {
 
 import AppLoading from "@/components/AppLoading";
 import AudioBubble from "@/components/AudioBubble";
+import LinkifiedText from "@/components/LinkifiedText";
+import MemberAvatarCircle from "@/components/MemberAvatarCircle";
 import { useDialog } from "@/components/Dialog";
 import { useLanguage } from "@/components/LanguageProvider";
 import { useToast } from "@/components/Toast";
@@ -23,7 +25,7 @@ import { humanizeError } from "@/lib/errors";
 import { validateMember } from "@/lib/familyService";
 import { getJapanHoliday, type JapanHoliday } from "@/lib/japanHolidays";
 import { createGoogleMapUrl, getCurrentLocation } from "@/lib/locationService";
-import { useResolvedMediaUrl } from "@/lib/mediaClient";
+import { useResolvedMedia } from "@/lib/mediaClient";
 import { listMembers } from "@/lib/memberService";
 import { uploadChatAudio } from "@/lib/messageService";
 import { startRecording, type RecordingHandle } from "@/lib/recordingService";
@@ -2495,7 +2497,14 @@ function ScheduleDetailPanel({
                                 />
                               ) : (
                                 <p className="whitespace-pre-wrap break-words leading-6">
-                                  {text}
+                                  <LinkifiedText
+                                    text={text}
+                                    linkClassName={
+                                      isMine
+                                        ? "text-white decoration-white/60 hover:decoration-white"
+                                        : "text-brand-600 decoration-brand-300 hover:decoration-brand-500"
+                                    }
+                                  />
                                 </p>
                               )}
                             </div>
@@ -2804,7 +2813,6 @@ function ScheduleConversationAvatar({
   avatarRef?: string | null;
   tone?: "keeper" | "member" | "mine";
 }) {
-  const avatarUrl = useResolvedMediaUrl(session ?? null, avatarRef ?? null);
   const toneClass =
     tone === "keeper"
       ? "bg-emerald-100 text-emerald-700 ring-emerald-50"
@@ -2813,22 +2821,13 @@ function ScheduleConversationAvatar({
         : "bg-white/90 text-slate-700 ring-white/80";
 
   return (
-    <div
-      className={`flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full text-sm font-bold shadow-[0_8px_18px_rgba(71,64,49,0.08)] ring-1 ${toneClass}`}
-      aria-hidden="true"
-    >
-      {avatarUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={avatarUrl}
-          alt=""
-          className="h-full w-full object-cover"
-          draggable={false}
-        />
-      ) : (
-        label
-      )}
-    </div>
+    <MemberAvatarCircle
+      session={session ?? null}
+      avatarRef={avatarRef ?? null}
+      name={label}
+      ariaHidden
+      className={`h-9 w-9 rounded-full text-sm font-bold shadow-[0_8px_18px_rgba(71,64,49,0.08)] ring-1 ${toneClass}`}
+    />
   );
 }
 
@@ -2841,16 +2840,17 @@ function ScheduleContextAudioBubble({
   event: ScheduleContextEvent;
   isMine: boolean;
 }) {
-  const audioUrl = useResolvedMediaUrl(session, event.audio_url, {
+  const audioMedia = useResolvedMedia(session, event.audio_url, {
     contextEventId: event.id,
   });
 
   return (
     <AudioBubble
       messageId={event.id}
-      url={audioUrl}
+      url={audioMedia.url}
       durationMs={event.audio_duration_ms}
       isMine={isMine}
+      loadFailed={audioMedia.status === "error"}
     />
   );
 }

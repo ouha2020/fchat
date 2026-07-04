@@ -7,7 +7,7 @@ import { useLanguage } from "@/components/LanguageProvider";
 import type { LocalSession } from "@/lib/authLocal";
 import { formatTime } from "@/lib/format";
 import type { TranslationKey } from "@/lib/i18n";
-import { useResolvedMediaUrl } from "@/lib/mediaClient";
+import { useResolvedMedia } from "@/lib/mediaClient";
 import { formatDuration } from "@/lib/recordingService";
 import { localizeSystemMessage } from "@/lib/systemMessage";
 import type {
@@ -220,20 +220,23 @@ function PreviewIcon({
   message: Message | null;
   text: string;
 }) {
-  const imageUrl = useResolvedMediaUrl(
+  const imageMedia = useResolvedMedia(
     session,
     message?.message_type === "image" && !message.deleted_at
       ? message.image_url
       : null,
     { messageId: message?.id ?? null },
   );
+  const imageUrl = imageMedia.url;
 
   if (message?.message_type === "image" && message.image_url && !message.deleted_at) {
     if (!imageUrl) {
       return (
         <span
           aria-hidden="true"
-          className="flex h-9 w-9 shrink-0 animate-pulse rounded-xl bg-white/70 ring-1 ring-white/80"
+          className={`flex h-9 w-9 shrink-0 rounded-xl bg-white/70 ring-1 ring-white/80 ${
+            imageMedia.status === "error" ? "opacity-60" : "animate-pulse"
+          }`}
         />
       );
     }

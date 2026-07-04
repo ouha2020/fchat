@@ -174,7 +174,7 @@ export default function SettingsPage() {
     }
     const { data } = await getSupabaseAuth().auth.getSession();
     if (!data.session) {
-      toast.info("请先用创建家庭的邮箱账号登录");
+      toast.info(t("authNeedOwnerLogin"));
       router.push("/login");
       return;
     }
@@ -207,7 +207,7 @@ export default function SettingsPage() {
     }
     const { data } = await getSupabaseAuth().auth.getSession();
     if (!data.session) {
-      toast.info("请先用创建家庭的邮箱账号登录");
+      toast.info(t("authNeedOwnerLogin"));
       router.push("/login");
       return;
     }
@@ -217,11 +217,11 @@ export default function SettingsPage() {
     setBusy("changeAccountPassword");
     try {
       await updateAccountPassword(result.newPassword);
-      toast.success("密码已修改，请重新登录");
+      toast.success(t("settingsAccountPasswordChanged"));
       await getSupabaseAuth().auth.signOut();
       router.replace("/login?reset=1");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : humanizeError(err, language));
+      toast.error(humanizeError(err, language));
     } finally {
       setBusy(null);
     }
@@ -233,7 +233,7 @@ export default function SettingsPage() {
       title: t("settingsRenameFamily"),
       message: t("settingsRenamePrompt"),
       defaultValue: session.family_name,
-      validate: (v) => (!v.trim() ? "名称不能为空" : null),
+      validate: (v) => (!v.trim() ? t("error_family_name_required") : null),
     });
     if (!newName || !newName.trim()) return;
     await withOwnerAccount(t("settingsRenameFamily"), async () => {
@@ -261,14 +261,14 @@ export default function SettingsPage() {
   function handleCopyFamilyCode() {
     if (!session) return;
     navigator.clipboard?.writeText(session.family_code).catch(() => undefined);
-    toast.success("家庭代码已复制");
+    toast.success(t("settingsFamilyCodeCopied"));
   }
 
   function handleCopyInviteText() {
     if (!session) return;
     const text = `加入「${session.family_name}」家庭聊天室，家庭代码：${session.family_code}`;
     navigator.clipboard?.writeText(text).catch(() => undefined);
-    toast.success("邀请文案已复制");
+    toast.success(t("settingsInviteCopied"));
   }
 
   async function handleToggleJoin(next: boolean) {
@@ -700,7 +700,7 @@ export default function SettingsPage() {
                 onClick={handleResetCode}
               />
               <ActionRow
-                label={busy === "changeAccountPassword" ? t("commonLoading") : "修改密码"}
+                label={busy === "changeAccountPassword" ? t("commonLoading") : t("settingsChangeAccountPassword")}
                 disabled={!!busy}
                 onClick={handleChangeAccountPassword}
               />

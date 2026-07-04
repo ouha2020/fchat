@@ -5,10 +5,13 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import EnvWarning from "@/components/EnvWarning";
+import { useLanguage } from "@/components/LanguageProvider";
 import { registerAccount, signInAccount } from "@/lib/accountClient";
+import { humanizeError } from "@/lib/errors";
 
 export default function RegisterPage() {
   const router = useRouter();
+  const { language, t } = useLanguage();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -21,13 +24,13 @@ export default function RegisterPage() {
     setError(null);
     setRegisteredEmail(false);
     const cleanEmail = email.trim().toLowerCase();
-    if (!cleanEmail) return setError("请输入邮箱");
+    if (!cleanEmail) return setError(t("error_email_required"));
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
-      return setError("邮箱格式不正确");
+      return setError(t("error_invalid_email"));
     }
-    if (!password) return setError("请输入密码");
-    if (password.length < 8) return setError("密码至少 8 位");
-    if (password !== confirmPassword) return setError("两次密码必须一致");
+    if (!password) return setError(t("error_password_required"));
+    if (password.length < 8) return setError(t("error_password_too_short"));
+    if (password !== confirmPassword) return setError(t("authPasswordMismatch"));
 
     setLoading(true);
     try {
@@ -35,9 +38,13 @@ export default function RegisterPage() {
       await signInAccount(cleanEmail, password);
       router.replace("/verify-family-code?sent=1");
     } catch (err) {
-      const message = err instanceof Error ? err.message : "注册失败，请稍后重试";
-      if (message.includes("已经注册")) setRegisteredEmail(true);
-      setError(message);
+      const code = err instanceof Error ? err.message : "";
+      if (code === "email_registered") setRegisteredEmail(true);
+      setError(
+        err instanceof Error
+          ? humanizeError(err, language)
+          : t("authRegisterFailed"),
+      );
     } finally {
       setLoading(false);
     }
@@ -47,11 +54,11 @@ export default function RegisterPage() {
     <div className="app-page-narrow">
       <header className="app-header-stack">
         <Link href="/" className="back-link">
-          返回首页
+          {t("authBackHome")}
         </Link>
-        <h1 className="page-title">注册邮箱</h1>
+        <h1 className="page-title">{t("authRegisterTitle")}</h1>
         <p className="page-subtitle">
-          创建家庭需要先注册邮箱。家庭代码会发送到这个邮箱。
+          {t("authRegisterSubtitle")}
         </p>
       </header>
 
@@ -59,7 +66,7 @@ export default function RegisterPage() {
 
       <form onSubmit={onSubmit} className="section-card flex flex-col gap-4">
         <div>
-          <label className="label" htmlFor="email">邮箱</label>
+          <label className="label" htmlFor="email">{t("authEmailLabel")}</label>
           <input
             id="email"
             className="field"
@@ -71,7 +78,7 @@ export default function RegisterPage() {
           />
         </div>
         <div>
-          <label className="label" htmlFor="password">密码</label>
+          <label className="label" htmlFor="password">{t("authPasswordLabel")}</label>
           <input
             id="password"
             className="field"
@@ -83,7 +90,9 @@ export default function RegisterPage() {
           />
         </div>
         <div>
-          <label className="label" htmlFor="confirm-password">确认密码</label>
+          <label className="label" htmlFor="confirm-password">
+            {t("authConfirmPasswordLabel")}
+          </label>
           <input
             id="confirm-password"
             className="field"
@@ -103,20 +112,22 @@ export default function RegisterPage() {
 
         {registeredEmail ? (
           <div className="grid grid-cols-2 gap-3">
-            <Link className="btn-primary" href="/login">去登录</Link>
-            <Link className="btn-secondary" href="/forgot-password">忘记密码</Link>
+            <Link className="btn-primary" href="/login">{t("authGoLogin")}</Link>
+            <Link className="btn-secondary" href="/forgot-password">
+              {t("authForgotLink")}
+            </Link>
           </div>
         ) : null}
 
         <button type="submit" className="btn-primary" disabled={loading}>
-          {loading ? "注册中…" : "注册并发送家庭代码"}
+          {loading ? t("authRegisterBusy") : t("authRegisterButton")}
         </button>
       </form>
 
       <div className="mt-6 text-center text-sm text-slate-500">
-        已经注册？
+        {t("authHaveAccount")}
         <Link className="ml-1 text-brand-600 hover:underline" href="/login">
-          直接登录
+          {t("authLoginDirect")}
         </Link>
       </div>
     </div>

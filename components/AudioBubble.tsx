@@ -11,6 +11,8 @@ interface Props {
   durationMs: number | null;
   isMine: boolean;
   highlighted?: boolean;
+  /** The signed URL failed permanently — render "unavailable" instead of loading. */
+  loadFailed?: boolean;
 }
 
 const BAR_COUNT = 14;
@@ -22,6 +24,7 @@ export default function AudioBubble({
   durationMs,
   isMine,
   highlighted,
+  loadFailed = false,
 }: Props) {
   const { t } = useLanguage();
   const [playing, setPlaying] = useState(false);
@@ -91,11 +94,13 @@ export default function AudioBubble({
   // the bars while the bubble is on screen.
   const heights = useMemo(() => makeWaveform(messageId, BAR_COUNT), [messageId]);
   const durationLabel = formatDuration(durationMs ?? 0);
-  const actionLabel = url
-    ? playing
-      ? t("audioPause")
-      : t("audioPlay")
-    : t("commonLoading");
+  const actionLabel = loadFailed
+    ? t("mediaLoadFailed")
+    : url
+      ? playing
+        ? t("audioPause")
+        : t("audioPlay")
+      : t("commonLoading");
   const audioLabel = [
     actionLabel,
     t("chatAudioMessage"),
@@ -114,7 +119,11 @@ export default function AudioBubble({
       aria-pressed={playing}
       title={audioLabel}
       style={{ width: `${width}px`, maxWidth: "100%" }}
-      className={`relative flex min-w-0 items-center gap-2 rounded-full px-3 py-2 text-sm shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 focus-visible:ring-offset-2 active:scale-[0.98] disabled:cursor-wait disabled:opacity-75 ${baseColors} ${
+      className={`relative flex min-w-0 items-center gap-2 rounded-full px-3 py-2 text-sm shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 focus-visible:ring-offset-2 active:scale-[0.98] ${
+        loadFailed
+          ? "disabled:cursor-not-allowed disabled:opacity-60"
+          : "disabled:cursor-wait disabled:opacity-75"
+      } ${baseColors} ${
         isMine ? "flex-row-reverse" : "flex-row"
       } ${highlighted ? "important-message-highlight" : ""}`}
     >
@@ -160,7 +169,7 @@ export default function AudioBubble({
         ))}
       </span>
       <span className={`min-w-[2.25rem] shrink-0 text-right text-xs tabular-nums ${subColors}`}>
-        {durationLabel}
+        {loadFailed ? t("mediaLoadFailed") : durationLabel}
       </span>
     </button>
   );

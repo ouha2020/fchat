@@ -5,14 +5,17 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import EnvWarning from "@/components/EnvWarning";
+import { useLanguage } from "@/components/LanguageProvider";
 import RoleSelect from "@/components/RoleSelect";
 import { createFamilyWithVerifiedCode, ensureFamilyCode } from "@/lib/accountClient";
 import { saveSession } from "@/lib/authLocal";
+import { humanizeError } from "@/lib/errors";
 import { getSupabaseAuth } from "@/lib/supabaseAuthClient";
 import type { FamilyRole } from "@/types/family";
 
 export default function CreateFamilyPage() {
   const router = useRouter();
+  const { language, t } = useLanguage();
   const [familyCode, setFamilyCode] = useState("");
   const [familyName, setFamilyName] = useState("");
   const [nickname, setNickname] = useState("");
@@ -62,10 +65,10 @@ export default function CreateFamilyPage() {
     e.preventDefault();
     setError(null);
 
-    if (!familyCode.trim()) return setError("请输入邮箱中的家庭代码");
-    if (!familyName.trim()) return setError("请输入家庭名称");
-    if (!nickname.trim()) return setError("请输入昵称");
-    if (!role) return setError("请选择角色");
+    if (!familyCode.trim()) return setError(t("authFamilyCodeFromEmailRequired"));
+    if (!familyName.trim()) return setError(t("error_family_name_required"));
+    if (!nickname.trim()) return setError(t("error_nickname_required"));
+    if (!role) return setError(t("error_invalid_role"));
 
     setLoading(true);
     try {
@@ -78,7 +81,9 @@ export default function CreateFamilyPage() {
       saveSession(session);
       router.replace("/chat");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "创建家庭失败，请稍后重试");
+      setError(
+        err instanceof Error ? humanizeError(err, language) : t("authCreateFailed"),
+      );
     } finally {
       setLoading(false);
     }
@@ -88,11 +93,11 @@ export default function CreateFamilyPage() {
     <div className="app-page-narrow">
       <header className="app-header-stack">
         <Link href="/verify-family-code" className="back-link">
-          返回验证
+          {t("authBackVerify")}
         </Link>
-        <h1 className="page-title">创建新家庭</h1>
+        <h1 className="page-title">{t("authCreateTitle")}</h1>
         <p className="page-subtitle">
-          请使用邮箱中已验证的家庭代码继续创建家庭。
+          {t("authCreateSubtitle")}
         </p>
       </header>
 
@@ -100,12 +105,12 @@ export default function CreateFamilyPage() {
 
       <form onSubmit={onSubmit} className="section-card flex flex-col gap-4">
         {checking ? (
-          <div className="text-sm text-slate-500">正在检查创建资格...</div>
+          <div className="text-sm text-slate-500">{t("authCheckingEligibility")}</div>
         ) : null}
 
         <div>
           <label className="label" htmlFor="family-code">
-            家庭代码
+            {t("authFamilyCodeLabel")}
           </label>
           <input
             id="family-code"
@@ -120,12 +125,12 @@ export default function CreateFamilyPage() {
 
         <div>
           <label className="label" htmlFor="family-name">
-            家庭名称
+            {t("authFamilyNameLabel")}
           </label>
           <input
             id="family-name"
             className="field"
-            placeholder="比如：小明的家"
+            placeholder={t("authFamilyNamePlaceholder")}
             maxLength={30}
             value={familyName}
             onChange={(e) => setFamilyName(e.target.value)}
@@ -135,12 +140,12 @@ export default function CreateFamilyPage() {
 
         <div>
           <label className="label" htmlFor="nickname">
-            创建者昵称
+            {t("authCreatorNicknameLabel")}
           </label>
           <input
             id="nickname"
             className="field"
-            placeholder="比如：爸爸"
+            placeholder={t("authNicknamePlaceholder")}
             maxLength={20}
             value={nickname}
             onChange={(e) => setNickname(e.target.value)}
@@ -149,12 +154,12 @@ export default function CreateFamilyPage() {
         </div>
 
         <div>
-          <span className="label">创建者角色</span>
+          <span className="label">{t("authCreatorRoleLabel")}</span>
           <RoleSelect value={role} onChange={setRole} />
         </div>
 
         <div className="info-note">
-          管理操作将使用创建者邮箱账号验证，不再单独设置管理员密码。
+          {t("authAdminNote")}
         </div>
 
         {error ? (
@@ -164,7 +169,7 @@ export default function CreateFamilyPage() {
         ) : null}
 
         <button type="submit" className="btn-primary" disabled={loading || checking}>
-          {loading ? "创建中..." : "创建家庭"}
+          {loading ? t("authCreateBusy") : t("authCreateButton")}
         </button>
       </form>
     </div>

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import EnvWarning from "@/components/EnvWarning";
+import { useLanguage } from "@/components/LanguageProvider";
 import { useToast } from "@/components/Toast";
 import {
   ensureFamilyCode,
@@ -12,6 +13,7 @@ import {
   signInAccount,
 } from "@/lib/accountClient";
 import { saveSession } from "@/lib/authLocal";
+import { humanizeError } from "@/lib/errors";
 import {
   clearPendingOwnerRejoin,
   loadPendingOwnerRejoin,
@@ -20,6 +22,7 @@ import {
 export default function LoginPage() {
   const router = useRouter();
   const toast = useToast();
+  const { language, t } = useLanguage();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -29,8 +32,8 @@ export default function LoginPage() {
     e.preventDefault();
     setError(null);
     const cleanEmail = email.trim().toLowerCase();
-    if (!cleanEmail) return setError("请输入邮箱");
-    if (!password) return setError("请输入密码");
+    if (!cleanEmail) return setError(t("error_email_required"));
+    if (!password) return setError(t("error_password_required"));
     setLoading(true);
     try {
       await signInAccount(cleanEmail, password);
@@ -44,7 +47,7 @@ export default function LoginPage() {
           );
           clearPendingOwnerRejoin();
           saveSession(session);
-          toast.info(`已恢复 ${pending.nickname} 的家庭身份`);
+          toast.info(t("authRejoinRestored", { nickname: pending.nickname }));
           router.replace("/chat");
           return;
         }
@@ -52,7 +55,7 @@ export default function LoginPage() {
       const result = await ensureFamilyCode(false);
       if (result.status === "has_family" && result.session) {
         saveSession(result.session);
-        toast.info("你已经创建过家庭，正在进入家庭聊天室。");
+        toast.info(t("error_account_already_has_family"));
         router.replace("/chat");
         return;
       }
@@ -62,7 +65,11 @@ export default function LoginPage() {
       }
       router.replace(`/verify-family-code?status=${result.status}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "登录失败，请稍后重试");
+      setError(
+        err instanceof Error
+          ? humanizeError(err, language)
+          : t("authLoginFailed"),
+      );
     } finally {
       setLoading(false);
     }
@@ -72,11 +79,11 @@ export default function LoginPage() {
     <div className="app-page-narrow">
       <header className="app-header-stack">
         <Link href="/" className="back-link">
-          返回首页
+          {t("authBackHome")}
         </Link>
-        <h1 className="page-title">登录</h1>
+        <h1 className="page-title">{t("authLoginTitle")}</h1>
         <p className="page-subtitle">
-          登录后会继续未完成的家庭创建流程。
+          {t("authLoginSubtitle")}
         </p>
       </header>
 
@@ -84,7 +91,7 @@ export default function LoginPage() {
 
       <form onSubmit={onSubmit} className="section-card flex flex-col gap-4">
         <div>
-          <label className="label" htmlFor="email">邮箱</label>
+          <label className="label" htmlFor="email">{t("authEmailLabel")}</label>
           <input
             id="email"
             className="field"
@@ -96,7 +103,7 @@ export default function LoginPage() {
           />
         </div>
         <div>
-          <label className="label" htmlFor="password">密码</label>
+          <label className="label" htmlFor="password">{t("authPasswordLabel")}</label>
           <input
             id="password"
             className="field"
@@ -115,16 +122,16 @@ export default function LoginPage() {
         ) : null}
 
         <button type="submit" className="btn-primary" disabled={loading}>
-          {loading ? "登录中…" : "登录"}
+          {loading ? t("authLoginBusy") : t("authLoginButton")}
         </button>
       </form>
 
       <div className="mt-6 flex justify-center gap-4 text-sm">
         <Link className="text-brand-600 hover:underline" href="/register">
-          注册邮箱
+          {t("authRegisterLink")}
         </Link>
         <Link className="text-slate-500 hover:text-brand-600" href="/forgot-password">
-          忘记密码
+          {t("authForgotLink")}
         </Link>
       </div>
     </div>

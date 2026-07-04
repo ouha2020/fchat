@@ -35,9 +35,15 @@ is verified against the live project via MCP `execute_sql`.
 
 ## Architecture
 
-### Auth model — anonymous, token-in-localStorage
+### Auth model — anonymous member tokens + an owner email account
 
-There is no Supabase Auth. A "session" is `{family_id, member_id, member_token, nickname, role, is_admin, family_name, family_code}` saved by `lib/authLocal.ts` to `localStorage["family-chat:session"]`. The token is a 24-byte hex string returned by the `create_family` / `join_family` RPCs and stored as a SHA-256 hash in `family_members.member_token_hash`. `validate_member` rehydrates the session on app open.
+Day-to-day chat identity is NOT Supabase Auth. A "session" is `{family_id, member_id, member_token, nickname, role, is_admin, family_name, family_code}` saved by `lib/authLocal.ts` to `localStorage["family-chat:session"]`. The token is a 24-byte hex string returned by the `create_family` / `join_family` RPCs and stored as a SHA-256 hash in `family_members.member_token_hash`. `validate_member` rehydrates the session on app open.
+
+On top of that, the family OWNER has a Supabase Auth email account (`lib/supabaseAuthClient.ts`, storageKey `family-chat:auth`) used for creating the family (email-verified family code) and admin operations (`lib/accountClient.ts` → `/api/auth/*` routes). Account pages live at `/login`, `/register`, `/forgot-password`, `/reset-password`, `/verify-family-code`, `/create-family`.
+
+### i18n and user-facing errors
+
+Everything user-visible goes through `lib/i18n.ts` (zh/ja/en) via `useLanguage()`'s `t()` — never hardcode Chinese strings in pages. Errors follow one pipeline: services throw stable snake_case error codes (RPC/API codes pass through untranslated; `lib/accountClient.ts` maps supabase-js auth messages to codes), and pages render them with `humanizeError(err, language)`, which maps codes → i18n keys via `ERROR_MAP` in `lib/errors.ts`. When adding an error code: add the `ERROR_MAP` entry plus the `error_*` key in all three language blocks. Never branch on translated message text — compare against the code (see the register page's `email_registered` check).
 
 ### All writes go through `SECURITY DEFINER` RPCs
 

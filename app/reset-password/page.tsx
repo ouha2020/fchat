@@ -5,7 +5,9 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import EnvWarning from "@/components/EnvWarning";
+import { useLanguage } from "@/components/LanguageProvider";
 import { updateAccountPassword } from "@/lib/accountClient";
+import { humanizeError } from "@/lib/errors";
 import { getSupabaseAuth } from "@/lib/supabaseAuthClient";
 
 // The recovery link lands here with the token in the URL hash; creating the
@@ -14,6 +16,7 @@ type LinkState = "checking" | "ready" | "invalid";
 
 export default function ResetPasswordPage() {
   const router = useRouter();
+  const { language, t } = useLanguage();
   const [linkState, setLinkState] = useState<LinkState>("checking");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -42,14 +45,16 @@ export default function ResetPasswordPage() {
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    if (password.length < 8) return setError("新密码至少 8 位");
-    if (password !== confirmPassword) return setError("两次密码必须一致");
+    if (password.length < 8) return setError(t("error_password_too_short"));
+    if (password !== confirmPassword) return setError(t("authPasswordMismatch"));
     setLoading(true);
     try {
       await updateAccountPassword(password);
       router.replace("/login?reset=1");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "密码更新失败，请重新打开邮件链接");
+      setError(
+        err instanceof Error ? humanizeError(err, language) : t("authUpdateFailed"),
+      );
     } finally {
       setLoading(false);
     }
@@ -59,11 +64,11 @@ export default function ResetPasswordPage() {
     <div className="app-page-narrow">
       <header className="app-header-stack">
         <Link href="/login" className="back-link">
-          返回登录
+          {t("authBackLogin")}
         </Link>
-        <h1 className="page-title">重置密码</h1>
+        <h1 className="page-title">{t("authResetTitle")}</h1>
         <p className="page-subtitle">
-          设置一个新的登录密码。
+          {t("authResetSubtitle")}
         </p>
       </header>
 
@@ -72,20 +77,21 @@ export default function ResetPasswordPage() {
       {linkState === "invalid" ? (
         <div className="section-card">
           <h2 className="text-base font-semibold text-slate-900">
-            链接无效或已过期
+            {t("authLinkInvalidTitle")}
           </h2>
           <p className="mt-2 text-sm leading-6 text-slate-500">
-            重置链接只能使用一次，且有时效。请回到登录页重新点击“忘记密码”，
-            再从新邮件里的链接进入。
+            {t("authLinkInvalidBody")}
           </p>
           <Link href="/login" className="btn-primary mt-4">
-            返回登录
+            {t("authBackLogin")}
           </Link>
         </div>
       ) : (
         <form onSubmit={onSubmit} className="section-card flex flex-col gap-4">
           <div>
-            <label className="label" htmlFor="password">新密码</label>
+            <label className="label" htmlFor="password">
+              {t("authNewPasswordLabel")}
+            </label>
             <input
               id="password"
               className="field"
@@ -97,7 +103,9 @@ export default function ResetPasswordPage() {
             />
           </div>
           <div>
-            <label className="label" htmlFor="confirm-password">确认新密码</label>
+            <label className="label" htmlFor="confirm-password">
+              {t("authConfirmNewPasswordLabel")}
+            </label>
             <input
               id="confirm-password"
               className="field"
@@ -119,10 +127,10 @@ export default function ResetPasswordPage() {
             disabled={loading || linkState === "checking"}
           >
             {loading
-              ? "更新中…"
+              ? t("authUpdatePasswordBusy")
               : linkState === "checking"
-                ? "正在校验链接…"
-                : "更新密码"}
+                ? t("authCheckingLink")
+                : t("authUpdatePasswordButton")}
           </button>
         </form>
       )}

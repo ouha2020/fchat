@@ -90,11 +90,11 @@ export async function issueMemberSessionForAccount(): Promise<LocalSession | nul
 
 export async function resetAdminPasswordWithAccount(newPassword: string): Promise<void> {
   const session = loadSession();
-  if (!session) throw new Error("请先进入家庭");
+  if (!session) throw new Error("member_not_found");
   const { data, error } = await getSupabaseAuth().auth.getSession();
   if (error) throw new Error(mapAuthError(error.message));
   const token = data.session?.access_token;
-  if (!token) throw new Error("请先登录");
+  if (!token) throw new Error("unauthorized");
 
   const res = await fetch("/api/auth/reset-admin-password", {
     method: "POST",
@@ -110,7 +110,7 @@ export async function resetAdminPasswordWithAccount(newPassword: string): Promis
   });
   const payload = (await res.json().catch(() => null)) as { error?: string } | null;
   if (!res.ok) {
-    throw new Error(humanResetAdminPasswordError(payload?.error));
+    throw new Error(payload?.error ?? "auth_network_error");
   }
 }
 
@@ -178,7 +178,7 @@ async function postAuthed(path: string, body: unknown): Promise<any> {
   const { data, error } = await getSupabaseAuth().auth.getSession();
   if (error) throw new Error(mapAuthError(error.message));
   const token = data.session?.access_token;
-  if (!token) throw new Error("请先登录");
+  if (!token) throw new Error("unauthorized");
 
   const res = await fetch(path, {
     method: "POST",
@@ -205,85 +205,21 @@ async function parseApiResponse(res: Response): Promise<any> {
     error?: string;
   } | null;
   if (!res.ok) {
-    throw new Error(humanAuthError(payload?.error));
+    // Error codes pass through untranslated; render with humanizeError so
+    // the message follows the viewer's language.
+    throw new Error(payload?.error ?? "auth_network_error");
   }
   return payload ?? {};
-}
-
-function humanResetAdminPasswordError(error?: string): string {
-  switch (error) {
-    case "admin_password_too_short":
-      return "管理密码至少 6 位";
-    case "owner_required":
-      return "只有创建家庭的邮箱账号可以重置管理密码";
-    case "not_admin":
-      return "只有管理员可以重置管理密码";
-    case "member_not_found":
-      return "当前家庭身份已失效，请重新进入家庭";
-    case "unauthorized":
-      return "请先登录";
-    default:
-      return humanAuthError(error);
-  }
 }
 
 function mapAuthError(message: string): string {
   const lower = message.toLowerCase();
   if (lower.includes("invalid login") || lower.includes("invalid credentials")) {
-    return "邮箱或密码不正确";
+    return "invalid_credentials";
   }
   if (lower.includes("already") && lower.includes("registered")) {
-    return "这个邮箱已经注册，请直接登录继续。";
+    return "email_registered";
   }
-  if (lower.includes("password")) return "密码不符合要求，请检查后重试";
-  return "网络不稳定，请稍后再试";
-}
-
-export function humanAuthError(error?: string): string {
-  switch (error) {
-    case "email_required":
-      return "请输入邮箱";
-    case "invalid_email":
-      return "邮箱格式不正确";
-    case "password_required":
-      return "请输入密码";
-    case "password_too_short":
-      return "密码至少 8 位";
-    case "email_registered":
-      return "这个邮箱已经注册，请直接登录继续。";
-    case "email_send_failed":
-      return "家庭代码邮件发送失败，请稍后重试。";
-    case "family_code_expired":
-      return "家庭代码已过期，请重新发送。";
-    case "family_code_used":
-      return "家庭代码已使用，不能重复创建家庭。";
-    case "invalid_family_code":
-      return "家庭代码不正确，请检查邮箱中的代码。";
-    case "family_code_not_verified":
-      return "请先验证发送到邮箱中的家庭代码。";
-    case "account_already_has_family":
-      return "你已经创建过家庭，正在进入家庭聊天室。";
-    case "family_name_required":
-      return "请输入家庭名称";
-    case "nickname_required":
-      return "请输入昵称";
-    case "invalid_role":
-      return "请选择角色";
-    case "admin_password_too_short":
-      return "管理密码至少 6 位";
-    case "unauthorized":
-      return "请先登录";
-    case "owner_required":
-      return "只有创建家庭的邮箱账号可以执行这个操作";
-    case "not_admin":
-      return "只有管理员可以执行这个操作";
-    case "member_not_found":
-      return "当前家庭身份已失效，请重新进入家庭";
-    case "cannot_remove_self":
-      return "不能移除自己";
-    case "not_allowed":
-      return "当前操作不允许";
-    default:
-      return "网络不稳定，请稍后再试";
-  }
+  if (lower.includes("password")) return "password_requirement";
+  return "auth_network_error";
 }

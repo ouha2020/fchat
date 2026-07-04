@@ -6,10 +6,11 @@ import { useRef } from "react";
 import AssistantActionCardView from "./AssistantActionCard";
 import AudioBubble from "./AudioBubble";
 import LinkifiedText from "./LinkifiedText";
+import MemberAvatarCircle from "./MemberAvatarCircle";
 import { useLanguage } from "@/components/LanguageProvider";
 import { formatTime } from "@/lib/format";
 import { createGoogleMapUrl } from "@/lib/locationService";
-import { useResolvedMediaUrl } from "@/lib/mediaClient";
+import { useResolvedMedia } from "@/lib/mediaClient";
 import { safeGoogleMapsUrl } from "@/lib/security";
 import {
   getSystemMessageTone,
@@ -246,27 +247,17 @@ function MemberAvatar({
   isMine: boolean;
 }) {
   const { t } = useLanguage();
-  const avatarUrl = useResolvedMediaUrl(session, sender?.avatar_url ?? null);
-  const placeholder = (sender?.nickname ?? "?").slice(0, 1).toUpperCase();
-  const shellClass = `flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full text-sm font-semibold sm:h-9 sm:w-9 sm:text-base ${
-    isMine
-      ? "bg-brand-500 text-white shadow-[0_8px_18px_rgba(79,108,247,0.22)] ring-1 ring-white/30"
-      : "bg-white/90 text-slate-700 shadow-[0_8px_18px_rgba(71,64,49,0.08)] ring-1 ring-white/80"
-  }`;
   const avatar = (
-    <div className={shellClass}>
-      {avatarUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={avatarUrl}
-          alt=""
-          className="h-full w-full object-cover"
-          draggable={false}
-        />
-      ) : (
-        placeholder
-      )}
-    </div>
+    <MemberAvatarCircle
+      session={session}
+      avatarRef={sender?.avatar_url ?? null}
+      name={sender?.nickname ?? "?"}
+      className={`h-8 w-8 rounded-full text-sm font-semibold sm:h-9 sm:w-9 sm:text-base ${
+        isMine
+          ? "bg-brand-500 text-white shadow-[0_8px_18px_rgba(79,108,247,0.22)] ring-1 ring-white/30"
+          : "bg-white/90 text-slate-700 shadow-[0_8px_18px_rgba(71,64,49,0.08)] ring-1 ring-white/80"
+      }`}
+    />
   );
 
   if (isMine) {
@@ -377,27 +368,41 @@ function Bubble({
   const highlightClass = highlighted
     ? "important-message-highlight"
     : "";
-  const imageUrl = useResolvedMediaUrl(
+  const imageMedia = useResolvedMedia(
     session,
     message.message_type === "image" ? message.image_url : null,
     { messageId: message.id },
   );
-  const audioUrl = useResolvedMediaUrl(
+  const audioMedia = useResolvedMedia(
     session,
     message.message_type === "audio" ? message.audio_url : null,
     { messageId: message.id },
   );
+  const imageUrl = imageMedia.url;
 
   if (message.message_type === "image" && message.image_url) {
     if (!imageUrl) {
+      const failed = imageMedia.status === "error";
       return (
         <div
           {...actionHandlers}
           role="status"
           className={`relative max-w-full overflow-hidden rounded-[20px] shadow-[0_10px_24px_rgba(77,67,50,0.1)] ${isPrivate ? "ring-2 ring-violet-200" : ""} ${actionClass} ${highlightClass}`}
         >
-          <div className="h-40 w-48 max-w-full animate-pulse rounded-[20px] bg-slate-200/80" />
-          <span className="sr-only">{t("commonLoading")}</span>
+          <div
+            className={`flex h-40 w-48 max-w-full items-center justify-center rounded-[20px] bg-slate-200/80 ${
+              failed ? "" : "animate-pulse"
+            }`}
+          >
+            {failed ? (
+              <span className="text-xs font-medium text-slate-500">
+                {t("mediaLoadFailed")}
+              </span>
+            ) : null}
+          </div>
+          <span className="sr-only">
+            {failed ? t("mediaLoadFailed") : t("commonLoading")}
+          </span>
         </div>
       );
     }
@@ -444,10 +449,11 @@ function Bubble({
         ) : null}
         <AudioBubble
           messageId={message.id}
-          url={audioUrl}
+          url={audioMedia.url}
           durationMs={message.audio_duration_ms}
           isMine={isMine}
           highlighted={highlighted}
+          loadFailed={audioMedia.status === "error"}
         />
       </div>
     );

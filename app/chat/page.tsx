@@ -78,7 +78,7 @@ import {
   uploadChatAudio,
   uploadChatImage,
 } from "@/lib/messageRepository";
-import { cacheImageBlob } from "@/lib/imageCache";
+import { cacheImageBlob, useCachedImage } from "@/lib/imageCache";
 import { getCurrentLocation, createGoogleMapUrl } from "@/lib/locationService";
 import {
   installAudioUnlock,
@@ -3116,11 +3116,13 @@ export default function ChatPage() {
     session,
     currentMember?.avatar_url ?? null,
   );
-  const chatBackgroundUrl = useResolvedMediaUrl(
+  // Background reads from the same local image cache as chat images, so it
+  // shows instantly, survives reloads, and works offline.
+  const chatBackgroundUrl = useCachedImage(
     session,
     chatBackgroundSource?.mediaRef ?? null,
     { messageId: chatBackgroundSource?.messageId ?? null },
-  );
+  ).url;
 
   if (!isSupabaseConfigured()) {
     return (

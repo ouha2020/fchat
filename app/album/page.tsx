@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 
 import AppLoading from "@/components/AppLoading";
 import { useDialog } from "@/components/Dialog";
@@ -40,7 +40,7 @@ function AlbumContent() {
   const [items, setItems] = useState<AlbumItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [lightbox, setLightbox] = useState<AlbumItem | null>(null);
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -110,8 +110,15 @@ function AlbumContent() {
       if (!ok) return;
       try {
         await removeAlbumItem(session, item.id);
-        setItems((prev) => prev.filter((i) => i.id !== item.id));
-        setLightbox((current) => (current?.id === item.id ? null : current));
+        setItems((prev) => {
+          const next = prev.filter((i) => i.id !== item.id);
+          setLightboxIndex((current) => {
+            if (current === null) return null;
+            if (next.length === 0) return null;
+            return Math.min(current, next.length - 1);
+          });
+          return next;
+        });
       } catch (err) {
         toast.error(humanizeError(err, language));
       }
@@ -164,24 +171,26 @@ function AlbumContent() {
         </div>
       ) : (
         <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4 sm:gap-2">
-          {items.map((item) => (
+          {items.map((item, index) => (
             <AlbumThumb
               key={item.id}
               session={session}
               item={item}
-              onOpen={() => setLightbox(item)}
+              onOpen={() => setLightboxIndex(index)}
             />
           ))}
         </div>
       )}
 
-      {lightbox ? (
+      {lightboxIndex !== null && items[lightboxIndex] ? (
         <AlbumLightbox
           session={session}
-          item={lightbox}
+          items={items}
+          index={lightboxIndex}
+          onIndexChange={setLightboxIndex}
           canRemove={isOwn}
-          onClose={() => setLightbox(null)}
-          onRemove={() => handleRemove(lightbox)}
+          onClose={() => setLightboxIndex(null)}
+          onRemove={() => handleRemove(items[lightboxIndex])}
           removeLabel={t("albumRemove")}
           closeLabel={t("albumBack")}
         />
@@ -225,7 +234,9 @@ function AlbumThumb({
 
 function AlbumLightbox({
   session,
-  item,
+  items,
+  index,
+  onIndexChange,
   canRemove,
   onClose,
   onRemove,
@@ -233,22 +244,57 @@ function AlbumLightbox({
   closeLabel,
 }: {
   session: LocalSession | null;
-  item: AlbumItem;
+  items: AlbumItem[];
+  index: number;
+  onIndexChange: (index: number) => void;
   canRemove: boolean;
   onClose: () => void;
   onRemove: () => void;
   removeLabel: string;
   closeLabel: string;
 }) {
-  const media = useCachedImage(session, item.image_ref);
+  const item = items[index];
+  const media = useCachedImage(session, item?.image_ref ?? null);
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+
+  const hasPrev = index > 0;
+  const hasNext = index < items.length - 1;
+  const goPrev = useCallback(() => {
+    if (index > 0) onIndexChange(index - 1);
+  }, [index, onIndexChange]);
+  const goNext = useCallback(() => {
+    if (index < items.length - 1) onIndexChange(index + 1);
+  }, [index, items.length, onIndexChange]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") onClose();
+      else if (e.key === "ArrowLeft") goPrev();
+      else if (e.key === "ArrowRight") goNext();
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, goPrev, goNext]);
+
+  function handleTouchStart(e: React.TouchEvent) {
+    const touch = e.touches[0];
+    touchStartRef.current = { x: touch.clientX, y: touch.clientY };
+  }
+  function handleTouchEnd(e: React.TouchEvent) {
+    const start = touchStartRef.current;
+    touchStartRef.current = null;
+    if (!start) return;
+    const touch = e.changedTouches[0];
+    const dx = touch.clientX - start.x;
+    const dy = touch.clientY - start.y;
+    // Horizontal swipe only, with a comfortable threshold.
+    if (Math.abs(dx) < 48 || Math.abs(dx) < Math.abs(dy)) return;
+    if (dx > 0) goPrev();
+    else goNext();
+  }
+
+  const arrowClass =
+    "absolute top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/12 text-white backdrop-blur transition hover:bg-white/20 active:bg-white/25 disabled:opacity-0";
 
   return (
     <div
@@ -264,6 +310,9 @@ function AlbumLightbox({
         >
           {closeLabel}
         </button>
+        <span className="text-sm font-medium text-white/70">
+          {index + 1} / {items.length}
+        </span>
         {canRemove ? (
           <button
             type="button"
@@ -272,26 +321,60 @@ function AlbumLightbox({
           >
             {removeLabel}
           </button>
+        ) : (
+          <span className="min-h-10 w-16" aria-hidden />
+        )}
+      </div>
+
+      <div
+        className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden"
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+      >
+        <button
+          type="button"
+          onClick={onClose}
+          className="flex h-full w-full items-center justify-center p-4"
+          aria-label={closeLabel}
+        >
+          {media.url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={media.url}
+              alt=""
+              className="max-h-full max-w-full object-contain"
+              draggable={false}
+            />
+          ) : (
+            <span className="text-sm text-white/70">···</span>
+          )}
+        </button>
+
+        {hasPrev ? (
+          <button
+            type="button"
+            onClick={goPrev}
+            className={`${arrowClass} left-3`}
+            aria-label="Previous"
+          >
+            <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M15 18l-6-6 6-6" />
+            </svg>
+          </button>
+        ) : null}
+        {hasNext ? (
+          <button
+            type="button"
+            onClick={goNext}
+            className={`${arrowClass} right-3`}
+            aria-label="Next"
+          >
+            <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 18l6-6-6-6" />
+            </svg>
+          </button>
         ) : null}
       </div>
-      <button
-        type="button"
-        onClick={onClose}
-        className="flex min-h-0 flex-1 items-center justify-center p-4"
-        aria-label={closeLabel}
-      >
-        {media.url ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={media.url}
-            alt=""
-            className="max-h-full max-w-full object-contain"
-            draggable={false}
-          />
-        ) : (
-          <span className="text-sm text-white/70">···</span>
-        )}
-      </button>
     </div>
   );
 }

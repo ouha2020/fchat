@@ -59,6 +59,19 @@ async function writeCachedBlob(ref: string, blob: Blob): Promise<void> {
   }
 }
 
+/**
+ * Seed the local cache with bytes we already hold (e.g. an image the user just
+ * uploaded), keyed by its storage ref, so the normal display path serves it
+ * instantly with no re-download.
+ */
+export async function cacheImageBlob(
+  ref: string,
+  blob: Blob,
+): Promise<void> {
+  if (!isStorageBackedMediaRef(ref)) return;
+  await writeCachedBlob(ref, blob);
+}
+
 function directMediaUrl(ref: string | null | undefined): string | null {
   if (isStorageBackedMediaRef(ref ?? null)) return null;
   return safeHttpUrl(ref ?? null);
@@ -69,11 +82,48 @@ interface CachedImageOptions {
   contextEventId?: string | null;
 }
 
-function initialCachedMedia(ref: string | null | undefined): ResolvedMedia {
-  if (!ref?.trim()) return { url: null, status: "error" };
+export interface CachedImage extends ResolvedMedia {
+  /** Download progress 0..1 while fetching from network; null when unknown. */
+  progress: number | null;
+}
+
+function initialCachedMedia(ref: string | null | undefined): CachedImage {
+  if (!ref?.trim()) return { url: null, status: "error", progress: null };
   const direct = directMediaUrl(ref);
-  if (direct) return { url: direct, status: "ready" };
-  return { url: null, status: "loading" };
+  if (direct) return { url: direct, status: "ready", progress: null };
+  return { url: null, status: "loading", progress: null };
+}
+
+// Stream the response so we can report real download progress (matching the
+// upload-side progress ring). Falls back to a plain blob read when the length
+// is unknown or streaming is unsupported.
+async function downloadBlobWithProgress(
+  response: Response,
+  onProgress: (fraction: number) => void,
+  isCancelled: () => boolean,
+): Promise<Blob> {
+  const total = Number(response.headers.get("content-length") ?? "");
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!response.body || !Number.isFinite(total) || total <= 0) {
+    return response.blob();
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (isCancelled()) {
+      await reader.cancel().catch(() => undefined);
+      throw new DOMException("cancelled", "AbortError");
+    }
+    if (value) {
+      chunks.push(value);
+      received += value.length;
+      onProgress(Math.min(1, received / total));
+    }
+  }
+  return new Blob(chunks as BlobPart[], contentType ? { type: contentType } : undefined);
 }
 
 /**
@@ -88,10 +138,10 @@ export function useCachedImage(
   session: LocalSession | null,
   ref: string | null | undefined,
   options: CachedImageOptions = {},
-): ResolvedMedia {
+): CachedImage {
   const messageId = options.messageId ?? null;
   const contextEventId = options.contextEventId ?? null;
-  const [media, setMedia] = useState<ResolvedMedia>(() =>
+  const [media, setMedia] = useState<CachedImage>(() =>
     initialCachedMedia(ref),
   );
 
@@ -108,13 +158,13 @@ export function useCachedImage(
     }
 
     if (!session) {
-      setMedia({ url: null, status: "loading" });
+      setMedia({ url: null, status: "loading", progress: null });
       return () => {
         cancelled = true;
       };
     }
 
-    setMedia({ url: null, status: "loading" });
+    setMedia({ url: null, status: "loading", progress: null });
 
     (async () => {
       // 1. Local hit: display immediately, zero network.
@@ -122,7 +172,7 @@ export function useCachedImage(
       if (cancelled) return;
       if (cached) {
         objectUrl = URL.createObjectURL(cached);
-        setMedia({ url: objectUrl, status: "ready" });
+        setMedia({ url: objectUrl, status: "ready", progress: null });
         return;
       }
 
@@ -139,11 +189,11 @@ export function useCachedImage(
         });
         if (cancelled) return;
         if (!signed) {
-          setMedia({ url: null, status: "error" });
+          setMedia({ url: null, status: "error", progress: null });
           return;
         }
         if (!cacheApiAvailable()) {
-          setMedia({ url: signed, status: "ready" });
+          setMedia({ url: signed, status: "ready", progress: null });
           return;
         }
 
@@ -151,23 +201,31 @@ export function useCachedImage(
         if (cancelled) return;
         if (!res.ok) {
           // Serve the signed URL directly so the image still shows this time.
-          setMedia({ url: signed, status: "ready" });
+          setMedia({ url: signed, status: "ready", progress: null });
           return;
         }
-        const blob = await res.blob();
+        const blob = await downloadBlobWithProgress(
+          res,
+          (fraction) => {
+            if (!cancelled) {
+              setMedia({ url: null, status: "loading", progress: fraction });
+            }
+          },
+          () => cancelled,
+        );
         if (cancelled) return;
         await writeCachedBlob(ref as string, blob);
         if (cancelled) return;
         objectUrl = URL.createObjectURL(blob);
-        setMedia({ url: objectUrl, status: "ready" });
+        setMedia({ url: objectUrl, status: "ready", progress: 1 });
       } catch {
         if (cancelled) return;
         // Download/caching failed. If we got a signed URL, still show the image
         // through it; only fall back to an error when we never got a URL.
         setMedia(
           signed
-            ? { url: signed, status: "ready" }
-            : { url: null, status: "error" },
+            ? { url: signed, status: "ready", progress: null }
+            : { url: null, status: "error", progress: null },
         );
       }
     })();

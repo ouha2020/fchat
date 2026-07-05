@@ -206,10 +206,17 @@ export async function sendMessage(
   return data as string;
 }
 
+export interface ChatImageUpload {
+  url: string;
+  /** The exact bytes uploaded (after client-side prepare/resize). */
+  blob: Blob;
+}
+
 export async function uploadChatImage(
   session: LocalSession,
   file: File,
-): Promise<string> {
+  onProgress?: (fraction: number) => void,
+): Promise<ChatImageUpload> {
   const preparedFile = await prepareChatImage(file);
   imageFileSchema.parse(preparedFile);
   const contentType = normalizeMime(preparedFile.type);
@@ -220,7 +227,8 @@ export async function uploadChatImage(
   form.append("memberId", session.member_id);
   form.append("memberToken", session.member_token);
   form.append("file", preparedFile, `image.${ext}`);
-  return uploadViaApi("/api/upload/image", form);
+  const url = await uploadViaApi("/api/upload/image", form, onProgress);
+  return { url, blob: preparedFile };
 }
 
 export async function deleteMessage(
@@ -299,15 +307,42 @@ function validateOutgoingMessage(input: SendMessageInput): void {
   }
 }
 
-async function uploadViaApi(path: string, form: FormData): Promise<string> {
-  const res = await fetch(path, {
-    method: "POST",
-    body: form,
+async function uploadViaApi(
+  path: string,
+  form: FormData,
+  onProgress?: (fraction: number) => void,
+): Promise<string> {
+  // XMLHttpRequest (not fetch) so we can report real upload progress to the
+  // optimistic image bubble via the upload.onprogress event.
+  return new Promise<string>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", path);
+    xhr.responseType = "json";
+    if (onProgress && xhr.upload) {
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable && event.total > 0) {
+          onProgress(Math.min(1, event.loaded / event.total));
+        }
+      };
+    }
+    xhr.onload = () => {
+      const payload = (xhr.response ?? null) as
+        | { url?: string; error?: string }
+        | null;
+      if (xhr.status < 200 || xhr.status >= 300) {
+        reject(new Error(payload?.error ?? "upload_failed"));
+        return;
+      }
+      if (!payload?.url || !isSafeMediaRef(payload.url)) {
+        reject(new Error("upload_failed"));
+        return;
+      }
+      resolve(payload.url);
+    };
+    xhr.onerror = () => reject(new Error("upload_failed"));
+    xhr.ontimeout = () => reject(new Error("upload_failed"));
+    xhr.send(form);
   });
-  const payload = (await res.json().catch(() => null)) as { url?: string; error?: string } | null;
-  if (!res.ok) throw new Error(payload?.error ?? "upload_failed");
-  if (!payload?.url || !isSafeMediaRef(payload.url)) throw new Error("upload_failed");
-  return payload.url;
 }
 
 function uniqueMessageIds(messageIds: string[]): string[] {

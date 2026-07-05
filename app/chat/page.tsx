@@ -78,6 +78,7 @@ import {
   uploadChatAudio,
   uploadChatImage,
 } from "@/lib/messageRepository";
+import { cacheImageBlob } from "@/lib/imageCache";
 import { getCurrentLocation, createGoogleMapUrl } from "@/lib/locationService";
 import {
   installAudioUnlock,
@@ -743,6 +744,10 @@ export default function ChatPage() {
   const pullStartYRef = useRef<number | null>(null);
   const didInitialScrollRef = useRef(false);
   const forceImmediateBottomScrollRef = useRef(false);
+  // Optimistic image upload bookkeeping: the picked File (for retry) and the
+  // preview object URLs (to revoke), both keyed by the temporary message id.
+  const pendingImageFilesRef = useRef<Map<string, File>>(new Map());
+  const previewObjectUrlsRef = useRef<Map<string, string>>(new Map());
   const cachedMessageLimitRef = useRef(INITIAL_CACHED_MESSAGE_LIMIT);
   const loadingOlderMessagesRef = useRef(false);
   const preserveScrollRef = useRef<{ scrollTop: number; scrollHeight: number } | null>(null);
@@ -763,6 +768,13 @@ export default function ChatPage() {
     messagesRef.current = messages;
     knownMessageIdsRef.current = new Set(messages.map((message) => message.id));
   }, [messages]);
+  useEffect(() => {
+    const previewUrls = previewObjectUrlsRef.current;
+    return () => {
+      previewUrls.forEach((url) => URL.revokeObjectURL(url));
+      previewUrls.clear();
+    };
+  }, []);
   const pendingRealtimeMessageIdsRef = useRef<Set<string>>(new Set());
   const realtimeBatchTimerRef = useRef<number | null>(null);
   const pendingPushMessageIdsRef = useRef<Map<string, number>>(new Map());
@@ -2886,30 +2898,153 @@ export default function ChatPage() {
     }
   }
 
-  async function handlePickImage(file: File) {
+  function pushPendingImageMessage(args: {
+    id: string;
+    previewUrl: string;
+    recipientId: string | null;
+  }) {
     if (!session) return;
-    setSending(true);
+    forceImmediateBottomScrollRef.current = true;
+    const now = new Date().toISOString();
+    // Kept in memory only — never persisted to the message cache, since the
+    // temp id and blob: preview URL are meaningless outside this session.
+    const optimistic: Message = {
+      id: args.id,
+      family_id: session.family_id,
+      family_seq: null,
+      sender_member_id: session.member_id,
+      recipient_member_id: args.recipientId,
+      message_type: "image",
+      content: t("chatImageMessage"),
+      image_url: null,
+      audio_url: null,
+      audio_duration_ms: null,
+      latitude: null,
+      longitude: null,
+      address: null,
+      map_url: null,
+      effect_id: null,
+      effect_caption: null,
+      system_event_type: null,
+      system_event_payload: null,
+      deleted_at: null,
+      deleted_by_member_id: null,
+      updated_at: now,
+      created_at: now,
+      local_preview_url: args.previewUrl,
+      upload_status: "uploading",
+      upload_progress: 0,
+    };
+    setMessages((prev) =>
+      prev.some((m) => m.id === args.id) ? prev : [...prev, optimistic],
+    );
+    scrollToBottom("auto");
+  }
+
+  async function uploadPendingImage(
+    tempId: string,
+    file: File,
+    recipientId: string | null,
+  ) {
+    if (!session) return;
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === tempId
+          ? { ...m, upload_status: "uploading", upload_progress: 0 }
+          : m,
+      ),
+    );
     try {
-      const url = await uploadChatImage(session, file);
+      const { url, blob } = await uploadChatImage(session, file, (fraction) => {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === tempId ? { ...m, upload_progress: fraction } : m,
+          ),
+        );
+      });
+      // Seed the local cache with the exact uploaded bytes so the real bubble
+      // renders instantly (no re-download, no flash) once we swap the id.
+      await cacheImageBlob(url, blob).catch(() => undefined);
       const id = await sendMessage(session, {
         type: "image",
         image_url: url,
         content: t("chatImageMessage"),
-        recipient_member_id: whisperTarget?.id ?? null,
+        recipient_member_id: recipientId,
       });
-      pushOptimistic({
+      pendingImageFilesRef.current.delete(tempId);
+      const now = new Date().toISOString();
+      const realMessage: Message = {
         id,
+        family_id: session.family_id,
+        family_seq: null,
+        sender_member_id: session.member_id,
+        recipient_member_id: recipientId,
         message_type: "image",
-        image_url: url,
         content: t("chatImageMessage"),
-        recipient_member_id: whisperTarget?.id ?? null,
+        image_url: url,
+        audio_url: null,
+        audio_duration_ms: null,
+        latitude: null,
+        longitude: null,
+        address: null,
+        map_url: null,
+        effect_id: null,
+        effect_caption: null,
+        system_event_type: null,
+        system_event_payload: null,
+        deleted_at: null,
+        deleted_by_member_id: null,
+        updated_at: now,
+        created_at: now,
+      };
+      setMessages((prev) => {
+        const withoutTemp = prev.filter((m) => m.id !== tempId);
+        if (withoutTemp.some((m) => m.id === id)) return withoutTemp;
+        return [...withoutTemp, realMessage];
       });
+      mergeRealtimeMessage(session, realMessage)
+        .then(setMessages)
+        .catch(() => undefined);
       requestMessagePush(session, id);
+      releasePreviewUrl(tempId);
     } catch (err) {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === tempId ? { ...m, upload_status: "failed" } : m,
+        ),
+      );
       toast.error(humanizeError(err, language));
-    } finally {
-      setSending(false);
     }
+  }
+
+  function releasePreviewUrl(tempId: string) {
+    const url = previewObjectUrlsRef.current.get(tempId);
+    if (!url) return;
+    previewObjectUrlsRef.current.delete(tempId);
+    // Delay revocation so the bubble can swap to the cached real image first.
+    window.setTimeout(() => URL.revokeObjectURL(url), 15000);
+  }
+
+  async function handlePickImage(file: File) {
+    if (!session) return;
+    const tempId = `pending-image-${crypto.randomUUID()}`;
+    const previewUrl = URL.createObjectURL(file);
+    const recipientId = whisperTarget?.id ?? null;
+    pendingImageFilesRef.current.set(tempId, file);
+    previewObjectUrlsRef.current.set(tempId, previewUrl);
+    pushPendingImageMessage({ id: tempId, previewUrl, recipientId });
+    await uploadPendingImage(tempId, file, recipientId);
+  }
+
+  async function handleRetryImageUpload(message: Message) {
+    if (!session) return;
+    const file = pendingImageFilesRef.current.get(message.id);
+    if (!file) return;
+    await uploadPendingImage(
+      message.id,
+      file,
+      message.recipient_member_id ?? null,
+    );
   }
 
   async function handleSendAudio(result: RecordingResult) {
@@ -3278,6 +3413,7 @@ export default function ChatPage() {
                     }
                     onRequestActions={canOpenActions ? openMessageActions : undefined}
                     onReplayEffect={handleReplayEffect}
+                    onRetryUpload={handleRetryImageUpload}
                   />
                 </div>
               );

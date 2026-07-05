@@ -33,6 +33,70 @@ const messageBodyWidthClass = "min-w-0 max-w-[78%] sm:max-w-md";
 const messageMetaClass =
   "flex max-w-full min-w-0 flex-wrap items-center gap-1.5 text-[11px] leading-4 text-slate-500";
 
+// One progress indicator for both directions: a determinate ring with a
+// percentage when the fraction is known (upload, or download with a known
+// length), and a spinning indeterminate ring when it isn't. `overlay` renders
+// white on a dark scrim over an image; `inline` renders on a light placeholder.
+function MediaProgressRing({
+  fraction,
+  label,
+  variant = "overlay",
+}: {
+  fraction: number | null;
+  label: string;
+  variant?: "overlay" | "inline";
+}) {
+  const radius = 20;
+  const circumference = 2 * Math.PI * radius;
+  const indeterminate = fraction === null;
+  const value = indeterminate ? 0.25 : Math.max(0, Math.min(1, fraction));
+  const dashoffset = circumference * (1 - value);
+  const overlay = variant === "overlay";
+  const trackStroke = overlay ? "rgba(255,255,255,0.3)" : "rgba(100,116,139,0.25)";
+  const progressStroke = overlay ? "#ffffff" : "#4f6cf7";
+  const percent = Math.round(value * 100);
+  return (
+    <div
+      className={`relative flex h-16 w-16 items-center justify-center rounded-full ${
+        overlay ? "bg-black/45 text-white backdrop-blur" : "text-slate-600"
+      }`}
+      role="status"
+      aria-label={indeterminate ? label : `${label} ${percent}%`}
+    >
+      <svg
+        width="52"
+        height="52"
+        viewBox="0 0 52 52"
+        className={`-rotate-90 ${indeterminate ? "animate-spin" : ""}`}
+      >
+        <circle
+          cx="26"
+          cy="26"
+          r={radius}
+          fill="none"
+          stroke={trackStroke}
+          strokeWidth="4"
+        />
+        <circle
+          cx="26"
+          cy="26"
+          r={radius}
+          fill="none"
+          stroke={progressStroke}
+          strokeWidth="4"
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          strokeDashoffset={dashoffset}
+          style={indeterminate ? undefined : { transition: "stroke-dashoffset 0.2s linear" }}
+        />
+      </svg>
+      {indeterminate ? null : (
+        <span className="absolute text-[11px] font-semibold">{percent}%</span>
+      )}
+    </div>
+  );
+}
+
 interface Props {
   session: LocalSession;
   message: Message;
@@ -55,6 +119,7 @@ interface Props {
     point: { x: number; y: number },
   ) => void;
   onReplayEffect?: (message: Message) => void;
+  onRetryUpload?: (message: Message) => void;
 }
 
 export default function ChatMessage({
@@ -76,6 +141,7 @@ export default function ChatMessage({
   onSnoozeAssistantTask,
   onRequestActions,
   onReplayEffect,
+  onRetryUpload,
 }: Props) {
   const { language, t } = useLanguage();
   const actionHandlers = useLongPress(
@@ -232,6 +298,7 @@ export default function ChatMessage({
               ? () => onReplayEffect(message)
               : undefined
           }
+          onRetryUpload={onRetryUpload}
         />
       </div>
     </div>
@@ -346,6 +413,7 @@ function Bubble({
   actionHandlers,
   actionClass,
   onReplayEffect,
+  onRetryUpload,
 }: {
   message: Message;
   session: LocalSession;
@@ -355,6 +423,7 @@ function Bubble({
   actionHandlers: ReturnType<typeof useLongPress>;
   actionClass: string;
   onReplayEffect?: () => void;
+  onRetryUpload?: (message: Message) => void;
 }) {
   const { t } = useLanguage();
   const base = `max-w-full rounded-[20px] px-3.5 py-2.5 text-sm ${
@@ -381,6 +450,60 @@ function Bubble({
   );
   const imageUrl = imageMedia.url;
 
+  if (message.message_type === "image" && message.upload_status) {
+    const previewSrc = message.local_preview_url ?? null;
+    const failed = message.upload_status === "failed";
+    return (
+      <div
+        className={`relative max-w-full overflow-hidden rounded-[20px] shadow-[0_10px_24px_rgba(77,67,50,0.1)] ${isPrivate ? "ring-2 ring-violet-200" : ""} ${highlightClass}`}
+      >
+        {previewSrc ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={previewSrc}
+            alt={t("messageImageAlt")}
+            className={`max-h-72 max-w-full rounded-[20px] object-cover transition ${
+              failed ? "opacity-40" : "opacity-60"
+            }`}
+            draggable={false}
+          />
+        ) : (
+          <div className="h-40 w-48 max-w-full rounded-[20px] bg-slate-200/80" />
+        )}
+        <div className="absolute inset-0 flex items-center justify-center">
+          {failed ? (
+            <button
+              type="button"
+              onClick={() => onRetryUpload?.(message)}
+              className="flex max-w-[85%] flex-col items-center gap-1 rounded-2xl bg-black/50 px-4 py-2 text-center text-xs font-medium text-white backdrop-blur"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                aria-hidden
+                className="h-5 w-5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M23 4v6h-6" />
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+              </svg>
+              {t("chatImageUploadFailed")}
+            </button>
+          ) : (
+            <MediaProgressRing
+              fraction={message.upload_progress ?? 0}
+              label={t("chatImageUploading")}
+              variant="overlay"
+            />
+          )}
+        </div>
+      </div>
+    );
+  }
+
   if (message.message_type === "image" && message.image_url) {
     if (!imageUrl) {
       const failed = imageMedia.status === "error";
@@ -390,16 +513,18 @@ function Bubble({
           role="status"
           className={`relative max-w-full overflow-hidden rounded-[20px] shadow-[0_10px_24px_rgba(77,67,50,0.1)] ${isPrivate ? "ring-2 ring-violet-200" : ""} ${actionClass} ${highlightClass}`}
         >
-          <div
-            className={`flex h-40 w-48 max-w-full items-center justify-center rounded-[20px] bg-slate-200/80 ${
-              failed ? "" : "animate-pulse"
-            }`}
-          >
+          <div className="flex h-40 w-48 max-w-full items-center justify-center rounded-[20px] bg-slate-200/80">
             {failed ? (
               <span className="text-xs font-medium text-slate-500">
                 {t("mediaLoadFailed")}
               </span>
-            ) : null}
+            ) : (
+              <MediaProgressRing
+                fraction={imageMedia.progress}
+                label={t("commonLoading")}
+                variant="inline"
+              />
+            )}
           </div>
           <span className="sr-only">
             {failed ? t("mediaLoadFailed") : t("commonLoading")}

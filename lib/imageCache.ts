@@ -127,8 +127,13 @@ export function useCachedImage(
       }
 
       // 2. Miss: sign once, download once, persist, then serve locally.
+      // Caching is strictly best-effort — once we have a signed URL the image
+      // must display even if the download-to-cache step fails, so a flaky
+      // (VPN) network degrades to the old direct-URL behaviour, never to a
+      // broken image.
+      let signed: string | null = null;
       try {
-        const signed = await resolveMediaUrl(session, ref, {
+        signed = await resolveMediaUrl(session, ref, {
           messageId,
           contextEventId,
         });
@@ -157,9 +162,13 @@ export function useCachedImage(
         setMedia({ url: objectUrl, status: "ready" });
       } catch {
         if (cancelled) return;
-        // Network/VPN hiccup with no cached copy: surface as an error so the
-        // caller's placeholder / retry UI can take over.
-        setMedia({ url: null, status: "error" });
+        // Download/caching failed. If we got a signed URL, still show the image
+        // through it; only fall back to an error when we never got a URL.
+        setMedia(
+          signed
+            ? { url: signed, status: "ready" }
+            : { url: null, status: "error" },
+        );
       }
     })();
 

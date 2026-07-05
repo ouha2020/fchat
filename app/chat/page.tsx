@@ -78,7 +78,8 @@ import {
   uploadChatAudio,
   uploadChatImage,
 } from "@/lib/messageRepository";
-import { cacheImageBlob } from "@/lib/imageCache";
+import { addAlbumItem } from "@/lib/albumService";
+import { cacheImageBlob, useCachedImage } from "@/lib/imageCache";
 import { getCurrentLocation, createGoogleMapUrl } from "@/lib/locationService";
 import {
   installAudioUnlock,
@@ -2459,6 +2460,17 @@ export default function ChatPage() {
     toast.success(t("previewBackgroundSet"));
   }
 
+  async function handleAddMessageToAlbum(message: Message) {
+    if (!session || !message.image_url) return;
+    setMessageActionMenu(null);
+    try {
+      await addAlbumItem(session, message.image_url, message.id);
+      toast.success(t("albumAdded"));
+    } catch (err) {
+      toast.error(humanizeError(err, language));
+    }
+  }
+
   async function handleAddImportant(messageId: string) {
     if (!session) return;
     setMessageActionMenu(null);
@@ -3116,11 +3128,13 @@ export default function ChatPage() {
     session,
     currentMember?.avatar_url ?? null,
   );
-  const chatBackgroundUrl = useResolvedMediaUrl(
+  // Background reads from the same local image cache as chat images, so it
+  // shows instantly, survives reloads, and works offline.
+  const chatBackgroundUrl = useCachedImage(
     session,
     chatBackgroundSource?.mediaRef ?? null,
     { messageId: chatBackgroundSource?.messageId ?? null },
-  );
+  ).url;
 
   if (!isSupabaseConfigured()) {
     return (
@@ -3224,6 +3238,19 @@ export default function ChatPage() {
                 onClick={() => handleSetMessageImageBackground(selectedActionMessage)}
               >
                 {t("previewSetBackground")}
+              </button>
+            ) : null}
+            {selectedActionMessage.message_type === "image" &&
+            selectedActionMessage.image_url &&
+            !selectedActionMessage.recipient_member_id &&
+            !selectedActionMessage.deleted_at ? (
+              <button
+                type="button"
+                role="menuitem"
+                className={`${chatActionMenuButtonClass} text-slate-700 hover:bg-slate-50 focus-visible:ring-brand-200`}
+                onClick={() => handleAddMessageToAlbum(selectedActionMessage)}
+              >
+                {t("albumAdd")}
               </button>
             ) : null}
             {selectedActionMessage.message_type !== "system" &&

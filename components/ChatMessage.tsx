@@ -328,13 +328,14 @@ function MemberAvatar({
     />
   );
 
-  if (isMine) {
+  // Tapping any member's avatar opens that member's photo album.
+  if (sender) {
     return (
       <Link
-        href="/me"
+        href={`/album?member=${encodeURIComponent(sender.id)}`}
         className="-m-1 flex shrink-0 rounded-full p-1 transition active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
-        aria-label={t("meTitle")}
-        title={t("meTitle")}
+        aria-label={t("albumOpenAria")}
+        title={t("albumOpenAria")}
       >
         {avatar}
       </Link>

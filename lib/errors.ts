@@ -96,6 +96,7 @@ const ERROR_MAP: Record<string, TranslationKey> = {
   invalid_avatar_url: "error_invalid_avatar_url",
   avatar_upload_failed: "error_avatar_upload_failed",
   invalid_location: "error_invalid_location",
+  invalid_album_image: "error_invalid_album_image",
   invalid_image_url: "error_invalid_image_type",
   invalid_audio_url: "error_invalid_audio_type",
   message_too_long: "error_message_too_long",

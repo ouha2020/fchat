@@ -10,6 +10,7 @@ import MemberAvatarCircle from "./MemberAvatarCircle";
 import { useLanguage } from "@/components/LanguageProvider";
 import { formatTime } from "@/lib/format";
 import { createGoogleMapUrl } from "@/lib/locationService";
+import { useCachedImage } from "@/lib/imageCache";
 import { useResolvedMedia } from "@/lib/mediaClient";
 import { safeGoogleMapsUrl } from "@/lib/security";
 import {
@@ -368,7 +369,7 @@ function Bubble({
   const highlightClass = highlighted
     ? "important-message-highlight"
     : "";
-  const imageMedia = useResolvedMedia(
+  const imageMedia = useCachedImage(
     session,
     message.message_type === "image" ? message.image_url : null,
     { messageId: message.id },

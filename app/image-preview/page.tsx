@@ -9,7 +9,7 @@ import { useDialog } from "@/components/Dialog";
 import { loadSession, type LocalSession } from "@/lib/authLocal";
 import { setChatBackground } from "@/lib/chatBackground";
 import { getMessageById } from "@/lib/messageService";
-import { useResolvedMedia } from "@/lib/mediaClient";
+import { useCachedImage } from "@/lib/imageCache";
 import { safeHttpUrl } from "@/lib/security";
 
 export default function ImagePreviewPage() {
@@ -39,7 +39,7 @@ function ImagePreviewContent() {
   // the message lookup and URL signing are in flight.
   const [refMissing, setRefMissing] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const media = useResolvedMedia(session, mediaRef, {
+  const media = useCachedImage(session, mediaRef, {
     messageId,
   });
   const src = media.url;

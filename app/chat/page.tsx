@@ -54,7 +54,7 @@ import {
   memberProfileChangedStorageKey,
   readMemberProfileChanged,
 } from "@/lib/memberProfileEvents";
-import { resolveMediaUrl, useResolvedMediaUrl } from "@/lib/mediaClient";
+import { resolveMediaUrl } from "@/lib/mediaClient";
 import { fileExtFromRef, triggerBlobDownload } from "@/lib/download";
 import {
   filterVisibleMessages,
@@ -3154,10 +3154,10 @@ export default function ChatPage() {
   }
 
   const currentMember = session ? memberMap.get(session.member_id) ?? null : null;
-  const currentAvatarUrl = useResolvedMediaUrl(
+  const currentAvatarUrl = useCachedImage(
     session,
     currentMember?.avatar_url ?? null,
-  );
+  ).url;
   // Background reads from the same local image cache as chat images, so it
   // shows instantly, survives reloads, and works offline.
   const chatBackgroundUrl = useCachedImage(

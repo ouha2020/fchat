@@ -54,7 +54,8 @@ import {
   memberProfileChangedStorageKey,
   readMemberProfileChanged,
 } from "@/lib/memberProfileEvents";
-import { useResolvedMediaUrl } from "@/lib/mediaClient";
+import { resolveMediaUrl, useResolvedMediaUrl } from "@/lib/mediaClient";
+import { fileExtFromRef, triggerBlobDownload } from "@/lib/download";
 import {
   filterVisibleMessages,
   hasAssistantCardMessage,
@@ -749,6 +750,7 @@ export default function ChatPage() {
   // preview object URLs (to revoke), both keyed by the temporary message id.
   const pendingImageFilesRef = useRef<Map<string, File>>(new Map());
   const previewObjectUrlsRef = useRef<Map<string, string>>(new Map());
+  const audioDownloadingRef = useRef(false);
   const cachedMessageLimitRef = useRef(INITIAL_CACHED_MESSAGE_LIMIT);
   const loadingOlderMessagesRef = useRef(false);
   const preserveScrollRef = useRef<{ scrollTop: number; scrollHeight: number } | null>(null);
@@ -2460,6 +2462,34 @@ export default function ChatPage() {
     toast.success(t("previewBackgroundSet"));
   }
 
+  async function handleDownloadAudio(message: Message) {
+    if (!session || !message.audio_url) return;
+    setMessageActionMenu(null);
+    if (audioDownloadingRef.current) return;
+    audioDownloadingRef.current = true;
+    toast.info(t("chatDownloadPreparing"));
+    try {
+      const url = await resolveMediaUrl(session, message.audio_url, {
+        messageId: message.id,
+      });
+      if (!url) throw new Error("media_sign_failed");
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("media_sign_failed");
+      const blob = await res.blob();
+      const ext = fileExtFromRef(message.audio_url, "webm");
+      const stamp = new Date(message.created_at)
+        .toISOString()
+        .replace(/[:T]/g, "-")
+        .slice(0, 19);
+      triggerBlobDownload(blob, `voice-${stamp}.${ext}`);
+      toast.success(t("chatDownloadDone"));
+    } catch (err) {
+      toast.error(humanizeError(err, language) || t("chatDownloadFailed"));
+    } finally {
+      audioDownloadingRef.current = false;
+    }
+  }
+
   async function handleAddMessageToAlbum(message: Message) {
     if (!session || !message.image_url) return;
     setMessageActionMenu(null);
@@ -3251,6 +3281,18 @@ export default function ChatPage() {
                 onClick={() => handleAddMessageToAlbum(selectedActionMessage)}
               >
                 {t("albumAdd")}
+              </button>
+            ) : null}
+            {selectedActionMessage.message_type === "audio" &&
+            selectedActionMessage.audio_url &&
+            !selectedActionMessage.deleted_at ? (
+              <button
+                type="button"
+                role="menuitem"
+                className={`${chatActionMenuButtonClass} text-slate-700 hover:bg-slate-50 focus-visible:ring-brand-200`}
+                onClick={() => handleDownloadAudio(selectedActionMessage)}
+              >
+                {t("chatDownloadAudio")}
               </button>
             ) : null}
             {selectedActionMessage.message_type !== "system" &&

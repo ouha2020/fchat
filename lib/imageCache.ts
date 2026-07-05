@@ -59,6 +59,19 @@ async function writeCachedBlob(ref: string, blob: Blob): Promise<void> {
   }
 }
 
+/**
+ * Seed the local cache with bytes we already hold (e.g. an image the user just
+ * uploaded), keyed by its storage ref, so the normal display path serves it
+ * instantly with no re-download.
+ */
+export async function cacheImageBlob(
+  ref: string,
+  blob: Blob,
+): Promise<void> {
+  if (!isStorageBackedMediaRef(ref)) return;
+  await writeCachedBlob(ref, blob);
+}
+
 function directMediaUrl(ref: string | null | undefined): string | null {
   if (isStorageBackedMediaRef(ref ?? null)) return null;
   return safeHttpUrl(ref ?? null);

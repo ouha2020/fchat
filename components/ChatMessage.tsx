@@ -33,6 +33,45 @@ const messageBodyWidthClass = "min-w-0 max-w-[78%] sm:max-w-md";
 const messageMetaClass =
   "flex max-w-full min-w-0 flex-wrap items-center gap-1.5 text-[11px] leading-4 text-slate-500";
 
+function UploadProgressRing({ pct, label }: { pct: number; label: string }) {
+  const radius = 20;
+  const circumference = 2 * Math.PI * radius;
+  const dashoffset = circumference * (1 - pct / 100);
+  return (
+    <div
+      className="relative flex h-16 w-16 items-center justify-center rounded-full bg-black/45 backdrop-blur"
+      role="status"
+      aria-label={`${label} ${pct}%`}
+    >
+      <svg width="52" height="52" viewBox="0 0 52 52" className="-rotate-90">
+        <circle
+          cx="26"
+          cy="26"
+          r={radius}
+          fill="none"
+          stroke="rgba(255,255,255,0.3)"
+          strokeWidth="4"
+        />
+        <circle
+          cx="26"
+          cy="26"
+          r={radius}
+          fill="none"
+          stroke="#ffffff"
+          strokeWidth="4"
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          strokeDashoffset={dashoffset}
+          style={{ transition: "stroke-dashoffset 0.2s linear" }}
+        />
+      </svg>
+      <span className="absolute text-[11px] font-semibold text-white">
+        {pct}%
+      </span>
+    </div>
+  );
+}
+
 interface Props {
   session: LocalSession;
   message: Message;
@@ -55,6 +94,7 @@ interface Props {
     point: { x: number; y: number },
   ) => void;
   onReplayEffect?: (message: Message) => void;
+  onRetryUpload?: (message: Message) => void;
 }
 
 export default function ChatMessage({
@@ -76,6 +116,7 @@ export default function ChatMessage({
   onSnoozeAssistantTask,
   onRequestActions,
   onReplayEffect,
+  onRetryUpload,
 }: Props) {
   const { language, t } = useLanguage();
   const actionHandlers = useLongPress(
@@ -232,6 +273,7 @@ export default function ChatMessage({
               ? () => onReplayEffect(message)
               : undefined
           }
+          onRetryUpload={onRetryUpload}
         />
       </div>
     </div>
@@ -346,6 +388,7 @@ function Bubble({
   actionHandlers,
   actionClass,
   onReplayEffect,
+  onRetryUpload,
 }: {
   message: Message;
   session: LocalSession;
@@ -355,6 +398,7 @@ function Bubble({
   actionHandlers: ReturnType<typeof useLongPress>;
   actionClass: string;
   onReplayEffect?: () => void;
+  onRetryUpload?: (message: Message) => void;
 }) {
   const { t } = useLanguage();
   const base = `max-w-full rounded-[20px] px-3.5 py-2.5 text-sm ${
@@ -380,6 +424,60 @@ function Bubble({
     { messageId: message.id },
   );
   const imageUrl = imageMedia.url;
+
+  if (message.message_type === "image" && message.upload_status) {
+    const previewSrc = message.local_preview_url ?? null;
+    const failed = message.upload_status === "failed";
+    const pct = Math.max(
+      0,
+      Math.min(100, Math.round((message.upload_progress ?? 0) * 100)),
+    );
+    return (
+      <div
+        className={`relative max-w-full overflow-hidden rounded-[20px] shadow-[0_10px_24px_rgba(77,67,50,0.1)] ${isPrivate ? "ring-2 ring-violet-200" : ""} ${highlightClass}`}
+      >
+        {previewSrc ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={previewSrc}
+            alt={t("messageImageAlt")}
+            className={`max-h-72 max-w-full rounded-[20px] object-cover transition ${
+              failed ? "opacity-40" : "opacity-60"
+            }`}
+            draggable={false}
+          />
+        ) : (
+          <div className="h-40 w-48 max-w-full rounded-[20px] bg-slate-200/80" />
+        )}
+        <div className="absolute inset-0 flex items-center justify-center">
+          {failed ? (
+            <button
+              type="button"
+              onClick={() => onRetryUpload?.(message)}
+              className="flex max-w-[85%] flex-col items-center gap-1 rounded-2xl bg-black/50 px-4 py-2 text-center text-xs font-medium text-white backdrop-blur"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                aria-hidden
+                className="h-5 w-5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M23 4v6h-6" />
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+              </svg>
+              {t("chatImageUploadFailed")}
+            </button>
+          ) : (
+            <UploadProgressRing pct={pct} label={t("chatImageUploading")} />
+          )}
+        </div>
+      </div>
+    );
+  }
 
   if (message.message_type === "image" && message.image_url) {
     if (!imageUrl) {

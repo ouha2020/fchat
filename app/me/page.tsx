@@ -13,6 +13,7 @@ import { useToast } from "@/components/Toast";
 import { clearSession, loadSession, saveSession, type LocalSession } from "@/lib/authLocal";
 import { updateMemberAvatar, uploadAvatar } from "@/lib/avatarService";
 import { humanizeError } from "@/lib/errors";
+import { cacheImageBlob } from "@/lib/imageCache";
 import { prepareAvatarImage } from "@/lib/imageCompression";
 import { validateMember } from "@/lib/familyService";
 import { notifyMemberProfileChanged } from "@/lib/memberProfileEvents";
@@ -141,6 +142,9 @@ export default function MePage() {
       const prepared = await prepareAvatarImage(file);
       const url = await uploadAvatar(session, prepared);
       const savedUrl = await updateMemberAvatar(session, url);
+      // Keep a local copy of exactly the bytes we uploaded, so the new avatar
+      // shows instantly everywhere without a round-trip to storage.
+      await cacheImageBlob(savedUrl ?? url, prepared).catch(() => undefined);
       setDashboard((current) =>
         current
           ? {

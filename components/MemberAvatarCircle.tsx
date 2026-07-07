@@ -1,7 +1,7 @@
 "use client";
 
 import type { LocalSession } from "@/lib/authLocal";
-import { useResolvedMediaUrl } from "@/lib/mediaClient";
+import { useCachedImage } from "@/lib/imageCache";
 
 interface Props {
   session: LocalSession | null;
@@ -20,7 +20,9 @@ export default function MemberAvatarCircle({
   className = "",
   ariaHidden,
 }: Props) {
-  const avatarUrl = useResolvedMediaUrl(session, avatarRef);
+  // Avatars read from the local image cache: once loaded (or seeded on
+  // upload) they show instantly and never re-download.
+  const avatarUrl = useCachedImage(session, avatarRef).url;
   // Spread iterates code points, so emoji nicknames keep their first glyph
   // intact instead of a broken surrogate half.
   const placeholder = ([...name][0] ?? "?").toUpperCase();

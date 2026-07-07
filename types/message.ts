@@ -35,6 +35,12 @@ export interface Message {
   system_event_type: SystemEventType | null;
   system_event_payload: Record<string, unknown> | null;
   push_requested_at?: string | null;
+  // Client-only optimistic-upload state — never persisted or read from the DB.
+  // Set while an outgoing image is uploading so the bubble can show a local
+  // preview with a progress overlay before the real storage URL exists.
+  local_preview_url?: string | null;
+  upload_status?: "uploading" | "failed";
+  upload_progress?: number; // 0..1
   deleted_at: string | null;
   deleted_by_member_id: string | null;
   updated_at: string;

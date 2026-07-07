@@ -61,7 +61,10 @@ export async function POST(request: Request) {
         contextEventId: input.contextEventId,
         acceptedRefs,
       });
-    } else if (!avatarStoragePathBelongsToFamily(media.path, member.family_id)) {
+    } else if (
+      !avatarStoragePathBelongsToFamily(media.path, member.family_id) &&
+      !(await isRefInFamilyAlbum(member.family_id, acceptedRefs))
+    ) {
       throw new ApiRequestError("forbidden", 403);
     }
 
@@ -79,6 +82,21 @@ export async function POST(request: Request) {
   } catch (err) {
     return badRequest(err, "media_sign_failed");
   }
+}
+
+async function isRefInFamilyAlbum(
+  familyId: string,
+  acceptedRefs: string[],
+): Promise<boolean> {
+  const sb = getSupabaseAdmin();
+  const { data, error } = await sb
+    .from("album_items")
+    .select("id")
+    .eq("family_id", familyId)
+    .in("image_ref", acceptedRefs)
+    .limit(1);
+  if (error) throw new ApiRequestError("media_sign_failed", 500);
+  return Boolean(data && data.length > 0);
 }
 
 async function assertMessageMediaVisible({

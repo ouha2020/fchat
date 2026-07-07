@@ -37,9 +37,15 @@ const AUTO_RELOAD_SCRIPT = `
 
   // The service worker leaves non-navigation same-origin requests to "/"
   // untouched, so this HEAD request tests the real network, not the cache.
+  // The abort timeout keeps a hung connection (stale VPN tunnel, blackholed
+  // QUIC session) from stalling the probe loop.
   function probeNetwork() {
     if (navigator.onLine === false) return;
-    fetch("/", { method: "HEAD", cache: "no-store" })
+    var options = { method: "HEAD", cache: "no-store" };
+    if (typeof AbortSignal !== "undefined" && AbortSignal.timeout) {
+      options.signal = AbortSignal.timeout(4000);
+    }
+    fetch("/", options)
       .then(function (res) {
         if (res && res.ok) autoReload();
       })

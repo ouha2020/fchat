@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRef } from "react";
+import { useRef, useState } from "react";
 
 import AssistantActionCardView from "./AssistantActionCard";
 import AudioBubble from "./AudioBubble";
@@ -444,10 +444,15 @@ function Bubble({
     message.message_type === "image" ? message.image_url : null,
     { messageId: message.id },
   );
+  const [audioRefreshKey, setAudioRefreshKey] = useState(0);
   const audioMedia = useResolvedMedia(
     session,
     message.message_type === "audio" ? message.audio_url : null,
-    { messageId: message.id },
+    {
+      messageId: message.id,
+      refreshKey: audioRefreshKey,
+      forceRefresh: audioRefreshKey > 0,
+    },
   );
   const imageUrl = imageMedia.url;
 
@@ -581,6 +586,7 @@ function Bubble({
           isMine={isMine}
           highlighted={highlighted}
           loadFailed={audioMedia.status === "error"}
+          onPlaybackError={() => setAudioRefreshKey((key) => key + 1)}
         />
       </div>
     );

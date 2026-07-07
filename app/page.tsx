@@ -94,15 +94,15 @@ export default function HomePage() {
         </div>
 
         <div className="relative z-10 flex h-full flex-col justify-end px-5 pb-[max(env(safe-area-inset-bottom),1.125rem)] pt-6 min-[390px]:px-6">
-          <div className="rounded-[32px] border border-[#efe5ce]/80 bg-[#fffaf0]/90 p-4 shadow-[0_16px_38px_rgba(128,103,65,0.14)] backdrop-blur-sm">
+          <div className="rounded-[28px] border border-white/75 bg-[#fffdf8]/82 p-4 shadow-[0_14px_34px_rgba(99,82,49,0.12)] backdrop-blur-md">
             <EnvWarning />
-            <p className="mb-3 text-center text-sm font-medium leading-6 text-[#6f604d]">
+            <p className="mb-3 text-center text-[13px] font-medium leading-6 text-[#665b48]">
               创建家庭需要邮箱，家人加入只要家庭代码。
             </p>
             <div className="grid grid-cols-2 gap-2.5">
               <button
                 type="button"
-                className="native-press flex min-h-[4.25rem] w-full touch-manipulation flex-col items-center justify-center rounded-[20px] bg-[#6f9d56] px-3 text-center text-lg font-bold leading-6 text-white shadow-[0_10px_24px_rgba(93,130,70,0.22),inset_0_1px_0_rgba(255,255,255,0.28)] transition hover:bg-[#628f4b] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c8deb5] disabled:cursor-not-allowed disabled:opacity-60"
+                className="native-press flex min-h-[4.25rem] w-full touch-manipulation flex-col items-center justify-center rounded-[18px] bg-[#5f934e] px-3 text-center text-lg font-bold leading-6 text-white shadow-[0_10px_22px_rgba(79,126,61,0.2),inset_0_1px_0_rgba(255,255,255,0.3)] transition hover:bg-[#538544] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c8deb5] disabled:cursor-not-allowed disabled:opacity-60"
                 disabled={busy}
                 onClick={handleCreateFamily}
               >
@@ -114,7 +114,7 @@ export default function HomePage() {
 
               <Link
                 href="/join"
-                className="native-press flex min-h-[4.25rem] w-full touch-manipulation flex-col items-center justify-center rounded-[20px] border border-[#c7d9b6] bg-[#f8f4e9]/95 px-3 text-center text-lg font-bold leading-6 text-[#445f37] shadow-[inset_0_1px_0_rgba(255,255,255,0.76),0_8px_18px_rgba(116,99,70,0.08)] transition hover:bg-[#f1f6e9] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c8deb5]"
+                className="native-press flex min-h-[4.25rem] w-full touch-manipulation flex-col items-center justify-center rounded-[18px] border border-[#b9d1a7] bg-white/78 px-3 text-center text-lg font-bold leading-6 text-[#445f37] shadow-[inset_0_1px_0_rgba(255,255,255,0.86),0_8px_18px_rgba(96,82,54,0.07)] transition hover:bg-[#f5f9ef] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c8deb5]"
               >
                 <span>加入家庭</span>
                 <span className="mt-0.5 text-xs font-semibold text-[#7a775f]">

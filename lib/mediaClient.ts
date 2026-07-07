@@ -12,6 +12,8 @@ import { safeHttpUrl } from "@/lib/security";
 interface ResolveMediaOptions {
   messageId?: string | null;
   contextEventId?: string | null;
+  refreshKey?: number;
+  forceRefresh?: boolean;
 }
 
 interface SignResponse {
@@ -44,7 +46,9 @@ export async function resolveMediaUrl(
     trimmed,
   ].join("|");
   const cached = signedUrlCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) return cached.url;
+  if (!options.forceRefresh && cached && cached.expiresAt > Date.now()) {
+    return cached.url;
+  }
 
   const res = await fetch("/api/media/sign", {
     method: "POST",
@@ -90,8 +94,15 @@ export function useResolvedMedia(
     () => ({
       messageId: options.messageId ?? null,
       contextEventId: options.contextEventId ?? null,
+      refreshKey: options.refreshKey ?? 0,
+      forceRefresh: Boolean(options.forceRefresh),
     }),
-    [options.messageId, options.contextEventId],
+    [
+      options.messageId,
+      options.contextEventId,
+      options.refreshKey,
+      options.forceRefresh,
+    ],
   );
   const [media, setMedia] = useState<ResolvedMedia>(() => initialMedia(ref));
 

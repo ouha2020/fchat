@@ -13,6 +13,7 @@ interface Props {
   highlighted?: boolean;
   /** The signed URL failed permanently — render "unavailable" instead of loading. */
   loadFailed?: boolean;
+  onPlaybackError?: () => void;
 }
 
 const BAR_COUNT = 14;
@@ -25,6 +26,7 @@ export default function AudioBubble({
   isMine,
   highlighted,
   loadFailed = false,
+  onPlaybackError,
 }: Props) {
   const { t } = useLanguage();
   const [playing, setPlaying] = useState(false);
@@ -51,13 +53,17 @@ export default function AudioBubble({
   function toggle(e: React.MouseEvent) {
     e.stopPropagation();
     if (!url) return;
+    const reportPlaybackError = () => {
+      setPlaying(false);
+      onPlaybackError?.();
+    };
     if (!audioRef.current || audioRef.current.src !== url) {
       audioRef.current?.pause();
       const a = new Audio(url);
       a.preload = "metadata";
       a.addEventListener("ended", () => setPlaying(false));
       a.addEventListener("pause", () => setPlaying(false));
-      a.addEventListener("error", () => setPlaying(false));
+      a.addEventListener("error", reportPlaybackError);
       audioRef.current = a;
     }
     if (playing) {
@@ -71,7 +77,7 @@ export default function AudioBubble({
           setPlayed(true);
           window.localStorage.setItem(`${PLAYED_AUDIO_PREFIX}${messageId}`, "1");
         })
-        .catch(() => setPlaying(false));
+        .catch(reportPlaybackError);
     }
   }
 

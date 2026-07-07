@@ -3,7 +3,7 @@
 import { getSupabase } from "./supabaseClient";
 import type { LocalSession } from "./authLocal";
 import { prepareChatImage } from "@/lib/imageCompression";
-import { isSafeMediaRef } from "@/lib/mediaRefs";
+import { isSafeOutgoingMediaRef } from "@/lib/mediaRefs";
 import { safeGoogleMapsUrl } from "@/lib/security";
 import {
   audioBlobSchema,
@@ -264,11 +264,15 @@ function validateOutgoingMessage(input: SendMessageInput): void {
       textMessageSchema.parse(input.content ?? "");
       break;
     case "image":
-      if (!isSafeMediaRef(input.image_url)) throw new Error("invalid_image_url");
+      if (!isSafeOutgoingMediaRef(input.image_url)) {
+        throw new Error("invalid_image_url");
+      }
       if (input.content) textMessageSchema.parse(input.content);
       break;
     case "audio":
-      if (!isSafeMediaRef(input.audio_url)) throw new Error("invalid_audio_url");
+      if (!isSafeOutgoingMediaRef(input.audio_url)) {
+        throw new Error("invalid_audio_url");
+      }
       if (
         typeof input.audio_duration_ms !== "number" ||
         input.audio_duration_ms < 0 ||
@@ -306,7 +310,9 @@ async function uploadViaApi(path: string, form: FormData): Promise<string> {
   });
   const payload = (await res.json().catch(() => null)) as { url?: string; error?: string } | null;
   if (!res.ok) throw new Error(payload?.error ?? "upload_failed");
-  if (!payload?.url || !isSafeMediaRef(payload.url)) throw new Error("upload_failed");
+  if (!payload?.url || !isSafeOutgoingMediaRef(payload.url)) {
+    throw new Error("upload_failed");
+  }
   return payload.url;
 }
 

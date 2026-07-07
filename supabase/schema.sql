@@ -953,24 +953,18 @@ begin
   end if;
   if p_image_url is not null and (
     length(p_image_url) > 2048 or not (
-      p_image_url ~* '^https?://[^[:space:]]+$'
-      or (
-        p_image_url like v_image_ref_prefix || '%'
-        and p_image_url !~ '\.\.'
-        and p_image_url ~ '^storage://chat-images/[A-Za-z0-9/_.$-]+$'
-      )
+      p_image_url like v_image_ref_prefix || '%'
+      and p_image_url !~ '\.\.'
+      and p_image_url ~ '^storage://chat-images/[A-Za-z0-9/_.$-]+$'
     )
   ) then
     raise exception 'invalid_image_url';
   end if;
   if p_audio_url is not null and (
     length(p_audio_url) > 2048 or not (
-      p_audio_url ~* '^https?://[^[:space:]]+$'
-      or (
-        p_audio_url like v_audio_ref_prefix || '%'
-        and p_audio_url !~ '\.\.'
-        and p_audio_url ~ '^storage://chat-audios/[A-Za-z0-9/_.$-]+$'
-      )
+      p_audio_url like v_audio_ref_prefix || '%'
+      and p_audio_url !~ '\.\.'
+      and p_audio_url ~ '^storage://chat-audios/[A-Za-z0-9/_.$-]+$'
     )
   ) then
     raise exception 'invalid_audio_url';
@@ -12279,3 +12273,11 @@ begin
     end if;
   end loop;
 end $$;
+
+insert into app_schema_migrations (version, name, description)
+values (
+  '20260707_harden_chat_media_refs',
+  'harden_chat_media_refs',
+  'Restricts newly sent chat image and audio refs to family-scoped storage objects.'
+)
+on conflict (version) do nothing;

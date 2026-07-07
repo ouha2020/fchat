@@ -59,6 +59,10 @@ export function isSafeMediaRef(value: unknown): value is string {
   return isSafeHttpUrl(value) || parseStorageMediaRef(value) !== null;
 }
 
+export function isSafeOutgoingMediaRef(value: unknown): value is string {
+  return parseStorageMediaRef(value) !== null;
+}
+
 export function isSafeStoragePath(path: string): boolean {
   if (!path || path.length > 1024) return false;
   if (path.startsWith("/") || path.includes("//") || path.includes("..")) {

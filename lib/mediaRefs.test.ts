@@ -4,6 +4,7 @@ import {
   avatarStoragePathBelongsToFamily,
   createStorageMediaRef,
   isSafeMediaRef,
+  isSafeOutgoingMediaRef,
   isSafeStoragePath,
   isStorageBackedMediaRef,
   parseLegacyStoragePublicUrl,
@@ -109,6 +110,13 @@ describe("ref classification helpers", () => {
     expect(isSafeMediaRef("storage://chat-images/f/a.png")).toBe(true);
     expect(isSafeMediaRef("javascript:alert(1)")).toBe(false);
     expect(isSafeMediaRef("storage://nope/a.png")).toBe(false);
+  });
+
+  it("only allows storage refs for newly sent media", () => {
+    expect(isSafeOutgoingMediaRef("storage://chat-images/f/a.png")).toBe(true);
+    expect(isSafeOutgoingMediaRef("storage://chat-audios/f/a.webm")).toBe(true);
+    expect(isSafeOutgoingMediaRef("https://example.com/a.png")).toBe(false);
+    expect(isSafeOutgoingMediaRef("javascript:alert(1)")).toBe(false);
   });
 });
 

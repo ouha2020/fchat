@@ -5,6 +5,10 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useLanguage } from "@/components/LanguageProvider";
 import { useDialog } from "@/components/Dialog";
 import { useToast } from "@/components/Toast";
+import {
+  shouldClearTextAfterSend,
+  type SendTextResult,
+} from "@/lib/chatInputDraft";
 import { humanizeError } from "@/lib/errors";
 import {
   formatDuration,
@@ -17,7 +21,7 @@ import type { FamilyMember } from "@/types/member";
 interface Props {
   disabled?: boolean;
   sending?: boolean;
-  onSendText: (text: string) => Promise<void> | void;
+  onSendText: (text: string) => Promise<SendTextResult> | SendTextResult;
   onPickImage: (file: File) => Promise<void> | void;
   onSendLocation: () => Promise<void> | void;
   onSendAudio: (result: RecordingResult) => Promise<void> | void;
@@ -350,8 +354,10 @@ export default function ChatInput({
     if (!trimmed || disabled || sending || recordingState.status !== "idle") return;
     setActionsOpen(false);
     setWhisperPickerOpen(false);
-    await onSendText(trimmed);
-    setText("");
+    const shouldClear = await onSendText(trimmed);
+    if (shouldClearTextAfterSend(shouldClear)) {
+      setText("");
+    }
   }
 
   async function handleVoicePointerDown(

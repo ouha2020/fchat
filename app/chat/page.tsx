@@ -2768,8 +2768,8 @@ export default function ChatPage() {
     }
   }
 
-  async function handleSendText(text: string) {
-    if (!session) return;
+  async function handleSendText(text: string): Promise<boolean> {
+    if (!session) return false;
     const explicitAssistantText = assistantDraftFromText(text) ?? keeperDraftFromText(text);
     const isAssistantAddressed = !whisperTarget && (keeperMode || explicitAssistantText !== null);
     const assistantText = keeperMode ? text.trim() : explicitAssistantText ?? text;
@@ -2790,15 +2790,17 @@ export default function ChatPage() {
       if (isAssistantAddressed || keepAssistantDraftPrivate) {
         if (!assistantText.trim()) {
           toast.info(t("assistantNeedTimeExample"));
-          return;
+          return false;
         }
 
         const pendingKey = `assistant-${Date.now()}`;
         if (assistantDraft?.reason === "schedule_lookup") {
+          let created = true;
           await runAssistantReplyAfterPause(pendingKey, async () => {
             try {
               await createScheduleChangeAssistantCard(null, assistantDraft.scheduleLookup);
             } catch (assistantErr) {
+              created = false;
               toast.error(
                 t("assistantCreateFailed", {
                   message: humanizeError(assistantErr, language),
@@ -2806,11 +2808,15 @@ export default function ChatPage() {
               );
             }
           });
+          return created;
         } else if (assistantDraft?.reason === "missing_time") {
           toast.info(t("assistantNeedTimeExample"));
+          return false;
         } else if (assistantDraft?.reason === "missing_target") {
           toast.info(t("assistantNeedTarget"));
+          return false;
         } else if (isAssistantCreateDraft(assistantDraft)) {
+          let created = true;
           await runAssistantReplyAfterPause(pendingKey, async () => {
             try {
               const result = await createAssistantActionCard(session, {
@@ -2829,6 +2835,7 @@ export default function ChatPage() {
                 }
               }
             } catch (assistantErr) {
+              created = false;
               toast.error(
                 t("assistantCreateFailed", {
                   message: humanizeError(assistantErr, language),
@@ -2836,14 +2843,15 @@ export default function ChatPage() {
               );
             }
           });
-          if (keeperMode) {
+          if (created && keeperMode) {
             setKeeperMode(false);
             removeKeeperParamFromUrl();
           }
+          return created;
         } else {
           toast.info(t("assistantNeedTimeExample"));
+          return false;
         }
-        return;
       }
 
       const { content, effect: eff } = transformForSending(text);
@@ -2911,8 +2919,10 @@ export default function ChatPage() {
           removeKeeperParamFromUrl();
         }
       }
+      return true;
     } catch (err) {
       toast.error(humanizeError(err, language));
+      return false;
     } finally {
       setSending(false);
     }

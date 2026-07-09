@@ -105,12 +105,14 @@ export async function createScheduleItem(
   });
   if (error) throw error;
   const itemId = data as string;
-  await setScheduleReminderRules(
-    session,
-    itemId,
-    parsed.reminder_offsets ?? [],
-    parsed.recurrence_rule === "none" ? "single" : "all",
-  );
+  if (needsExplicitReminderRules(parsed.reminder_offsets)) {
+    await setScheduleReminderRules(
+      session,
+      itemId,
+      parsed.reminder_offsets ?? [],
+      parsed.recurrence_rule === "none" ? "single" : "all",
+    );
+  }
   return itemId;
 }
 
@@ -187,12 +189,14 @@ export async function replaceScheduleItemRecurrence(
   if (error) throw error;
   const itemId = data as string;
   uuidSchema.parse(itemId);
-  await setScheduleReminderRules(
-    session,
-    itemId,
-    parsed.reminder_offsets ?? [],
-    parsed.recurrence_rule === "none" ? "single" : "all",
-  );
+  if (needsExplicitReminderRules(parsed.reminder_offsets)) {
+    await setScheduleReminderRules(
+      session,
+      itemId,
+      parsed.reminder_offsets ?? [],
+      parsed.recurrence_rule === "none" ? "single" : "all",
+    );
+  }
   return itemId;
 }
 
@@ -514,6 +518,12 @@ function normalizeReminderOffsets(
     throw new Error("invalid_schedule_reminder_offset");
   }
   return unique as ScheduleReminderOffset[];
+}
+
+function needsExplicitReminderRules(
+  offsets: ScheduleReminderOffset[] | undefined,
+): boolean {
+  return normalizeReminderOffsets(offsets).length > 1;
 }
 
 function earliestReminderIso(

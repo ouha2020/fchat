@@ -23,7 +23,7 @@ import {
 } from "@/lib/assistantActionService";
 import {
   isAssistantCreateDraft,
-  parseAssistantIntent,
+  parseAssistantIntents,
   type ParsedAssistantIntent,
   type ScheduleLookupIntent,
 } from "@/lib/assistantIntentParser";
@@ -2774,14 +2774,15 @@ export default function ChatPage() {
     const isAssistantAddressed = !whisperTarget && (keeperMode || explicitAssistantText !== null);
     const assistantText = keeperMode ? text.trim() : explicitAssistantText ?? text;
     const latestTarget = latestOrdinaryVisibleMessage(messagesRef.current);
-    const assistantDraft =
+    const assistantDrafts =
       !whisperTarget && assistantText.trim()
-        ? parseAssistantIntent(assistantText, {
+        ? parseAssistantIntents(assistantText, {
             members: membersRef.current,
             currentMemberId: session.member_id,
             latestVisibleMessage: latestTarget,
           })
-        : null;
+        : [];
+    const assistantDraft = assistantDrafts[0] ?? null;
     const keepAssistantDraftPrivate =
       !whisperTarget && shouldKeepAssistantDraftPrivate(assistantDraft);
 
@@ -2817,15 +2818,24 @@ export default function ChatPage() {
           return false;
         } else if (isAssistantCreateDraft(assistantDraft)) {
           let created = true;
+          // A message can name several dates ("13，17号…") → one card each.
+          const createDrafts = assistantDrafts
+            .filter(isAssistantCreateDraft)
+            .filter((draft) => !draft.reason);
+          const drafts = createDrafts.length > 0 ? createDrafts : [assistantDraft];
           await runAssistantReplyAfterPause(pendingKey, async () => {
             try {
-              const result = await createAssistantActionCard(session, {
-                ...assistantDraft,
-                source_message_id: null,
-              });
+              let lastMessageId: string | null = null;
+              for (const draft of drafts) {
+                const result = await createAssistantActionCard(session, {
+                  ...draft,
+                  source_message_id: null,
+                });
+                lastMessageId = result.message_id ?? lastMessageId;
+              }
               await refreshAssistantCards(session).catch(() => undefined);
-              if (result.message_id) {
-                const fetched = await fetchRealtimeMessage(result.message_id).catch(
+              if (lastMessageId) {
+                const fetched = await fetchRealtimeMessage(lastMessageId).catch(
                   () => false,
                 );
                 if (!fetched) {

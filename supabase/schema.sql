@@ -8508,6 +8508,7 @@ begin
         'restored',
         'deleted',
         'reminder_changed',
+        'reminder_updated',
         'visibility_changed'
       ));
   end if;

@@ -52,12 +52,21 @@ export function parseAssistantIntent(
   rawText: string,
   context: ParseContext,
 ): ParsedAssistantIntent | null {
+  return parseAssistantIntents(rawText, context)[0] ?? null;
+}
+
+// Returns one or more intents. A message naming several calendar dates
+// (e.g. "13，17号提醒英语课") yields one create draft per date.
+export function parseAssistantIntents(
+  rawText: string,
+  context: ParseContext,
+): ParsedAssistantIntent[] {
   const text = normalizeAssistantText(rawText.trim());
-  if (!text) return null;
+  if (!text) return [];
 
   const now = context.now ?? new Date();
   const scheduleChange = parseScheduleChange(text, now);
-  if (scheduleChange) return scheduleChange;
+  if (scheduleChange) return [scheduleChange];
 
   const important = IMPORTANT_RE.test(text);
   const reminder = REMINDER_RE.test(text);
@@ -69,68 +78,183 @@ export function parseAssistantIntent(
 
   if (important && !reminder && !schedule && !task) {
     if (!context.latestVisibleMessage) {
-      return { reason: "missing_target", ...emptyImportantDraft(text) };
+      return [{ reason: "missing_target", ...emptyImportantDraft(text) }];
     }
-    return {
-      card_type: "important",
-      title: previewText(context.latestVisibleMessage),
-      summary: text,
-      target_message_id: context.latestVisibleMessage.id,
-      payload: {
-        original_text: text,
-        source: "rule-parser",
-        visibility: "family",
+    return [
+      {
+        card_type: "important",
+        title: previewText(context.latestVisibleMessage),
+        summary: text,
+        target_message_id: context.latestVisibleMessage.id,
+        payload: {
+          original_text: text,
+          source: "rule-parser",
+          visibility: "family",
+        },
       },
-    };
+    ];
   }
 
   if (task && (!reminder || !parsedTime)) {
     const dueAt = parsedTime ?? parseTaskDueDate(text, now);
-    return {
-      card_type: "todo",
-      title: compactTitle(text, "todo", context.members),
-      summary: text,
-      payload: {
-        item_type: "todo",
-        visibility: PRIVATE_RE.test(text) ? "private" : "family",
-        starts_at: dueAt.toISOString(),
-        remind_at: null,
-        assignee_member_id: assignee?.member.id ?? context.currentMemberId,
-        original_text: text,
-        source: "rule-parser",
+    return [
+      {
+        card_type: "todo",
+        title: compactTitle(text, "todo", context.members),
+        summary: text,
+        payload: {
+          item_type: "todo",
+          visibility: PRIVATE_RE.test(text) ? "private" : "family",
+          starts_at: dueAt.toISOString(),
+          remind_at: null,
+          assignee_member_id: assignee?.member.id ?? context.currentMemberId,
+          original_text: text,
+          source: "rule-parser",
+        },
       },
-    };
+    ];
   }
 
-  if (!reminder && !schedule) return null;
-
-  if (!parsedTime) {
-    return {
-      reason: "missing_time",
-      card_type: reminder ? "reminder" : "schedule",
-      title: compactTitle(text, reminder ? "reminder" : "schedule", context.members),
-      summary: text,
-      payload: { original_text: text, source: "rule-parser" },
-    };
-  }
+  if (!reminder && !schedule) return [];
 
   const visibility = PRIVATE_RE.test(text) ? "private" : "family";
   const cardType = reminder ? "reminder" : "schedule";
+  const assigneeId = assignee?.member.id ?? context.currentMemberId;
 
-  return {
-    card_type: cardType,
-    title: compactTitle(text, cardType, context.members),
-    summary: text,
-    payload: {
-      item_type: cardType,
-      visibility,
-      starts_at: parsedTime.toISOString(),
-      remind_at: cardType === "reminder" ? parsedTime.toISOString() : null,
-      assignee_member_id: assignee?.member.id ?? context.currentMemberId,
-      original_text: text,
-      source: "rule-parser",
+  // Explicit calendar dates ("N号 / N日 / M月N号"), possibly several. The time
+  // parser must not read those digits as a clock time, so we parse the dates
+  // out first and read the time from the remaining text.
+  const { dates, strippedText } = resolveCalendarDates(text, now);
+  if (dates.length > 0) {
+    const title = compactTitle(strippedText, cardType, context.members);
+    return dates.map((startsAt) => ({
+      card_type: cardType,
+      title,
+      summary: text,
+      payload: {
+        item_type: cardType,
+        visibility,
+        starts_at: startsAt.toISOString(),
+        remind_at: cardType === "reminder" ? startsAt.toISOString() : null,
+        assignee_member_id: assigneeId,
+        original_text: text,
+        source: "rule-parser",
+      },
+    }));
+  }
+
+  if (!parsedTime) {
+    return [
+      {
+        reason: "missing_time",
+        card_type: cardType,
+        title: compactTitle(text, cardType, context.members),
+        summary: text,
+        payload: { original_text: text, source: "rule-parser" },
+      },
+    ];
+  }
+
+  return [
+    {
+      card_type: cardType,
+      title: compactTitle(text, cardType, context.members),
+      summary: text,
+      payload: {
+        item_type: cardType,
+        visibility,
+        starts_at: parsedTime.toISOString(),
+        remind_at: cardType === "reminder" ? parsedTime.toISOString() : null,
+        assignee_member_id: assigneeId,
+        original_text: text,
+        source: "rule-parser",
+      },
     },
-  };
+  ];
+}
+
+interface CalendarDay {
+  month: number | null;
+  day: number;
+}
+
+// Pull explicit calendar dates out of the text and return the corresponding
+// Date objects (with the time-of-day found in the remaining text, defaulting
+// to 9:00), plus the text with those date tokens removed.
+function resolveCalendarDates(
+  text: string,
+  now: Date,
+): { dates: Date[]; strippedText: string } {
+  const days: CalendarDay[] = [];
+  let stripped = text;
+
+  // "M月D日/号" — month with an explicit day.
+  stripped = stripped.replace(
+    /(\d{1,2})\s*月\s*(\d{1,2})\s*[号號日]?/g,
+    (_m, mo: string, d: string) => {
+      days.push({ month: Number(mo), day: Number(d) });
+      return " ";
+    },
+  );
+
+  // A day, or a comma/、-linked list of days sharing one trailing 号/日:
+  // "17号", "13日", "13，17号", "13、15、17号".
+  stripped = stripped.replace(
+    /(\d{1,2}(?:\s*[,，、]\s*\d{1,2})*)\s*[号號日]/g,
+    (_m, list: string) => {
+      for (const part of list.split(/[,，、]/)) {
+        const n = Number(part.trim());
+        if (Number.isFinite(n)) days.push({ month: null, day: n });
+      }
+      return " ";
+    },
+  );
+
+  if (days.length === 0) return { dates: [], strippedText: stripped };
+
+  const time = resolveTime(stripped);
+  const period = resolvePeriod(stripped);
+  let hour = time?.hour ?? null;
+  const minute = time?.minute ?? 0;
+  if (hour == null) {
+    hour =
+      period === "afternoon" ? 15 : period === "evening" ? 20 : 9; // sensible default
+  }
+
+  const dates: Date[] = [];
+  for (const md of days) {
+    const date = calendarDayToDate(md, now, hour, minute);
+    if (date) dates.push(date);
+  }
+  return { dates, strippedText: stripped };
+}
+
+function calendarDayToDate(
+  md: CalendarDay,
+  now: Date,
+  hour: number,
+  minute: number,
+): Date | null {
+  if (md.day < 1 || md.day > 31) return null;
+  if (md.month != null && (md.month < 1 || md.month > 12)) return null;
+
+  const year = now.getFullYear();
+  const monthIndex = md.month != null ? md.month - 1 : now.getMonth();
+  let date = new Date(year, monthIndex, md.day, hour, minute, 0, 0);
+  // Reject impossible days (e.g. Feb 30).
+  if (date.getMonth() !== ((monthIndex % 12) + 12) % 12 || date.getDate() !== md.day) {
+    return null;
+  }
+  // A date already in the past rolls to the next month (day-only) or next
+  // year (explicit month), so "17号" late on the 18th means next month.
+  if (date.getTime() < now.getTime()) {
+    date =
+      md.month != null
+        ? new Date(year + 1, monthIndex, md.day, hour, minute, 0, 0)
+        : new Date(year, monthIndex + 1, md.day, hour, minute, 0, 0);
+    if (date.getDate() !== md.day) return null;
+  }
+  return date;
 }
 
 export function isAssistantSystemPayload(payload: Record<string, unknown> | null): boolean {
@@ -356,6 +480,9 @@ function compactTitle(
     .replace(PRIVATE_RE, " ")
     .replace(/(请|請|帮我|幫我|お願い|please|ask)/gi, " ")
     .replace(/(から|まで|には|では|へ|を|に|は|で)/g, " ")
+    // Calendar-date tokens ("7月9日", "13，17号", "17日") and any stray 号/日.
+    .replace(/\d{1,2}\s*月\s*\d{1,2}\s*[号號日]?/g, " ")
+    .replace(/\d{1,2}(?:\s*[,，、]\s*\d{1,2})*\s*[号號日]/g, " ")
     .replace(timeWordsRe(), " ")
     .replace(roleWordsRe(), " ")
     .replace(/[，。！？、,.!?]/g, " ")

@@ -1,9 +1,14 @@
 "use client";
 
-import { useMemo, type KeyboardEvent, type MouseEvent } from "react";
+import { useMemo, useState, type KeyboardEvent, type MouseEvent } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
 import type { AssistantActionCard } from "@/types/assistant";
+
+export interface AssistantCardEdit {
+  title: string;
+  startsAtIso: string | null;
+}
 
 interface Props {
   card: AssistantActionCard | null;
@@ -11,12 +16,24 @@ interface Props {
   submitting?: boolean;
   onConfirm: (card: AssistantActionCard) => void;
   onCancel: (card: AssistantActionCard) => void;
-  onModify: (card: AssistantActionCard) => void;
+  onSubmitEdit?: (
+    card: AssistantActionCard,
+    edit: AssistantCardEdit,
+  ) => Promise<boolean> | boolean | void;
   currentMemberId?: string | null;
   onOpenSchedule?: (card: AssistantActionCard) => void;
   onAcceptTask?: (card: AssistantActionCard) => void;
   onCompleteTask?: (card: AssistantActionCard) => void;
   onSnoozeTask?: (card: AssistantActionCard) => void;
+}
+
+function toDateTimeLocalValue(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
+    date.getDate(),
+  )}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 export default function AssistantActionCardView({
@@ -25,7 +42,7 @@ export default function AssistantActionCardView({
   submitting = false,
   onConfirm,
   onCancel,
-  onModify,
+  onSubmitEdit,
   currentMemberId,
   onOpenSchedule,
   onAcceptTask,
@@ -33,6 +50,9 @@ export default function AssistantActionCardView({
   onSnoozeTask,
 }: Props) {
   const { language, t } = useLanguage();
+  const [editing, setEditing] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
+  const [timeDraft, setTimeDraft] = useState("");
   const startsAt = card?.payload.starts_at;
   const assigneeLabel =
     typeof card?.payload.assignee_nickname === "string"
@@ -150,32 +170,90 @@ export default function AssistantActionCardView({
       ) : null}
 
       {card.status === "pending" && canAct ? (
-        <div className="assistant-action-row mt-3">
-          <button
-            type="button"
-            className="assistant-action-button bg-brand-500 text-white shadow-sm"
-            disabled={submitting}
-            onClick={() => onConfirm(card)}
-          >
-            {t("assistantConfirm")}
-          </button>
-          <button
-            type="button"
-            className="assistant-action-button bg-white text-slate-700 ring-1 ring-slate-200"
-            disabled={submitting}
-            onClick={() => onModify(card)}
-          >
-            {t("assistantModify")}
-          </button>
-          <button
-            type="button"
-            className="assistant-action-button bg-white text-slate-500 ring-1 ring-slate-200"
-            disabled={submitting}
-            onClick={() => onCancel(card)}
-          >
-            {t("assistantCancel")}
-          </button>
-        </div>
+        editing ? (
+          <div className="mt-3 space-y-2" onClick={(e) => e.stopPropagation()}>
+            <label className="block text-[11px] font-medium text-slate-500">
+              {t("assistantEditTitleLabel")}
+              <input
+                type="text"
+                value={titleDraft}
+                maxLength={80}
+                onChange={(e) => setTitleDraft(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-brand-300 focus:outline-none focus:ring-2 focus:ring-brand-100"
+              />
+            </label>
+            {startsAt ? (
+              <label className="block text-[11px] font-medium text-slate-500">
+                {t("assistantEditTimeLabel")}
+                <input
+                  type="datetime-local"
+                  value={timeDraft}
+                  onChange={(e) => setTimeDraft(e.target.value)}
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-brand-300 focus:outline-none focus:ring-2 focus:ring-brand-100"
+                />
+              </label>
+            ) : null}
+            <div className="assistant-action-row">
+              <button
+                type="button"
+                className="assistant-action-button bg-brand-500 text-white shadow-sm"
+                disabled={submitting || !titleDraft.trim()}
+                onClick={async () => {
+                  const startsAtIso =
+                    startsAt && timeDraft
+                      ? new Date(timeDraft).toISOString()
+                      : startsAt ?? null;
+                  const ok = await onSubmitEdit?.(card, {
+                    title: titleDraft,
+                    startsAtIso,
+                  });
+                  if (ok !== false) setEditing(false);
+                }}
+              >
+                {t("assistantEditSave")}
+              </button>
+              <button
+                type="button"
+                className="assistant-action-button bg-white text-slate-500 ring-1 ring-slate-200"
+                disabled={submitting}
+                onClick={() => setEditing(false)}
+              >
+                {t("assistantEditCancel")}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="assistant-action-row mt-3">
+            <button
+              type="button"
+              className="assistant-action-button bg-brand-500 text-white shadow-sm"
+              disabled={submitting}
+              onClick={() => onConfirm(card)}
+            >
+              {t("assistantConfirm")}
+            </button>
+            <button
+              type="button"
+              className="assistant-action-button bg-white text-slate-700 ring-1 ring-slate-200"
+              disabled={submitting}
+              onClick={() => {
+                setTitleDraft(card.title);
+                setTimeDraft(startsAt ? toDateTimeLocalValue(startsAt) : "");
+                setEditing(true);
+              }}
+            >
+              {t("assistantModify")}
+            </button>
+            <button
+              type="button"
+              className="assistant-action-button bg-white text-slate-500 ring-1 ring-slate-200"
+              disabled={submitting}
+              onClick={() => onCancel(card)}
+            >
+              {t("assistantCancel")}
+            </button>
+          </div>
+        )
       ) : null}
 
       {canHandleTask(card, currentMemberId) ? (

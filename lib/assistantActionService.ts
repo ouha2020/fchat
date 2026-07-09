@@ -50,6 +50,28 @@ export async function createAssistantActionCard(
   return normalizeActionResult(data);
 }
 
+export async function updateAssistantActionCard(
+  session: LocalSession,
+  cardId: string,
+  title: string,
+  startsAtIso: string | null,
+): Promise<AssistantActionResult> {
+  uuidSchema.parse(cardId);
+  const trimmed = title.trim();
+  if (!trimmed) throw new Error("assistant_card_title_required");
+  if (trimmed.length > 80) throw new Error("assistant_card_title_too_long");
+  const sb = getSupabase();
+  const { data, error } = await sb.rpc("update_assistant_action_card", {
+    p_member_id: session.member_id,
+    p_member_token: session.member_token,
+    p_card_id: cardId,
+    p_title: trimmed,
+    p_starts_at: startsAtIso,
+  });
+  if (error) throw error;
+  return normalizeActionResult(data);
+}
+
 export async function confirmAssistantActionCard(
   session: LocalSession,
   cardId: string,

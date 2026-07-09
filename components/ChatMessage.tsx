@@ -3,7 +3,9 @@
 import Link from "next/link";
 import { useRef, useState } from "react";
 
-import AssistantActionCardView from "./AssistantActionCard";
+import AssistantActionCardView, {
+  type AssistantCardEdit,
+} from "./AssistantActionCard";
 import AudioBubble from "./AudioBubble";
 import LinkifiedText from "./LinkifiedText";
 import MemberAvatarCircle from "./MemberAvatarCircle";
@@ -109,7 +111,10 @@ interface Props {
   currentMemberId?: string | null;
   onConfirmAssistantCard?: (card: AssistantActionCard) => void;
   onCancelAssistantCard?: (card: AssistantActionCard) => void;
-  onModifyAssistantCard?: (card: AssistantActionCard) => void;
+  onSubmitAssistantCardEdit?: (
+    card: AssistantActionCard,
+    edit: AssistantCardEdit,
+  ) => Promise<boolean> | boolean | void;
   onOpenAssistantSchedule?: (card: AssistantActionCard) => void;
   onAcceptAssistantTask?: (card: AssistantActionCard) => void;
   onCompleteAssistantTask?: (card: AssistantActionCard) => void;
@@ -134,7 +139,7 @@ export default function ChatMessage({
   currentMemberId,
   onConfirmAssistantCard,
   onCancelAssistantCard,
-  onModifyAssistantCard,
+  onSubmitAssistantCardEdit,
   onOpenAssistantSchedule,
   onAcceptAssistantTask,
   onCompleteAssistantTask,
@@ -189,7 +194,7 @@ export default function ChatMessage({
               currentMemberId={currentMemberId}
               onConfirm={(card) => onConfirmAssistantCard?.(card)}
               onCancel={(card) => onCancelAssistantCard?.(card)}
-              onModify={(card) => onModifyAssistantCard?.(card)}
+              onSubmitEdit={onSubmitAssistantCardEdit}
               onOpenSchedule={(card) => onOpenAssistantSchedule?.(card)}
               onAcceptTask={(card) => onAcceptAssistantTask?.(card)}
               onCompleteTask={(card) => onCompleteAssistantTask?.(card)}

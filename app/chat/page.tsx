@@ -7,6 +7,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import AppLoading from "@/components/AppLoading";
 import ChatInput from "@/components/ChatInput";
 import ChatMessage from "@/components/ChatMessage";
+import type { AssistantCardEdit } from "@/components/AssistantActionCard";
 import EffectOverlay from "@/components/EffectOverlay";
 import EnvWarning from "@/components/EnvWarning";
 import ImportantNoticeBar from "@/components/ImportantNoticeBar";
@@ -20,6 +21,7 @@ import {
   confirmAssistantActionCard,
   createAssistantActionCard,
   listAssistantActionCards,
+  updateAssistantActionCard,
 } from "@/lib/assistantActionService";
 import {
   isAssistantCreateDraft,
@@ -2694,8 +2696,31 @@ export default function ChatPage() {
     }
   }
 
-  function handleModifyAssistantCard() {
-    toast.info(t("assistantModifyUnavailable"));
+  async function handleSubmitAssistantCardEdit(
+    card: AssistantActionCard,
+    edit: AssistantCardEdit,
+  ): Promise<boolean> {
+    if (!session) return false;
+    setAssistantSubmittingCardId(card.id);
+    try {
+      const result = await updateAssistantActionCard(
+        session,
+        card.id,
+        edit.title,
+        edit.startsAtIso,
+      );
+      await refreshAssistantCards(session);
+      if (result.message_id) {
+        await fetchRealtimeMessage(result.message_id).catch(() => false);
+      }
+      toast.success(t("assistantEditSaved"));
+      return true;
+    } catch (err) {
+      toast.error(humanizeError(err, language));
+      return false;
+    } finally {
+      setAssistantSubmittingCardId(null);
+    }
   }
 
   function handleMessagesTouchStart(e: React.TouchEvent<HTMLDivElement>) {
@@ -3489,7 +3514,7 @@ export default function ChatPage() {
                     currentMemberId={session.member_id}
                     onConfirmAssistantCard={handleConfirmAssistantCard}
                     onCancelAssistantCard={handleCancelAssistantCard}
-                    onModifyAssistantCard={handleModifyAssistantCard}
+                    onSubmitAssistantCardEdit={handleSubmitAssistantCardEdit}
                     onOpenAssistantSchedule={handleOpenAssistantSchedule}
                     onAcceptAssistantTask={(card) =>
                       handleAssistantTaskAction(card, "accept")

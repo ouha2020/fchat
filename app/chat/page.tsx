@@ -20,6 +20,7 @@ import {
   cancelAssistantActionCard,
   confirmAssistantActionCard,
   createAssistantActionCard,
+  deleteAssistantActionCard,
   listAssistantActionCards,
   updateAssistantActionCard,
 } from "@/lib/assistantActionService";
@@ -2343,6 +2344,14 @@ export default function ChatPage() {
     });
     return map;
   }, [assistantCards]);
+  const selectedActionCard = selectedActionMessage
+    ? assistantCardsByMessageId.get(selectedActionMessage.id) ?? null
+    : null;
+  const canDeleteSelectedActionCard =
+    !!selectedActionCard &&
+    !selectedActionMessage?.deleted_at &&
+    (selectedActionCard.created_by_member_id === session?.member_id ||
+      !!session?.is_admin);
 
   function pushOptimistic(
     partial: Pick<Message, "id" | "message_type"> & Partial<Message>,
@@ -2691,6 +2700,30 @@ export default function ChatPage() {
           message: humanizeError(err, language),
         }),
       );
+    } finally {
+      setAssistantSubmittingCardId(null);
+    }
+  }
+
+  async function handleDeleteAssistantCard(card: AssistantActionCard) {
+    if (!session) return;
+    setMessageActionMenu(null);
+    const ok = await dialog.confirm({
+      title: t("assistantDelete"),
+      message: t("assistantDeleteConfirm"),
+      danger: true,
+    });
+    if (!ok) return;
+    setAssistantSubmittingCardId(card.id);
+    try {
+      const result = await deleteAssistantActionCard(session, card.id);
+      await refreshAssistantCards(session).catch(() => undefined);
+      if (result.message_id) {
+        await fetchRealtimeMessage(result.message_id).catch(() => false);
+      }
+      toast.success(t("assistantDeleted"));
+    } catch (err) {
+      toast.error(humanizeError(err, language));
     } finally {
       setAssistantSubmittingCardId(null);
     }
@@ -3354,6 +3387,18 @@ export default function ChatPage() {
                 }}
               >
                 {t("importantRecallMessage")}
+              </button>
+            ) : null}
+            {canDeleteSelectedActionCard && selectedActionCard ? (
+              <button
+                type="button"
+                role="menuitem"
+                className={`${chatActionMenuButtonClass} text-rose-600 hover:bg-rose-50 focus-visible:ring-rose-200`}
+                onClick={() => {
+                  void handleDeleteAssistantCard(selectedActionCard);
+                }}
+              >
+                {t("assistantDelete")}
               </button>
             ) : null}
           </div>

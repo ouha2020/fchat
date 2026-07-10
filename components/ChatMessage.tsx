@@ -170,6 +170,20 @@ export default function ChatMessage({
         })
       : null;
 
+  // A deleted message shows the recall pill regardless of its original type —
+  // this must come before the assistant/keeper/system branches so a deleted
+  // assistant card collapses to the pill instead of still rendering the card.
+  if (message.deleted_at) {
+    const label = isMine ? t("messageYouDeleted") : t("messageOtherDeleted");
+    return (
+      <div className="flex justify-center py-2" {...actionHandlers}>
+        <span className={`rounded-full bg-white/75 px-3 py-1 text-xs italic text-slate-500 shadow-sm ring-1 ring-white/70 ${highlightClass}`}>
+          {label}
+        </span>
+      </div>
+    );
+  }
+
   if (isAssistantSystemMessage(message)) {
     return (
       <div className="flex w-full gap-2 py-1" {...actionHandlers}>
@@ -244,17 +258,6 @@ export default function ChatMessage({
       <div className="flex justify-center py-2" {...actionHandlers}>
         <span className={`rounded-full px-3 py-1 text-xs ${toneClass} ${actionClass} ${highlightClass}`}>
           {localizeSystemMessage(message, t)}
-        </span>
-      </div>
-    );
-  }
-
-  if (message.deleted_at) {
-    const label = isMine ? t("messageYouDeleted") : t("messageOtherDeleted");
-    return (
-      <div className="flex justify-center py-2" {...actionHandlers}>
-        <span className={`rounded-full bg-white/75 px-3 py-1 text-xs italic text-slate-500 shadow-sm ring-1 ring-white/70 ${highlightClass}`}>
-          {label}
         </span>
       </div>
     );

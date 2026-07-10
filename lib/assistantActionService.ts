@@ -72,6 +72,21 @@ export async function updateAssistantActionCard(
   return normalizeActionResult(data);
 }
 
+export async function deleteAssistantActionCard(
+  session: LocalSession,
+  cardId: string,
+): Promise<AssistantActionResult> {
+  uuidSchema.parse(cardId);
+  const sb = getSupabase();
+  const { data, error } = await sb.rpc("delete_assistant_action_card", {
+    p_member_id: session.member_id,
+    p_member_token: session.member_token,
+    p_card_id: cardId,
+  });
+  if (error) throw error;
+  return normalizeActionResult(data);
+}
+
 export async function confirmAssistantActionCard(
   session: LocalSession,
   cardId: string,

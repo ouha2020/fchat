@@ -22,7 +22,6 @@ interface Props {
   ) => Promise<boolean> | boolean | void;
   currentMemberId?: string | null;
   onOpenSchedule?: (card: AssistantActionCard) => void;
-  onAcceptTask?: (card: AssistantActionCard) => void;
   onCompleteTask?: (card: AssistantActionCard) => void;
   onSnoozeTask?: (card: AssistantActionCard) => void;
 }
@@ -45,7 +44,6 @@ export default function AssistantActionCardView({
   onSubmitEdit,
   currentMemberId,
   onOpenSchedule,
-  onAcceptTask,
   onCompleteTask,
   onSnoozeTask,
 }: Props) {
@@ -260,28 +258,22 @@ export default function AssistantActionCardView({
         <div className="assistant-action-row mt-3">
           <button
             type="button"
-            className="assistant-action-button bg-white text-emerald-700 ring-1 ring-emerald-100"
-            disabled={submitting}
-            onClick={() => onAcceptTask?.(card)}
-          >
-            {t("assistantTaskAccept")}
-          </button>
-          <button
-            type="button"
             className="assistant-action-button bg-brand-500 text-white shadow-sm"
             disabled={submitting}
             onClick={() => onCompleteTask?.(card)}
           >
             {t("assistantTaskComplete")}
           </button>
-          <button
-            type="button"
-            className="assistant-action-button bg-white text-slate-600 ring-1 ring-slate-200"
-            disabled={submitting}
-            onClick={() => onSnoozeTask?.(card)}
-          >
-            {t("assistantTaskSnooze")}
-          </button>
+          {canSnoozeTask(card, currentMemberId) ? (
+            <button
+              type="button"
+              className="assistant-action-button bg-white text-slate-600 ring-1 ring-slate-200"
+              disabled={submitting}
+              onClick={() => onSnoozeTask?.(card)}
+            >
+              {t("assistantTaskSnooze")}
+            </button>
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -319,4 +311,15 @@ function canHandleTask(
   if (card.status !== "confirmed") return false;
   if (!card.result_schedule_item_id) return false;
   return card.payload.assignee_member_id === currentMemberId;
+}
+
+function canSnoozeTask(
+  card: AssistantActionCard,
+  currentMemberId?: string | null,
+): boolean {
+  return (
+    canHandleTask(card, currentMemberId) &&
+    typeof card.payload.remind_at === "string" &&
+    card.payload.remind_at.length > 0
+  );
 }

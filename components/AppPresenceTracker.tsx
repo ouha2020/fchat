@@ -6,13 +6,16 @@ import { useEffect } from "react";
 import { loadSession } from "@/lib/authLocal";
 import { updatePushPresence } from "@/lib/pushNotificationService";
 
-const HEARTBEAT_MS = 120_000;
+// Keep visible schedule sessions inside the server's 60-second active window.
+const HEARTBEAT_MS = 30_000;
 
 export default function AppPresenceTracker() {
   const pathname = usePathname();
 
   useEffect(() => {
     const currentPage = pageName(pathname);
+    // Chat owns a tighter presence loop for message Push suppression.
+    if (currentPage === "chat") return;
 
     const syncPresence = (isActive: boolean, keepalive = false) => {
       const session = loadSession();

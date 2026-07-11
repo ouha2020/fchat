@@ -116,7 +116,6 @@ interface Props {
     edit: AssistantCardEdit,
   ) => Promise<boolean> | boolean | void;
   onOpenAssistantSchedule?: (card: AssistantActionCard) => void;
-  onAcceptAssistantTask?: (card: AssistantActionCard) => void;
   onCompleteAssistantTask?: (card: AssistantActionCard) => void;
   onSnoozeAssistantTask?: (card: AssistantActionCard) => void;
   onRequestActions?: (
@@ -141,7 +140,6 @@ export default function ChatMessage({
   onCancelAssistantCard,
   onSubmitAssistantCardEdit,
   onOpenAssistantSchedule,
-  onAcceptAssistantTask,
   onCompleteAssistantTask,
   onSnoozeAssistantTask,
   onRequestActions,
@@ -210,7 +208,6 @@ export default function ChatMessage({
               onCancel={(card) => onCancelAssistantCard?.(card)}
               onSubmitEdit={onSubmitAssistantCardEdit}
               onOpenSchedule={(card) => onOpenAssistantSchedule?.(card)}
-              onAcceptTask={(card) => onAcceptAssistantTask?.(card)}
               onCompleteTask={(card) => onCompleteAssistantTask?.(card)}
               onSnoozeTask={(card) => onSnoozeAssistantTask?.(card)}
             />

@@ -29,6 +29,17 @@ import { useResolvedMedia } from "@/lib/mediaClient";
 import { listMembers } from "@/lib/memberService";
 import { uploadChatAudio } from "@/lib/messageService";
 import { startRecording, type RecordingHandle } from "@/lib/recordingService";
+import { sendScheduleCollaborationNotification } from "@/lib/scheduleCollaborationClient";
+import {
+  resolveScheduleCreationNotification,
+  type ScheduleCollaborationNotifyType,
+} from "@/lib/scheduleCollaborationPolicy";
+import {
+  canManageScheduleItem,
+  canRespondScheduleAssignment,
+  canSetScheduleItemStatus,
+  isConfirmedScheduleAssignee,
+} from "@/lib/scheduleAssignmentPolicy";
 import {
   createScheduleContextEvent,
   createScheduleItem,
@@ -222,7 +233,7 @@ export default function SchedulePage() {
     () =>
       myTodayItems.filter(
         (item) =>
-          item.assignee_member_id === session?.member_id &&
+          isConfirmedScheduleAssignee(item, session?.member_id) &&
           item.status !== "done",
       ),
     [myTodayItems, session?.member_id],
@@ -415,18 +426,18 @@ export default function SchedulePage() {
   }, []);
 
   const notifyScheduleCollaboration = useCallback(
-    (scheduleItemId: string, eventType: string) => {
+    (
+      scheduleItemId: string,
+      eventType: ScheduleCollaborationNotifyType,
+      contextEventId?: string | null,
+    ) => {
       if (!session) return;
-      void fetch("/api/schedule/collaboration-notify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          memberId: session.member_id,
-          memberToken: session.member_token,
-          scheduleItemId,
-          eventType,
-        }),
-      }).catch(() => undefined);
+      void sendScheduleCollaborationNotification(
+        session,
+        scheduleItemId,
+        eventType,
+        contextEventId ?? null,
+      );
     },
     [session],
   );
@@ -741,7 +752,8 @@ export default function SchedulePage() {
           ? localDateTimeToIso(form.endDate, form.endTime)
           : null;
       const remindAt = reminderToIso(form.reminderOffsets, startsAt);
-      await createScheduleItem(session, {
+      const assigneeMemberId = form.assigneeMemberId || session.member_id;
+      const createdItemId = await createScheduleItem(session, {
         title: form.title,
         note: form.note,
         item_type: form.itemType,
@@ -751,8 +763,16 @@ export default function SchedulePage() {
         remind_at: remindAt,
         reminder_offsets: form.reminderOffsets,
         recurrence_rule: form.recurrenceRule,
-        assignee_member_id: form.assigneeMemberId || session.member_id,
+        assignee_member_id: assigneeMemberId,
       });
+      const creationNotification = resolveScheduleCreationNotification({
+        creator_member_id: session.member_id,
+        assignee_member_id: assigneeMemberId,
+        visibility: form.visibility,
+      });
+      if (creationNotification) {
+        notifyScheduleCollaboration(createdItemId, creationNotification);
+      }
       setShowForm(false);
       setForm(defaultFormState(session));
       toast.success(t("scheduleCreateSuccess"));
@@ -891,7 +911,7 @@ export default function SchedulePage() {
     setBusy(`comment:${selectedItem.id}`);
     try {
       const fallbackRecipient = resolveContextRecipient(selectedItem);
-      await createScheduleContextEvent(session, {
+      const contextEventId = await createScheduleContextEvent(session, {
         schedule_item_id: selectedItem.id,
         event_type: "text",
         visibility: contextVisibility,
@@ -901,7 +921,11 @@ export default function SchedulePage() {
       });
       setCommentText("");
       await refreshContextEvents(selectedItem.id);
-      notifyScheduleCollaboration(selectedItem.id, "commented");
+      notifyScheduleCollaboration(
+        selectedItem.id,
+        "commented",
+        contextEventId,
+      );
       toast.success(t("scheduleCommentSuccess"));
     } catch (err) {
       toast.error(humanizeError(err, language));
@@ -916,7 +940,7 @@ export default function SchedulePage() {
     try {
       const fallbackRecipient = resolveContextRecipient(selectedItem);
       const fix = await getCurrentLocation();
-      await createScheduleContextEvent(session, {
+      const contextEventId = await createScheduleContextEvent(session, {
         schedule_item_id: selectedItem.id,
         event_type: "location",
         visibility: contextVisibility,
@@ -927,7 +951,11 @@ export default function SchedulePage() {
         location_label: t("messageLocationShared"),
       });
       await refreshContextEvents(selectedItem.id);
-      notifyScheduleCollaboration(selectedItem.id, "commented");
+      notifyScheduleCollaboration(
+        selectedItem.id,
+        "commented",
+        contextEventId,
+      );
       toast.success(t("scheduleCommentSuccess"));
     } catch (err) {
       toast.error(humanizeError(err, language) || t("chatLocationError"));
@@ -946,7 +974,7 @@ export default function SchedulePage() {
     try {
       const fallbackRecipient = resolveContextRecipient(selectedItem);
       const url = await uploadChatAudio(session, blob, mimeType);
-      await createScheduleContextEvent(session, {
+      const contextEventId = await createScheduleContextEvent(session, {
         schedule_item_id: selectedItem.id,
         event_type: "audio",
         visibility: contextVisibility,
@@ -956,7 +984,11 @@ export default function SchedulePage() {
         audio_duration_ms: durationMs,
       });
       await refreshContextEvents(selectedItem.id);
-      notifyScheduleCollaboration(selectedItem.id, "commented");
+      notifyScheduleCollaboration(
+        selectedItem.id,
+        "commented",
+        contextEventId,
+      );
       toast.success(t("scheduleCommentSuccess"));
     } catch (err) {
       toast.error(humanizeError(err, language) || t("inputAudioSendFailed"));
@@ -999,6 +1031,7 @@ export default function SchedulePage() {
       setDeclineNote("");
       setShowDeclineNote(false);
       await openScheduleItem(selectedItem.id, false);
+      scheduleRefresh(true);
       notifyScheduleCollaboration(selectedItem.id, response);
       toast.success(t("scheduleRespondSuccess"));
     } catch (err) {
@@ -1464,11 +1497,8 @@ function ScheduleCard({
   onToggle: () => void;
   onDelete: () => void;
 }) {
-  const canToggle =
-    item.creator_member_id === session.member_id ||
-    item.assignee_member_id === session.member_id;
-  const canDelete =
-    canToggle || (session.is_admin && item.visibility === "family");
+  const canToggle = canSetScheduleItemStatus(item, session);
+  const canDelete = canManageScheduleItem(item, session);
   const done = item.status === "done";
   const hasReminder = Boolean(item.remind_at);
   const tone = scheduleToneClasses(item);
@@ -1533,6 +1563,11 @@ function ScheduleCard({
             <span className="max-w-full truncate rounded-full bg-slate-100 px-2 py-1 font-medium text-slate-600 ring-1 ring-slate-200">
               {t("scheduleAssignee")}: {item.assignee_nickname}
             </span>
+            {item.assignee_response !== "accepted" ? (
+              <span className={responseBadgeClass(item.assignee_response)}>
+                {assigneeResponseLabel(item.assignee_response, t)}
+              </span>
+            ) : null}
             {item.recurrence_rule && item.recurrence_rule !== "none" ? (
               <>
                 <span className="hidden">·</span>
@@ -1706,10 +1741,15 @@ function ScheduleDetailPanel({
     height: "min(92dvh, calc(100% - 1rem))",
     maxHeight: "min(92dvh, calc(100% - 1rem))",
   };
-  const canEdit =
-    item.creator_member_id === session.member_id ||
-    item.assignee_member_id === session.member_id ||
-    (session.is_admin && item.visibility === "family");
+  const canManage = canManageScheduleItem(item, session);
+  const canToggle = canSetScheduleItemStatus(item, session);
+  const actionCount = (canManage ? 2 : 0) + (canToggle ? 1 : 0);
+  const actionGridColumns =
+    actionCount === 1
+      ? "grid-cols-1"
+      : actionCount === 2
+        ? "grid-cols-2"
+        : "grid-cols-3";
   const isRecurring = Boolean(item.recurrence_group_id);
   const editBusy = busy === `edit:${item.id}`;
   const itemBusy = busy === item.id;
@@ -1720,7 +1760,7 @@ function ScheduleDetailPanel({
     responded_at: null,
     note: null,
   };
-  const isAssignee = item.assignee_member_id === session.member_id;
+  const canRespondAssignment = canRespondScheduleAssignment(item, session);
   const canComment = item.status !== "cancelled";
   const contextRecipientOptions = members.filter((member) => {
     if (member.id === session.member_id || member.status !== "active") return false;
@@ -2125,7 +2165,9 @@ function ScheduleDetailPanel({
                   </span>
                 ) : deliveries.length ? (
                   <span className="rounded-full bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-700 ring-1 ring-amber-100">
-                    {deliveries.length}
+                    {t("scheduleReminderDeliveryCount", {
+                      count: deliveries.length,
+                    })}
                   </span>
                 ) : null}
               </summary>
@@ -2176,7 +2218,14 @@ function ScheduleDetailPanel({
                         </span>
                       </div>
                       <div className="flex flex-wrap gap-1.5">
-                        {["pending", "sent", "failed", "gone", "skipped"].map((status) =>
+                        {[
+                          "pending",
+                          "processing",
+                          "sent",
+                          "failed",
+                          "gone",
+                          "skipped",
+                        ].map((status) =>
                           deliveryCounts[status] ? (
                             <span
                               key={status}
@@ -2327,7 +2376,7 @@ function ScheduleDetailPanel({
                               {response.note}
                             </p>
                           ) : null}
-                          {isAssignee && item.status === "active" ? (
+                          {canRespondAssignment && item.status === "active" ? (
                             <div className="mt-3 flex flex-col gap-2">
                               {showDeclineNote ? (
                                 <textarea
@@ -2761,7 +2810,7 @@ function ScheduleDetailPanel({
 
             </section>
 
-            {isRecurring && !conversationExpanded ? (
+            {isRecurring && canManage && !conversationExpanded ? (
               <div className="shrink-0">
                 <ScopeSelect
                   label={t("scheduleDeleteScope")}
@@ -2772,27 +2821,35 @@ function ScheduleDetailPanel({
               </div>
             ) : null}
 
-            {canEdit && !conversationExpanded ? (
-              <div className="grid shrink-0 grid-cols-3 gap-2">
-                <button type="button" className="btn-secondary" onClick={onEdit}>
-                  {t("scheduleEdit")}
-                </button>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  disabled={itemBusy}
-                  onClick={onToggle}
-                >
-                  {item.status === "done" ? t("scheduleRestore") : t("scheduleDone")}
-                </button>
-                <button
-                  type="button"
-                  className="btn-ghost text-rose-600 hover:bg-rose-50"
-                  disabled={itemBusy}
-                  onClick={onDelete}
-                >
-                  {t("scheduleDelete")}
-                </button>
+            {actionCount > 0 && !conversationExpanded ? (
+              <div className={`grid shrink-0 gap-2 ${actionGridColumns}`}>
+                {canManage ? (
+                  <button type="button" className="btn-secondary" onClick={onEdit}>
+                    {t("scheduleEdit")}
+                  </button>
+                ) : null}
+                {canToggle ? (
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    disabled={itemBusy}
+                    onClick={onToggle}
+                  >
+                    {item.status === "done"
+                      ? t("scheduleRestore")
+                      : t("scheduleDone")}
+                  </button>
+                ) : null}
+                {canManage ? (
+                  <button
+                    type="button"
+                    className="btn-ghost text-rose-600 hover:bg-rose-50"
+                    disabled={itemBusy}
+                    onClick={onDelete}
+                  >
+                    {t("scheduleDelete")}
+                  </button>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -4165,6 +4222,7 @@ function reminderDeliveryLabel(
   value: string,
   t: ReturnType<typeof useLanguage>["t"],
 ): string {
+  if (value === "processing") return t("scheduleReminderStatusProcessing");
   if (value === "sent") return t("scheduleReminderStatusSent");
   if (value === "skipped") return t("scheduleReminderStatusSkipped");
   if (value === "failed") return t("scheduleReminderStatusFailed");
@@ -4193,6 +4251,9 @@ function reminderKindLabel(
 }
 
 function reminderDeliveryBadgeClass(value: string): string {
+  if (value === "processing") {
+    return "rounded-full bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700 ring-1 ring-blue-100";
+  }
   if (value === "sent") {
     return "rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-100";
   }

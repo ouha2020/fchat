@@ -15,6 +15,7 @@ export type ScheduleAssigneeResponseStatus =
 
 export type ScheduleReminderDeliveryStatus =
   | "pending"
+  | "processing"
   | "sent"
   | "skipped"
   | "failed"
@@ -29,6 +30,7 @@ export interface ScheduleItem {
   family_id: string;
   creator_member_id: string;
   assignee_member_id: string;
+  assignee_response: ScheduleAssigneeResponseStatus;
   title: string;
   note: string | null;
   item_type: ScheduleItemType;

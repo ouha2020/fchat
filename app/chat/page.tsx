@@ -20,6 +20,7 @@ import {
   cancelAssistantActionCard,
   confirmAssistantActionCard,
   createAssistantActionCard,
+  createAssistantActionCards,
   deleteAssistantActionCard,
   listAssistantActionCards,
   updateAssistantActionCard,
@@ -97,9 +98,10 @@ import {
 } from "@/lib/pushNotificationService";
 import { safeGoogleMapsUrl } from "@/lib/security";
 import type { RecordingResult } from "@/lib/recordingService";
+import { sendScheduleCollaborationNotification } from "@/lib/scheduleCollaborationClient";
+import { resolveScheduleCreationNotification } from "@/lib/scheduleCollaborationPolicy";
 import {
   getScheduleReminderStatus,
-  respondScheduleAssignment,
   searchScheduleItems,
   setScheduleItemStatus,
   snoozeScheduleReminder,
@@ -573,6 +575,37 @@ function assistantScheduleItemId(card: AssistantActionCard): string | null {
   if (card.result_schedule_item_id) return card.result_schedule_item_id;
   const payloadItemId = card.payload.schedule_item_id;
   return typeof payloadItemId === "string" && payloadItemId ? payloadItemId : null;
+}
+
+async function notifyAssistantScheduleConfirmed(
+  session: LocalSession,
+  card: AssistantActionCard,
+  scheduleItemId: string | null | undefined,
+): Promise<boolean> {
+  if (
+    card.card_type !== "reminder" &&
+    card.card_type !== "schedule" &&
+    card.card_type !== "todo"
+  ) {
+    return false;
+  }
+  if (!scheduleItemId) return false;
+  const assigneeMemberId =
+    typeof card.payload.assignee_member_id === "string" &&
+    card.payload.assignee_member_id
+      ? card.payload.assignee_member_id
+      : session.member_id;
+  const eventType = resolveScheduleCreationNotification({
+    creator_member_id: session.member_id,
+    assignee_member_id: assigneeMemberId,
+    visibility: card.payload.visibility === "private" ? "private" : "family",
+  });
+  if (!eventType) return true;
+  return sendScheduleCollaborationNotification(
+    session,
+    scheduleItemId,
+    eventType,
+  );
 }
 
 function AssistantReplyPendingBubble() {
@@ -2350,8 +2383,7 @@ export default function ChatPage() {
   const canDeleteSelectedActionCard =
     !!selectedActionCard &&
     !selectedActionMessage?.deleted_at &&
-    (selectedActionCard.created_by_member_id === session?.member_id ||
-      !!session?.is_admin);
+    selectedActionCard.created_by_member_id === session?.member_id;
 
   function pushOptimistic(
     partial: Pick<Message, "id" | "message_type"> & Partial<Message>,
@@ -2620,19 +2652,12 @@ export default function ChatPage() {
 
   async function handleAssistantTaskAction(
     card: AssistantActionCard,
-    action: "accept" | "complete" | "snooze",
+    action: "complete" | "snooze",
   ) {
     if (!session || !card.result_schedule_item_id) return;
     setAssistantSubmittingCardId(card.id);
     try {
-      if (action === "accept") {
-        await respondScheduleAssignment(
-          session,
-          card.result_schedule_item_id,
-          "accepted",
-        );
-        toast.success(t("assistantTaskAccepted"));
-      } else if (action === "complete") {
+      if (action === "complete") {
         await setScheduleItemStatus(session, card.result_schedule_item_id, "done");
         toast.success(t("assistantTaskCompleted"));
       } else {
@@ -2661,13 +2686,21 @@ export default function ChatPage() {
     setAssistantSubmittingCardId(card.id);
     try {
       const result = await confirmAssistantActionCard(session, card.id);
-      await refreshAssistantCards(session);
+      const scheduleNotificationHandled = notifyAssistantScheduleConfirmed(
+        session,
+        card,
+        result.schedule_item_id,
+      );
+      await refreshAssistantCards(session).catch(() => undefined);
       if (result.message_id) {
         await fetchRealtimeMessage(result.message_id).catch(() => false);
       }
+      const notificationHandled = await scheduleNotificationHandled;
       if (result.result_message_id) {
         await fetchRealtimeMessage(result.result_message_id).catch(() => false);
-        requestMessagePush(session, result.result_message_id);
+        if (!notificationHandled) {
+          requestMessagePush(session, result.result_message_id);
+        }
       }
       if (card.card_type === "important") {
         await refreshImportantNotifications(session).catch(() => undefined);
@@ -2689,7 +2722,7 @@ export default function ChatPage() {
     setAssistantSubmittingCardId(card.id);
     try {
       const result = await cancelAssistantActionCard(session, card.id);
-      await refreshAssistantCards(session);
+      await refreshAssistantCards(session).catch(() => undefined);
       if (result.message_id) {
         await fetchRealtimeMessage(result.message_id).catch(() => false);
       }
@@ -2718,8 +2751,10 @@ export default function ChatPage() {
     try {
       const result = await deleteAssistantActionCard(session, card.id);
       await refreshAssistantCards(session).catch(() => undefined);
-      if (result.message_id) {
-        await fetchRealtimeMessage(result.message_id).catch(() => false);
+      for (const messageId of [result.message_id, result.result_message_id]) {
+        if (messageId) {
+          await fetchRealtimeMessage(messageId).catch(() => false);
+        }
       }
       toast.success(t("assistantDeleted"));
     } catch (err) {
@@ -2742,7 +2777,7 @@ export default function ChatPage() {
         edit.title,
         edit.startsAtIso,
       );
-      await refreshAssistantCards(session);
+      await refreshAssistantCards(session).catch(() => undefined);
       if (result.message_id) {
         await fetchRealtimeMessage(result.message_id).catch(() => false);
       }
@@ -2826,6 +2861,24 @@ export default function ChatPage() {
     }
   }
 
+  async function createAssistantDraftBatch(
+    drafts: CreateAssistantActionCardInput[],
+    sourceMessageId: string | null,
+  ) {
+    if (!session) throw new Error("unauthorized");
+    await createAssistantActionCards(
+      session,
+      drafts.map((draft) => ({
+        ...draft,
+        source_message_id: sourceMessageId,
+      })),
+    );
+    await refreshAssistantCards(session).catch(() => undefined);
+    await syncMessages(session, { onMessages: handleSyncedMessages }).catch(
+      () => undefined,
+    );
+  }
+
   async function handleSendText(text: string): Promise<boolean> {
     if (!session) return false;
     const explicitAssistantText = assistantDraftFromText(text) ?? keeperDraftFromText(text);
@@ -2883,25 +2936,7 @@ export default function ChatPage() {
           const drafts = createDrafts.length > 0 ? createDrafts : [assistantDraft];
           await runAssistantReplyAfterPause(pendingKey, async () => {
             try {
-              let lastMessageId: string | null = null;
-              for (const draft of drafts) {
-                const result = await createAssistantActionCard(session, {
-                  ...draft,
-                  source_message_id: null,
-                });
-                lastMessageId = result.message_id ?? lastMessageId;
-              }
-              await refreshAssistantCards(session).catch(() => undefined);
-              if (lastMessageId) {
-                const fetched = await fetchRealtimeMessage(lastMessageId).catch(
-                  () => false,
-                );
-                if (!fetched) {
-                  await syncMessages(session, { onMessages: handleSyncedMessages }).catch(
-                    () => undefined,
-                  );
-                }
-              }
+              await createAssistantDraftBatch(drafts, null);
             } catch (assistantErr) {
               created = false;
               toast.error(
@@ -2959,21 +2994,11 @@ export default function ChatPage() {
       } else if (isAssistantCreateDraft(assistantDraft)) {
         await runAssistantReplyAfterPause(id, async () => {
           try {
-            const result = await createAssistantActionCard(session, {
-              ...assistantDraft,
-              source_message_id: id,
-            });
-            await refreshAssistantCards(session).catch(() => undefined);
-            if (result.message_id) {
-              const fetched = await fetchRealtimeMessage(result.message_id).catch(
-                () => false,
-              );
-              if (!fetched) {
-                await syncMessages(session, { onMessages: handleSyncedMessages }).catch(
-                  () => undefined,
-                );
-              }
-            }
+            const createDrafts = assistantDrafts
+              .filter(isAssistantCreateDraft)
+              .filter((draft) => !draft.reason);
+            const drafts = createDrafts.length > 0 ? createDrafts : [assistantDraft];
+            await createAssistantDraftBatch(drafts, id);
           } catch (assistantErr) {
             toast.error(
               t("assistantCreateFailed", {
@@ -3561,9 +3586,6 @@ export default function ChatPage() {
                     onCancelAssistantCard={handleCancelAssistantCard}
                     onSubmitAssistantCardEdit={handleSubmitAssistantCardEdit}
                     onOpenAssistantSchedule={handleOpenAssistantSchedule}
-                    onAcceptAssistantTask={(card) =>
-                      handleAssistantTaskAction(card, "accept")
-                    }
                     onCompleteAssistantTask={(card) =>
                       handleAssistantTaskAction(card, "complete")
                     }

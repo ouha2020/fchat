@@ -12441,6 +12441,9 @@ declare
   v_card assistant_action_cards%rowtype;
   v_title text;
   v_payload jsonb;
+  v_previous_starts_at timestamptz;
+  v_previous_ends_at timestamptz;
+  v_previous_remind_at timestamptz;
 begin
   select * into v_member from current_member_from_token(p_member_id, p_member_token);
   if not found then
@@ -12472,8 +12475,29 @@ begin
 
   v_payload := coalesce(v_card.payload, '{}'::jsonb);
   if p_starts_at is not null then
+    v_previous_starts_at := nullif(v_payload->>'starts_at', '')::timestamptz;
+    v_previous_ends_at := nullif(v_payload->>'ends_at', '')::timestamptz;
+    v_previous_remind_at := nullif(v_payload->>'remind_at', '')::timestamptz;
+
     v_payload := jsonb_set(v_payload, '{starts_at}', to_jsonb(p_starts_at), true);
-    if v_card.card_type = 'reminder' then
+    if v_previous_starts_at is not null then
+      if v_previous_ends_at is not null then
+        v_payload := jsonb_set(
+          v_payload,
+          '{ends_at}',
+          to_jsonb(p_starts_at + (v_previous_ends_at - v_previous_starts_at)),
+          true
+        );
+      end if;
+      if v_previous_remind_at is not null then
+        v_payload := jsonb_set(
+          v_payload,
+          '{remind_at}',
+          to_jsonb(p_starts_at + (v_previous_remind_at - v_previous_starts_at)),
+          true
+        );
+      end if;
+    elsif v_card.card_type = 'reminder' then
       v_payload := jsonb_set(v_payload, '{remind_at}', to_jsonb(p_starts_at), true);
     end if;
   end if;
@@ -12495,8 +12519,16 @@ $$;
 grant execute on function update_assistant_action_card(uuid, text, uuid, text, timestamptz)
   to anon, authenticated;
 
--- Delete an assistant action card plus its message and schedule item (see
--- supabase/migrations/20260709_assistant_card_delete.sql).
+insert into app_schema_migrations (version, name, description)
+values (
+  '20260710_assistant_card_edit_time_consistency',
+  'assistant_card_edit_time_consistency',
+  'Moves pending card end and reminder times by the same delta when its start time changes.'
+)
+on conflict (version) do nothing;
+
+-- Delete an assistant action card while preserving schedule ownership and
+-- update/cancel semantics (see the 20260710 consistency migration).
 create or replace function delete_assistant_action_card(
   p_member_id uuid,
   p_member_token text,
@@ -12511,6 +12543,7 @@ as $$
 declare
   v_member record;
   v_card assistant_action_cards%rowtype;
+  v_schedule family_schedule_items%rowtype;
 begin
   select * into v_member from current_member_from_token(p_member_id, p_member_token);
   if not found then
@@ -12525,35 +12558,41 @@ begin
   if not found then
     raise exception 'assistant_card_not_found';
   end if;
-  if v_card.created_by_member_id <> v_member.id and not v_member.is_admin then
+  if v_card.created_by_member_id <> v_member.id then
     raise exception 'assistant_card_not_allowed';
   end if;
 
-  if v_card.result_schedule_item_id is not null then
-    update family_schedule_items
-       set status = 'cancelled',
-           deleted_at = now(),
-           deleted_by_member_id = v_member.id,
-           updated_at = now()
-     where id = v_card.result_schedule_item_id
-       and family_id = v_member.family_id
-       and deleted_at is null;
+  if v_card.result_schedule_item_id is not null
+     and v_card.card_type in ('reminder', 'schedule', 'todo') then
+    select * into v_schedule
+      from family_schedule_items s
+     where s.id = v_card.result_schedule_item_id
+       and s.family_id = v_member.family_id
+     for update;
+
+    if found and v_schedule.deleted_at is null then
+      perform delete_schedule_item(
+        p_member_id,
+        p_member_token,
+        v_schedule.id,
+        'single'
+      );
+    end if;
   end if;
 
-  if v_card.card_message_id is not null then
-    update messages
-       set deleted_at = now(),
-           deleted_by_member_id = v_member.id
-     where id = v_card.card_message_id
-       and family_id = v_member.family_id
-       and deleted_at is null;
-  end if;
+  update messages
+     set deleted_at = now(),
+         deleted_by_member_id = v_member.id
+   where id in (v_card.card_message_id, v_card.result_message_id)
+     and family_id = v_member.family_id
+     and deleted_at is null;
 
   delete from assistant_action_cards where id = v_card.id;
 
   return jsonb_build_object(
     'card_id', p_card_id,
     'message_id', v_card.card_message_id,
+    'result_message_id', v_card.result_message_id,
     'schedule_item_id', v_card.result_schedule_item_id
   );
 end;
@@ -12561,3 +12600,2600 @@ $$;
 
 grant execute on function delete_assistant_action_card(uuid, text, uuid)
   to anon, authenticated;
+
+insert into app_schema_migrations (version, name, description)
+values (
+  '20260710_assistant_card_delete_business_consistency',
+  'assistant_card_delete_business_consistency',
+  'Restricts card deletion to its creator and avoids deleting schedules referenced by update/cancel cards.'
+)
+on conflict (version) do nothing;
+
+-- Bind schedule collaboration Push delivery to authenticated activity/context
+-- evidence and make repeated client requests idempotent.
+-- Bind each collaboration Push to one recent, authenticated schedule event.
+-- The unique evidence indexes make client retries idempotent without putting
+-- schedule titles, notes, media, or other private content into the Push layer.
+
+create table if not exists family_schedule_collaboration_push_claims (
+  id uuid primary key default gen_random_uuid(),
+  family_id uuid not null references families(id) on delete cascade,
+  schedule_item_id uuid not null references family_schedule_items(id) on delete cascade,
+  actor_member_id uuid not null references family_members(id) on delete cascade,
+  event_type text not null,
+  activity_log_id uuid references family_schedule_activity_logs(id) on delete cascade,
+  context_event_id uuid references family_context_events(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  constraint family_schedule_collaboration_push_claims_event_type_check
+    check (event_type in ('created', 'assigned', 'accepted', 'declined', 'commented')),
+  constraint family_schedule_collaboration_push_claims_evidence_check
+    check (
+      (
+        activity_log_id is not null
+        and context_event_id is null
+        and event_type in ('created', 'assigned', 'accepted', 'declined')
+      )
+      or (
+        activity_log_id is null
+        and context_event_id is not null
+        and event_type = 'commented'
+      )
+    )
+);
+
+create unique index if not exists family_schedule_collaboration_push_claims_activity_uidx
+  on family_schedule_collaboration_push_claims (activity_log_id)
+  where activity_log_id is not null;
+
+create unique index if not exists family_schedule_collaboration_push_claims_context_uidx
+  on family_schedule_collaboration_push_claims (context_event_id)
+  where context_event_id is not null;
+
+create index if not exists family_schedule_collaboration_push_claims_family_created_idx
+  on family_schedule_collaboration_push_claims (family_id, created_at desc);
+
+alter table family_schedule_collaboration_push_claims enable row level security;
+revoke all on family_schedule_collaboration_push_claims from anon, authenticated;
+
+drop policy if exists "schedule collaboration push claims are service only"
+  on family_schedule_collaboration_push_claims;
+create policy "schedule collaboration push claims are service only"
+  on family_schedule_collaboration_push_claims
+  for select
+  to anon, authenticated
+  using (false);
+
+insert into app_schema_migrations (version, name, description)
+values (
+  '20260710_schedule_collaboration_push_claims',
+  'schedule_collaboration_push_claims',
+  'Binds schedule collaboration Push delivery to recent activity/context evidence and deduplicates retries.'
+)
+on conflict (version) do nothing;
+
+-- Canonical definition restored from the recurrence-editing migration.
+-- Allow editing the recurrence rule from the schedule detail form.
+-- The operation keeps the selected item id, cancels replaced instances, and
+-- regenerates a finite series from the selected occurrence.
+
+create or replace function replace_schedule_item_recurrence(
+  p_member_id uuid,
+  p_member_token text,
+  p_item_id uuid,
+  p_title text,
+  p_note text,
+  p_item_type text,
+  p_visibility text,
+  p_assignee_member_id uuid,
+  p_starts_at timestamptz,
+  p_ends_at timestamptz,
+  p_remind_at timestamptz,
+  p_recurrence_rule text,
+  p_recurrence_scope text default 'single'
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+#variable_conflict use_column
+declare
+  v_member record;
+  v_item family_schedule_items%rowtype;
+  v_assignee family_members%rowtype;
+  v_title text;
+  v_note text;
+  v_rule text;
+  v_scope text;
+  v_count int;
+  v_group_id uuid;
+  v_index int;
+  v_id uuid;
+  v_starts_at timestamptz;
+  v_ends_at timestamptz;
+  v_remind_at timestamptz;
+  v_duration interval;
+  v_reminder_offset interval;
+  v_assignee_response text;
+  v_assignee_responded_at timestamptz;
+  v_activity text;
+  v_summary text;
+begin
+  select * into v_member from current_member_from_token(p_member_id, p_member_token);
+  if not found then
+    raise exception 'unauthorized';
+  end if;
+
+  v_title := trim(coalesce(p_title, ''));
+  v_note := nullif(trim(coalesce(p_note, '')), '');
+  v_rule := coalesce(nullif(trim(coalesce(p_recurrence_rule, '')), ''), 'none');
+  v_scope := coalesce(nullif(trim(coalesce(p_recurrence_scope, '')), ''), 'single');
+
+  if length(v_title) = 0 then
+    raise exception 'schedule_title_required';
+  end if;
+  if length(v_title) > 60 then
+    raise exception 'schedule_title_too_long';
+  end if;
+  if coalesce(p_item_type, '') not in ('schedule', 'todo', 'reminder') then
+    raise exception 'invalid_schedule_type';
+  end if;
+  if coalesce(p_visibility, '') not in ('family', 'private') then
+    raise exception 'invalid_schedule_visibility';
+  end if;
+  if v_rule not in ('none', 'daily', 'weekly', 'monthly') then
+    raise exception 'invalid_schedule_recurrence';
+  end if;
+  if v_scope not in ('single', 'future', 'all') then
+    raise exception 'invalid_schedule_scope';
+  end if;
+  if p_starts_at is null then
+    raise exception 'invalid_schedule_time';
+  end if;
+  if p_ends_at is not null and p_ends_at <= p_starts_at then
+    raise exception 'invalid_schedule_time';
+  end if;
+
+  select * into v_assignee
+    from family_members fm
+   where fm.id = p_assignee_member_id
+     and fm.family_id = v_member.family_id
+     and fm.status = 'active'
+   limit 1;
+  if not found then
+    raise exception 'member_not_found';
+  end if;
+
+  select * into v_item
+    from family_schedule_items s
+   where s.id = p_item_id
+     and s.family_id = v_member.family_id
+     and s.deleted_at is null
+   for update;
+  if not found then
+    raise exception 'schedule_item_not_found';
+  end if;
+  if v_item.status = 'cancelled' then
+    raise exception 'schedule_item_not_found';
+  end if;
+  if not (
+    v_item.creator_member_id = v_member.id
+    or v_item.assignee_member_id = v_member.id
+    or (v_item.visibility = 'family' and v_member.is_admin)
+  ) then
+    raise exception 'not_allowed';
+  end if;
+
+  if v_item.recurrence_group_id is null then
+    v_scope := 'single';
+  elsif v_scope = 'single'
+    and v_rule is distinct from coalesce(v_item.recurrence_rule, 'none') then
+    v_scope := 'future';
+  end if;
+
+  with cancelled as (
+    update family_schedule_items s
+       set status = 'cancelled',
+           deleted_at = now(),
+           deleted_by_member_id = v_member.id,
+           updated_at = now()
+     where s.family_id = v_member.family_id
+       and s.deleted_at is null
+       and s.id <> v_item.id
+       and (
+         (
+           v_scope = 'future'
+           and s.recurrence_group_id = v_item.recurrence_group_id
+           and s.starts_at >= v_item.starts_at
+         )
+         or (
+           v_scope = 'all'
+           and s.recurrence_group_id = v_item.recurrence_group_id
+         )
+       )
+       and (
+         s.creator_member_id = v_member.id
+         or s.assignee_member_id = v_member.id
+         or (s.visibility = 'family' and v_member.is_admin)
+       )
+     returning s.id
+  )
+  update family_schedule_reminder_deliveries d
+     set status = 'skipped',
+         skipped_reason = 'schedule_cancelled',
+         updated_at = now()
+   where d.status in ('pending', 'failed')
+     and exists (select 1 from cancelled c where c.id = d.schedule_item_id);
+
+  v_count := case v_rule
+    when 'daily' then 30
+    when 'weekly' then 12
+    when 'monthly' then 12
+    else 1
+  end;
+  v_group_id := case when v_rule = 'none' then null else gen_random_uuid() end;
+  v_duration := case when p_ends_at is null then null else p_ends_at - p_starts_at end;
+  v_reminder_offset := case when p_remind_at is null then null else p_starts_at - p_remind_at end;
+  v_assignee_response := case when v_assignee.id = v_item.creator_member_id then 'accepted' else 'pending' end;
+  v_assignee_responded_at := case when v_assignee.id = v_item.creator_member_id then now() else null end;
+
+  update family_schedule_items
+     set title = v_title,
+         note = v_note,
+         item_type = p_item_type,
+         visibility = p_visibility,
+         assignee_member_id = v_assignee.id,
+         assignee_response = case
+           when v_item.assignee_member_id is distinct from v_assignee.id then v_assignee_response
+           else assignee_response
+         end,
+         assignee_responded_at = case
+           when v_item.assignee_member_id is distinct from v_assignee.id then v_assignee_responded_at
+           else assignee_responded_at
+         end,
+         assignee_response_note = case
+           when v_item.assignee_member_id is distinct from v_assignee.id then null
+           else assignee_response_note
+         end,
+         starts_at = p_starts_at,
+         ends_at = p_ends_at,
+         remind_at = p_remind_at,
+         reminded_at = null,
+         reminder_push_attempted_at = null,
+         reminder_push_error = null,
+         recurrence_group_id = v_group_id,
+         recurrence_rule = v_rule,
+         recurrence_index = case when v_rule = 'none' then null else 0 end,
+         updated_at = now()
+   where id = v_item.id;
+  perform ensure_schedule_reminder_deliveries(v_item.id);
+
+  if v_rule <> 'none' then
+    for v_index in 1..(v_count - 1) loop
+      v_starts_at := case v_rule
+        when 'daily' then p_starts_at + (v_index * interval '1 day')
+        when 'weekly' then p_starts_at + (v_index * interval '1 week')
+        when 'monthly' then p_starts_at + (v_index * interval '1 month')
+        else p_starts_at
+      end;
+      v_ends_at := case when v_duration is null then null else v_starts_at + v_duration end;
+      v_remind_at := case when v_reminder_offset is null then null else v_starts_at - v_reminder_offset end;
+
+      insert into family_schedule_items (
+        family_id,
+        creator_member_id,
+        assignee_member_id,
+        title,
+        note,
+        item_type,
+        visibility,
+        starts_at,
+        ends_at,
+        remind_at,
+        recurrence_group_id,
+        recurrence_rule,
+        recurrence_index,
+        assignee_response,
+        assignee_responded_at
+      )
+      values (
+        v_item.family_id,
+        v_item.creator_member_id,
+        v_assignee.id,
+        v_title,
+        v_note,
+        p_item_type,
+        p_visibility,
+        v_starts_at,
+        v_ends_at,
+        v_remind_at,
+        v_group_id,
+        v_rule,
+        v_index,
+        v_assignee_response,
+        v_assignee_responded_at
+      )
+      returning id into v_id;
+      perform ensure_schedule_reminder_deliveries(v_id);
+    end loop;
+  end if;
+
+  if v_item.assignee_member_id is distinct from v_assignee.id then
+    v_activity := 'assigned';
+    v_summary := 'Assigned to ' || v_assignee.nickname;
+  else
+    v_activity := 'updated';
+    v_summary := v_member.nickname || ' changed the repeat rule';
+  end if;
+
+  perform add_schedule_activity_log(
+    v_item.id,
+    v_member.id,
+    v_activity,
+    v_summary,
+    jsonb_build_object(
+      'recurrence_rule', v_rule,
+      'recurrence_scope', v_scope,
+      'assignee_member_id', v_assignee.id
+    )
+  );
+  perform insert_schedule_context_event(
+    v_item.id,
+    'member',
+    v_member.id,
+    v_activity,
+    v_summary,
+    null,
+    null
+  );
+
+  return v_item.id;
+end;
+$$;
+
+grant execute on function replace_schedule_item_recurrence(
+  uuid, text, uuid, text, text, text, text, uuid, timestamptz, timestamptz,
+  timestamptz, text, text
+) to anon, authenticated;
+
+insert into app_schema_migrations (version, name, description)
+values (
+  '20260710_schedule_recurrence_assignment_evidence',
+  'schedule_recurrence_assignment_evidence',
+  'Records assignment evidence when assignee and recurrence are changed together.'
+)
+on conflict (version) do nothing;
+
+-- Keep schedule item changes and reminder-rule changes in one transaction.
+-- The existing RPCs remain available for backward compatibility; clients that
+-- edit both surfaces should use these wrappers to avoid partial success.
+
+create or replace function create_schedule_item_with_reminder_rules(
+  p_member_id uuid,
+  p_member_token text,
+  p_title text,
+  p_note text,
+  p_item_type text,
+  p_visibility text,
+  p_starts_at timestamptz,
+  p_ends_at timestamptz,
+  p_remind_at timestamptz,
+  p_assignee_member_id uuid,
+  p_recurrence_rule text,
+  p_reminder_offsets int[]
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+#variable_conflict use_column
+declare
+  v_item_id uuid;
+  v_rule text;
+begin
+  v_rule := coalesce(nullif(trim(coalesce(p_recurrence_rule, '')), ''), 'none');
+  v_item_id := create_schedule_item(
+    p_member_id,
+    p_member_token,
+    p_title,
+    p_note,
+    p_item_type,
+    p_visibility,
+    p_starts_at,
+    p_ends_at,
+    p_remind_at,
+    p_assignee_member_id,
+    v_rule
+  );
+
+  if coalesce(cardinality(p_reminder_offsets), 0) > 1 then
+    perform set_schedule_reminder_rules(
+      p_member_id,
+      p_member_token,
+      v_item_id,
+      p_reminder_offsets,
+      case when v_rule = 'none' then 'single' else 'all' end
+    );
+  end if;
+
+  return v_item_id;
+end;
+$$;
+
+create or replace function update_schedule_item_with_reminder_rules(
+  p_member_id uuid,
+  p_member_token text,
+  p_item_id uuid,
+  p_title text,
+  p_note text,
+  p_item_type text,
+  p_visibility text,
+  p_assignee_member_id uuid,
+  p_starts_at timestamptz,
+  p_ends_at timestamptz,
+  p_remind_at timestamptz,
+  p_recurrence_scope text,
+  p_reminder_offsets int[]
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+#variable_conflict use_column
+begin
+  -- Clear/replace old rule rows first. The following item update restores a
+  -- custom p_remind_at when no standard offsets were supplied.
+  perform set_schedule_reminder_rules(
+    p_member_id,
+    p_member_token,
+    p_item_id,
+    coalesce(p_reminder_offsets, '{}'::int[]),
+    p_recurrence_scope
+  );
+
+  perform update_schedule_item(
+    p_member_id,
+    p_member_token,
+    p_item_id,
+    p_title,
+    p_note,
+    p_item_type,
+    p_visibility,
+    p_assignee_member_id,
+    p_starts_at,
+    p_ends_at,
+    p_remind_at,
+    p_recurrence_scope
+  );
+end;
+$$;
+
+create or replace function replace_schedule_item_recurrence_with_reminder_rules(
+  p_member_id uuid,
+  p_member_token text,
+  p_item_id uuid,
+  p_title text,
+  p_note text,
+  p_item_type text,
+  p_visibility text,
+  p_assignee_member_id uuid,
+  p_starts_at timestamptz,
+  p_ends_at timestamptz,
+  p_remind_at timestamptz,
+  p_recurrence_rule text,
+  p_recurrence_scope text,
+  p_reminder_offsets int[]
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+#variable_conflict use_column
+declare
+  v_item_id uuid;
+  v_rule text;
+begin
+  v_rule := coalesce(nullif(trim(coalesce(p_recurrence_rule, '')), ''), 'none');
+  v_item_id := replace_schedule_item_recurrence(
+    p_member_id,
+    p_member_token,
+    p_item_id,
+    p_title,
+    p_note,
+    p_item_type,
+    p_visibility,
+    p_assignee_member_id,
+    p_starts_at,
+    p_ends_at,
+    p_remind_at,
+    v_rule,
+    p_recurrence_scope
+  );
+
+  if coalesce(cardinality(p_reminder_offsets), 0) > 1 then
+    perform set_schedule_reminder_rules(
+      p_member_id,
+      p_member_token,
+      v_item_id,
+      p_reminder_offsets,
+      case when v_rule = 'none' then 'single' else 'all' end
+    );
+  end if;
+
+  return v_item_id;
+end;
+$$;
+
+grant execute on function create_schedule_item_with_reminder_rules(
+  uuid, text, text, text, text, text, timestamptz, timestamptz,
+  timestamptz, uuid, text, int[]
+) to anon, authenticated;
+
+grant execute on function update_schedule_item_with_reminder_rules(
+  uuid, text, uuid, text, text, text, text, uuid, timestamptz,
+  timestamptz, timestamptz, text, int[]
+) to anon, authenticated;
+
+grant execute on function replace_schedule_item_recurrence_with_reminder_rules(
+  uuid, text, uuid, text, text, text, text, uuid, timestamptz,
+  timestamptz, timestamptz, text, text, int[]
+) to anon, authenticated;
+
+insert into app_schema_migrations (version, name, description)
+values (
+  '20260710_atomic_schedule_reminder_writes',
+  'atomic_schedule_reminder_writes',
+  'Writes schedule items and reminder rules in one transaction for create, update, and recurrence replacement.'
+)
+on conflict (version) do nothing;
+
+-- Keep assignment acceptance, management permissions, dashboards, and
+-- reminder delivery aligned around one responsibility state.
+
+drop function if exists list_schedule_items_for_member(uuid, text, timestamptz, timestamptz);
+
+create function list_schedule_items_for_member(
+  p_member_id uuid,
+  p_member_token text,
+  p_range_start timestamptz,
+  p_range_end timestamptz
+)
+returns table (
+  id uuid,
+  family_id uuid,
+  creator_member_id uuid,
+  assignee_member_id uuid,
+  title text,
+  note text,
+  item_type text,
+  visibility text,
+  starts_at timestamptz,
+  ends_at timestamptz,
+  remind_at timestamptz,
+  reminded_at timestamptz,
+  reminder_push_attempted_at timestamptz,
+  recurrence_group_id uuid,
+  recurrence_rule text,
+  recurrence_index int,
+  status text,
+  completed_at timestamptz,
+  completed_by_member_id uuid,
+  created_at timestamptz,
+  updated_at timestamptz,
+  creator_nickname text,
+  assignee_nickname text,
+  assignee_response text
+)
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+#variable_conflict use_column
+declare
+  v_member record;
+begin
+  select * into v_member from current_member_from_token(p_member_id, p_member_token);
+  if not found then
+    raise exception 'unauthorized';
+  end if;
+  if p_range_start is null or p_range_end is null or p_range_end <= p_range_start then
+    raise exception 'invalid_schedule_range';
+  end if;
+
+  return query
+  select s.id, s.family_id, s.creator_member_id, s.assignee_member_id,
+         s.title, s.note, s.item_type, s.visibility, s.starts_at, s.ends_at,
+         s.remind_at, s.reminded_at, s.reminder_push_attempted_at,
+         s.recurrence_group_id, s.recurrence_rule, s.recurrence_index,
+         s.status, s.completed_at, s.completed_by_member_id,
+         s.created_at, s.updated_at,
+         creator.nickname as creator_nickname,
+         assignee.nickname as assignee_nickname,
+         s.assignee_response
+    from family_schedule_items s
+    join family_members creator on creator.id = s.creator_member_id
+    join family_members assignee on assignee.id = s.assignee_member_id
+   where s.family_id = v_member.family_id
+     and s.deleted_at is null
+     and s.starts_at >= p_range_start
+     and s.starts_at < p_range_end
+     and (
+       s.visibility = 'family'
+       or s.creator_member_id = v_member.id
+       or s.assignee_member_id = v_member.id
+     )
+   order by s.starts_at asc, s.created_at asc, s.id asc;
+end;
+$$;
+
+revoke all on function list_schedule_items_for_member(uuid, text, timestamptz, timestamptz)
+  from public;
+grant execute on function list_schedule_items_for_member(uuid, text, timestamptz, timestamptz)
+  to anon, authenticated;
+
+drop function if exists search_schedule_items_for_member(
+  uuid, text, timestamptz, timestamptz, text, uuid, text, text, int
+);
+
+create function search_schedule_items_for_member(
+  p_member_id uuid,
+  p_member_token text,
+  p_range_start timestamptz,
+  p_range_end timestamptz,
+  p_query text default null,
+  p_assignee_member_id uuid default null,
+  p_item_type text default null,
+  p_visibility text default null,
+  p_limit int default 300
+)
+returns table (
+  id uuid,
+  family_id uuid,
+  creator_member_id uuid,
+  assignee_member_id uuid,
+  title text,
+  note text,
+  item_type text,
+  visibility text,
+  starts_at timestamptz,
+  ends_at timestamptz,
+  remind_at timestamptz,
+  reminded_at timestamptz,
+  reminder_push_attempted_at timestamptz,
+  recurrence_group_id uuid,
+  recurrence_rule text,
+  recurrence_index int,
+  status text,
+  completed_at timestamptz,
+  completed_by_member_id uuid,
+  created_at timestamptz,
+  updated_at timestamptz,
+  creator_nickname text,
+  assignee_nickname text,
+  assignee_response text
+)
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+#variable_conflict use_column
+declare
+  v_member record;
+  v_query text;
+  v_limit int;
+begin
+  select * into v_member from current_member_from_token(p_member_id, p_member_token);
+  if not found then
+    raise exception 'unauthorized';
+  end if;
+  if p_range_start is null or p_range_end is null or p_range_end <= p_range_start then
+    raise exception 'invalid_schedule_range';
+  end if;
+
+  v_query := nullif(trim(coalesce(p_query, '')), '');
+  if v_query is not null and length(v_query) > 40 then
+    raise exception 'invalid_schedule_search';
+  end if;
+  if p_item_type is not null and p_item_type not in ('schedule', 'todo', 'reminder') then
+    raise exception 'invalid_schedule_filter';
+  end if;
+  if p_visibility is not null and p_visibility not in ('family', 'private') then
+    raise exception 'invalid_schedule_filter';
+  end if;
+  if p_assignee_member_id is not null and not exists (
+    select 1
+      from family_members fm
+     where fm.id = p_assignee_member_id
+       and fm.family_id = v_member.family_id
+       and fm.status = 'active'
+  ) then
+    raise exception 'invalid_schedule_filter';
+  end if;
+
+  v_limit := least(greatest(coalesce(p_limit, 300), 1), 300);
+
+  return query
+  select s.id, s.family_id, s.creator_member_id, s.assignee_member_id,
+         s.title, s.note, s.item_type, s.visibility, s.starts_at, s.ends_at,
+         s.remind_at, s.reminded_at, s.reminder_push_attempted_at,
+         s.recurrence_group_id, s.recurrence_rule, s.recurrence_index,
+         s.status, s.completed_at, s.completed_by_member_id,
+         s.created_at, s.updated_at,
+         creator.nickname as creator_nickname,
+         assignee.nickname as assignee_nickname,
+         s.assignee_response
+    from family_schedule_items s
+    join family_members creator on creator.id = s.creator_member_id
+    join family_members assignee on assignee.id = s.assignee_member_id
+   where s.family_id = v_member.family_id
+     and s.deleted_at is null
+     and s.starts_at >= p_range_start
+     and s.starts_at < p_range_end
+     and (
+       s.visibility = 'family'
+       or s.creator_member_id = v_member.id
+       or s.assignee_member_id = v_member.id
+     )
+     and (v_query is null or s.title ilike '%' || v_query || '%' or coalesce(s.note, '') ilike '%' || v_query || '%')
+     and (p_assignee_member_id is null or s.assignee_member_id = p_assignee_member_id)
+     and (p_item_type is null or s.item_type = p_item_type)
+     and (p_visibility is null or s.visibility = p_visibility)
+   order by s.starts_at asc, s.created_at asc, s.id asc
+   limit v_limit;
+end;
+$$;
+
+revoke all on function search_schedule_items_for_member(
+  uuid, text, timestamptz, timestamptz, text, uuid, text, text, int
+) from public;
+grant execute on function search_schedule_items_for_member(
+  uuid, text, timestamptz, timestamptz, text, uuid, text, text, int
+) to anon, authenticated;
+
+drop function if exists get_schedule_item_for_member(uuid, text, uuid);
+
+create function get_schedule_item_for_member(
+  p_member_id uuid,
+  p_member_token text,
+  p_item_id uuid
+)
+returns table (
+  id uuid,
+  family_id uuid,
+  creator_member_id uuid,
+  assignee_member_id uuid,
+  title text,
+  note text,
+  item_type text,
+  visibility text,
+  starts_at timestamptz,
+  ends_at timestamptz,
+  remind_at timestamptz,
+  reminded_at timestamptz,
+  reminder_push_attempted_at timestamptz,
+  recurrence_group_id uuid,
+  recurrence_rule text,
+  recurrence_index int,
+  status text,
+  completed_at timestamptz,
+  completed_by_member_id uuid,
+  created_at timestamptz,
+  updated_at timestamptz,
+  creator_nickname text,
+  assignee_nickname text,
+  assignee_response text
+)
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+#variable_conflict use_column
+declare
+  v_member record;
+begin
+  select * into v_member from current_member_from_token(p_member_id, p_member_token);
+  if not found then
+    raise exception 'unauthorized';
+  end if;
+
+  return query
+  select s.id, s.family_id, s.creator_member_id, s.assignee_member_id,
+         s.title, s.note, s.item_type, s.visibility, s.starts_at, s.ends_at,
+         s.remind_at, s.reminded_at, s.reminder_push_attempted_at,
+         s.recurrence_group_id, s.recurrence_rule, s.recurrence_index,
+         s.status, s.completed_at, s.completed_by_member_id,
+         s.created_at, s.updated_at,
+         creator.nickname as creator_nickname,
+         assignee.nickname as assignee_nickname,
+         s.assignee_response
+    from family_schedule_items s
+    join family_members creator on creator.id = s.creator_member_id
+    join family_members assignee on assignee.id = s.assignee_member_id
+   where s.id = p_item_id
+     and s.family_id = v_member.family_id
+     and s.deleted_at is null
+     and (
+       s.visibility = 'family'
+       or s.creator_member_id = v_member.id
+       or s.assignee_member_id = v_member.id
+     )
+   limit 1;
+end;
+$$;
+
+revoke all on function get_schedule_item_for_member(uuid, text, uuid) from public;
+grant execute on function get_schedule_item_for_member(uuid, text, uuid)
+  to anon, authenticated;
+
+create or replace function schedule_item_json(p_item jsonb)
+returns jsonb
+language sql
+stable
+set search_path = public, extensions
+as $$
+  select jsonb_build_object(
+    'id', p_item ->> 'id',
+    'title', p_item ->> 'title',
+    'item_type', p_item ->> 'item_type',
+    'visibility', p_item ->> 'visibility',
+    'starts_at', p_item ->> 'starts_at',
+    'ends_at', p_item ->> 'ends_at',
+    'remind_at', p_item ->> 'remind_at',
+    'status', p_item ->> 'status',
+    'assignee_member_id', p_item ->> 'assignee_member_id',
+    'assignee_nickname', p_item ->> 'assignee_nickname',
+    'assignee_response', p_item ->> 'assignee_response',
+    'creator_member_id', p_item ->> 'creator_member_id',
+    'creator_nickname', p_item ->> 'creator_nickname',
+    'recurrence_group_id', p_item ->> 'recurrence_group_id',
+    'recurrence_rule', p_item ->> 'recurrence_rule'
+  );
+$$;
+
+create or replace function get_personal_dashboard_for_member(
+  p_member_id uuid,
+  p_member_token text,
+  p_today_start timestamptz,
+  p_today_end timestamptz,
+  p_now timestamptz
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+#variable_conflict use_column
+declare
+  v_member record;
+  v_result jsonb;
+begin
+  select * into v_member from current_member_from_token(p_member_id, p_member_token);
+  if not found then
+    raise exception 'unauthorized';
+  end if;
+  if p_today_start is null or p_today_end is null or p_today_end <= p_today_start then
+    raise exception 'invalid_schedule_range';
+  end if;
+  if p_now is null then
+    raise exception 'invalid_schedule_time';
+  end if;
+
+  with visible_items as (
+    select s.*,
+           creator.nickname as creator_nickname,
+           assignee.nickname as assignee_nickname
+      from family_schedule_items s
+      join family_members creator on creator.id = s.creator_member_id
+      join family_members assignee on assignee.id = s.assignee_member_id
+     where s.family_id = v_member.family_id
+       and s.deleted_at is null
+       and (
+         s.visibility = 'family'
+         or s.creator_member_id = v_member.id
+         or s.assignee_member_id = v_member.id
+       )
+  ),
+  today_assigned as (
+    select *
+      from visible_items
+     where assignee_member_id = v_member.id
+       and assignee_response = 'accepted'
+       and status = 'active'
+       and starts_at >= p_today_start
+       and starts_at < p_today_end
+     order by starts_at asc, id asc
+     limit 5
+  ),
+  upcoming as (
+    select *
+      from visible_items
+     where status = 'active'
+       and starts_at >= p_now
+       and starts_at < p_now + interval '7 days'
+       and not (
+         assignee_member_id = v_member.id
+         and assignee_response = 'accepted'
+         and starts_at >= p_today_start
+         and starts_at < p_today_end
+       )
+       and not (
+         visibility = 'private'
+         and creator_member_id <> v_member.id
+         and assignee_member_id = v_member.id
+         and assignee_response = 'declined'
+       )
+     order by starts_at asc, id asc
+     limit 8
+  ),
+  created_by_me as (
+    select *
+      from visible_items
+     where creator_member_id = v_member.id
+       and status = 'active'
+       and starts_at >= p_now
+     order by starts_at asc, id asc
+     limit 5
+  ),
+  recent_done as (
+    select *
+      from visible_items
+     where status = 'done'
+       and (
+         assignee_member_id = v_member.id
+         or creator_member_id = v_member.id
+         or completed_by_member_id = v_member.id
+       )
+     order by completed_at desc nulls last, updated_at desc, id desc
+     limit 5
+  )
+  select jsonb_build_object(
+    'profile',
+      jsonb_build_object(
+        'member_id', v_member.id,
+        'nickname', v_member.nickname,
+        'role', v_member.role,
+        'is_admin', v_member.is_admin,
+        'family_id', v_member.family_id,
+        'family_name', f.name,
+        'avatar_url', fm.avatar_url
+      ),
+    'today_assigned',
+      coalesce((select jsonb_agg(schedule_item_json(row_to_json(today_assigned)::jsonb)) from today_assigned), '[]'::jsonb),
+    'upcoming',
+      coalesce((select jsonb_agg(schedule_item_json(row_to_json(upcoming)::jsonb)) from upcoming), '[]'::jsonb),
+    'created_by_me',
+      coalesce((select jsonb_agg(schedule_item_json(row_to_json(created_by_me)::jsonb)) from created_by_me), '[]'::jsonb),
+    'recent_done',
+      coalesce((select jsonb_agg(schedule_item_json(row_to_json(recent_done)::jsonb)) from recent_done), '[]'::jsonb)
+  )
+  into v_result
+  from families f
+  join family_members fm on fm.id = v_member.id
+  where f.id = v_member.family_id;
+
+  return v_result;
+end;
+$$;
+
+create or replace function ensure_schedule_reminder_deliveries(
+  p_schedule_item_id uuid
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+#variable_conflict use_column
+declare
+  v_item family_schedule_items%rowtype;
+  v_now timestamptz := now();
+  v_seed_status text;
+begin
+  select * into v_item
+    from family_schedule_items
+   where id = p_schedule_item_id;
+
+  if not found then
+    return;
+  end if;
+
+  if v_item.remind_at is null
+     or v_item.deleted_at is not null
+     or v_item.status <> 'active' then
+    update family_schedule_reminder_deliveries d
+       set status = 'skipped',
+           skipped_reason = case
+             when v_item.remind_at is null then 'reminder_not_configured'
+             else 'schedule_not_active'
+           end,
+           updated_at = v_now
+     where d.schedule_item_id = v_item.id
+       and d.status in ('pending', 'failed');
+    return;
+  end if;
+
+  update family_schedule_reminder_deliveries d
+     set status = 'skipped',
+         skipped_reason = 'reminder_changed',
+         updated_at = v_now
+   where d.schedule_item_id = v_item.id
+     and d.status in ('pending', 'failed')
+     and d.scheduled_for is distinct from v_item.remind_at;
+
+  update family_schedule_reminder_deliveries d
+     set status = 'skipped',
+         skipped_reason = case
+           when v_item.visibility = 'private'
+             and d.member_id = v_item.assignee_member_id
+             and d.member_id <> v_item.creator_member_id
+             and v_item.assignee_response <> 'accepted'
+           then 'assignment_not_accepted'
+           else 'not_visible'
+         end,
+         updated_at = v_now
+   where d.schedule_item_id = v_item.id
+     and d.status in ('pending', 'failed')
+     and d.scheduled_for = v_item.remind_at
+     and not exists (
+       select 1
+         from family_members fm
+        where fm.id = d.member_id
+          and fm.family_id = v_item.family_id
+          and fm.status = 'active'
+          and (
+            v_item.visibility = 'family'
+            or fm.id = v_item.creator_member_id
+            or (
+              fm.id = v_item.assignee_member_id
+              and v_item.assignee_response = 'accepted'
+            )
+          )
+     );
+
+  v_seed_status := case when v_item.reminded_at is null then 'pending' else 'sent' end;
+
+  insert into family_schedule_reminder_deliveries (
+    family_id,
+    schedule_item_id,
+    member_id,
+    scheduled_for,
+    status,
+    delivered_at,
+    last_attempt_at,
+    attempt_count,
+    updated_at
+  )
+  select v_item.family_id,
+         v_item.id,
+         fm.id,
+         v_item.remind_at,
+         v_seed_status,
+         case when v_seed_status = 'sent' then v_item.reminded_at else null end,
+         case when v_seed_status = 'sent' then v_item.reminded_at else null end,
+         case when v_seed_status = 'sent' then 1 else 0 end,
+         v_now
+    from family_members fm
+   where fm.family_id = v_item.family_id
+     and fm.status = 'active'
+     and (
+       v_item.visibility = 'family'
+       or fm.id = v_item.creator_member_id
+       or (
+         fm.id = v_item.assignee_member_id
+         and v_item.assignee_response = 'accepted'
+       )
+     )
+  on conflict (schedule_item_id, member_id, scheduled_for)
+  do update set
+    status = excluded.status,
+    delivered_at = excluded.delivered_at,
+    last_attempt_at = excluded.last_attempt_at,
+    attempt_count = excluded.attempt_count,
+    next_retry_at = null,
+    skipped_reason = null,
+    error_status = null,
+    error_message = null,
+    updated_at = excluded.updated_at
+  where family_schedule_reminder_deliveries.status = 'skipped'
+    and family_schedule_reminder_deliveries.skipped_reason in (
+      'assignment_not_accepted',
+      'not_visible',
+      'schedule_not_active',
+      'reminder_not_configured',
+      'reminder_changed'
+    );
+end;
+$$;
+
+drop trigger if exists trg_sync_schedule_reminder_deliveries
+  on family_schedule_items;
+
+create trigger trg_sync_schedule_reminder_deliveries
+after insert or update of remind_at, reminded_at, status, deleted_at, visibility,
+  assignee_member_id, assignee_response
+on family_schedule_items
+for each row
+execute function sync_schedule_reminder_deliveries();
+
+create or replace function ensure_overdue_schedule_reminders()
+returns int
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_inserted int;
+begin
+  insert into family_schedule_reminder_deliveries (
+    family_id,
+    schedule_item_id,
+    member_id,
+    scheduled_for,
+    reminder_kind,
+    status,
+    updated_at
+  )
+  select s.family_id,
+         s.id,
+         s.assignee_member_id,
+         s.starts_at + interval '10 minutes',
+         'overdue',
+         'pending',
+         now()
+    from family_schedule_items s
+    join family_members fm on fm.id = s.assignee_member_id
+   where s.status = 'active'
+     and s.deleted_at is null
+     and s.assignee_response = 'accepted'
+     and s.starts_at <= now() - interval '10 minutes'
+     and fm.status = 'active'
+     and not exists (
+       select 1 from family_schedule_reminder_deliveries d
+        where d.schedule_item_id = s.id
+          and d.member_id = s.assignee_member_id
+          and d.reminder_kind = 'overdue'
+     )
+   order by s.starts_at asc
+   limit 100
+  on conflict (schedule_item_id, member_id, scheduled_for) do nothing;
+
+  get diagnostics v_inserted = row_count;
+  return v_inserted;
+end;
+$$;
+
+create or replace function respond_schedule_assignment(
+  p_member_id uuid,
+  p_member_token text,
+  p_schedule_item_id uuid,
+  p_response text,
+  p_note text default null
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+#variable_conflict use_column
+declare
+  v_member record;
+  v_item family_schedule_items%rowtype;
+  v_response text;
+  v_note text;
+  v_activity text;
+begin
+  select * into v_member from current_member_from_token(p_member_id, p_member_token);
+  if not found then
+    raise exception 'unauthorized';
+  end if;
+
+  v_response := trim(coalesce(p_response, ''));
+  v_note := nullif(trim(coalesce(p_note, '')), '');
+  if v_response not in ('accepted', 'declined') then
+    raise exception 'invalid_schedule_response';
+  end if;
+  if v_note is not null and length(v_note) > 300 then
+    raise exception 'schedule_response_note_too_long';
+  end if;
+
+  select * into v_item
+    from family_schedule_items s
+   where s.id = p_schedule_item_id
+     and s.family_id = v_member.family_id
+     and s.deleted_at is null
+     and s.status = 'active'
+   for update;
+  if not found then
+    raise exception 'schedule_item_not_found';
+  end if;
+  if v_item.assignee_member_id <> v_member.id then
+    raise exception 'not_allowed';
+  end if;
+
+  update family_schedule_items s
+     set assignee_response = v_response,
+         assignee_responded_at = now(),
+         assignee_response_note = case when v_response = 'declined' then v_note else null end,
+         updated_at = now()
+   where s.family_id = v_item.family_id
+     and s.deleted_at is null
+     and s.status = 'active'
+     and s.assignee_member_id = v_member.id
+     and (
+       s.id = v_item.id
+       or (
+         v_item.recurrence_group_id is not null
+         and s.recurrence_group_id = v_item.recurrence_group_id
+       )
+     );
+
+  v_activity := case when v_response = 'accepted' then 'accepted' else 'declined' end;
+  perform add_schedule_activity_log(
+    v_item.id,
+    v_member.id,
+    v_activity,
+    case
+      when v_response = 'accepted' then v_member.nickname || ' accepted the assignment'
+      else v_member.nickname || ' declined the assignment'
+    end,
+    case
+      when v_response = 'declined' and v_note is not null then jsonb_build_object('has_note', true)
+      else '{}'::jsonb
+    end
+  );
+  perform insert_schedule_context_event(
+    v_item.id,
+    'member',
+    v_member.id,
+    v_activity,
+    case
+      when v_response = 'accepted' then v_member.nickname || ' accepted the assignment'
+      when v_note is not null then v_member.nickname || ' declined the assignment: ' || v_note
+      else v_member.nickname || ' declined the assignment'
+    end,
+    null,
+    null
+  );
+end;
+$$;
+
+update family_schedule_reminder_deliveries d
+   set status = 'skipped',
+       skipped_reason = 'assignment_not_accepted',
+       updated_at = now()
+  from family_schedule_items s
+ where s.id = d.schedule_item_id
+   and s.visibility = 'private'
+   and s.assignee_member_id <> s.creator_member_id
+   and s.assignee_response <> 'accepted'
+   and d.member_id = s.assignee_member_id
+   and d.status in ('pending', 'failed');
+
+create or replace function assert_schedule_item_management_allowed(
+  p_member_id uuid,
+  p_member_token text,
+  p_schedule_item_id uuid,
+  p_allow_family_admin boolean
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+#variable_conflict use_column
+declare
+  v_member record;
+  v_item family_schedule_items%rowtype;
+begin
+  select * into v_member from current_member_from_token(p_member_id, p_member_token);
+  if not found then
+    raise exception 'unauthorized';
+  end if;
+
+  select * into v_item
+    from family_schedule_items s
+   where s.id = p_schedule_item_id
+     and s.family_id = v_member.family_id
+     and s.deleted_at is null
+   for update;
+  if not found then
+    raise exception 'schedule_item_not_found';
+  end if;
+
+  if not (
+    v_item.creator_member_id = v_member.id
+    or (
+      v_item.assignee_member_id = v_member.id
+      and v_item.assignee_response = 'accepted'
+    )
+    or (
+      coalesce(p_allow_family_admin, false)
+      and v_item.visibility = 'family'
+      and v_member.is_admin
+    )
+  ) then
+    raise exception 'not_allowed';
+  end if;
+end;
+$$;
+
+revoke all on function assert_schedule_item_management_allowed(uuid, text, uuid, boolean)
+  from public, anon, authenticated;
+grant execute on function assert_schedule_item_management_allowed(uuid, text, uuid, boolean)
+  to service_role;
+
+alter function update_schedule_item(
+  uuid, text, uuid, text, text, text, text, uuid, timestamptz, timestamptz,
+  timestamptz, text
+) rename to update_schedule_item_unchecked_20260711;
+
+alter function set_schedule_item_status(uuid, text, uuid, text)
+  rename to set_schedule_item_status_unchecked_20260711;
+
+alter function delete_schedule_item(uuid, text, uuid, text)
+  rename to delete_schedule_item_unchecked_20260711;
+
+alter function set_schedule_reminder_rules(uuid, text, uuid, int[], text)
+  rename to set_schedule_reminder_rules_unchecked_20260711;
+
+alter function replace_schedule_item_recurrence(
+  uuid, text, uuid, text, text, text, text, uuid, timestamptz, timestamptz,
+  timestamptz, text, text
+) rename to replace_schedule_item_recurrence_unchecked_20260711;
+
+revoke all on function update_schedule_item_unchecked_20260711(
+  uuid, text, uuid, text, text, text, text, uuid, timestamptz, timestamptz,
+  timestamptz, text
+) from public, anon, authenticated;
+revoke all on function set_schedule_item_status_unchecked_20260711(uuid, text, uuid, text)
+  from public, anon, authenticated;
+revoke all on function delete_schedule_item_unchecked_20260711(uuid, text, uuid, text)
+  from public, anon, authenticated;
+revoke all on function set_schedule_reminder_rules_unchecked_20260711(uuid, text, uuid, int[], text)
+  from public, anon, authenticated;
+revoke all on function replace_schedule_item_recurrence_unchecked_20260711(
+  uuid, text, uuid, text, text, text, text, uuid, timestamptz, timestamptz,
+  timestamptz, text, text
+) from public, anon, authenticated;
+
+grant execute on function update_schedule_item_unchecked_20260711(
+  uuid, text, uuid, text, text, text, text, uuid, timestamptz, timestamptz,
+  timestamptz, text
+) to service_role;
+grant execute on function set_schedule_item_status_unchecked_20260711(uuid, text, uuid, text)
+  to service_role;
+grant execute on function delete_schedule_item_unchecked_20260711(uuid, text, uuid, text)
+  to service_role;
+grant execute on function set_schedule_reminder_rules_unchecked_20260711(uuid, text, uuid, int[], text)
+  to service_role;
+grant execute on function replace_schedule_item_recurrence_unchecked_20260711(
+  uuid, text, uuid, text, text, text, text, uuid, timestamptz, timestamptz,
+  timestamptz, text, text
+) to service_role;
+
+create function update_schedule_item(
+  p_member_id uuid,
+  p_member_token text,
+  p_item_id uuid,
+  p_title text,
+  p_note text,
+  p_item_type text,
+  p_visibility text,
+  p_assignee_member_id uuid,
+  p_starts_at timestamptz,
+  p_ends_at timestamptz,
+  p_remind_at timestamptz,
+  p_recurrence_scope text default 'single'
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+begin
+  perform assert_schedule_item_management_allowed(
+    p_member_id, p_member_token, p_item_id, true
+  );
+  perform update_schedule_item_unchecked_20260711(
+    p_member_id, p_member_token, p_item_id, p_title, p_note, p_item_type,
+    p_visibility, p_assignee_member_id, p_starts_at, p_ends_at, p_remind_at,
+    p_recurrence_scope
+  );
+end;
+$$;
+
+create function set_schedule_item_status(
+  p_member_id uuid,
+  p_member_token text,
+  p_schedule_item_id uuid,
+  p_status text
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+begin
+  perform assert_schedule_item_management_allowed(
+    p_member_id, p_member_token, p_schedule_item_id, false
+  );
+  perform set_schedule_item_status_unchecked_20260711(
+    p_member_id, p_member_token, p_schedule_item_id, p_status
+  );
+end;
+$$;
+
+create function delete_schedule_item(
+  p_member_id uuid,
+  p_member_token text,
+  p_schedule_item_id uuid,
+  p_recurrence_scope text default 'single'
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+begin
+  perform assert_schedule_item_management_allowed(
+    p_member_id, p_member_token, p_schedule_item_id, true
+  );
+  perform delete_schedule_item_unchecked_20260711(
+    p_member_id, p_member_token, p_schedule_item_id, p_recurrence_scope
+  );
+end;
+$$;
+
+create function set_schedule_reminder_rules(
+  p_member_id uuid,
+  p_member_token text,
+  p_schedule_item_id uuid,
+  p_offsets int[],
+  p_recurrence_scope text default 'single'
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+begin
+  perform assert_schedule_item_management_allowed(
+    p_member_id, p_member_token, p_schedule_item_id, true
+  );
+  perform set_schedule_reminder_rules_unchecked_20260711(
+    p_member_id, p_member_token, p_schedule_item_id, p_offsets,
+    p_recurrence_scope
+  );
+end;
+$$;
+
+create function replace_schedule_item_recurrence(
+  p_member_id uuid,
+  p_member_token text,
+  p_item_id uuid,
+  p_title text,
+  p_note text,
+  p_item_type text,
+  p_visibility text,
+  p_assignee_member_id uuid,
+  p_starts_at timestamptz,
+  p_ends_at timestamptz,
+  p_remind_at timestamptz,
+  p_recurrence_rule text,
+  p_recurrence_scope text default 'single'
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_item_id uuid;
+begin
+  perform assert_schedule_item_management_allowed(
+    p_member_id, p_member_token, p_item_id, true
+  );
+  v_item_id := replace_schedule_item_recurrence_unchecked_20260711(
+    p_member_id, p_member_token, p_item_id, p_title, p_note, p_item_type,
+    p_visibility, p_assignee_member_id, p_starts_at, p_ends_at, p_remind_at,
+    p_recurrence_rule, p_recurrence_scope
+  );
+  return v_item_id;
+end;
+$$;
+
+revoke all on function update_schedule_item(
+  uuid, text, uuid, text, text, text, text, uuid, timestamptz, timestamptz,
+  timestamptz, text
+) from public;
+revoke all on function set_schedule_item_status(uuid, text, uuid, text) from public;
+revoke all on function delete_schedule_item(uuid, text, uuid, text) from public;
+revoke all on function set_schedule_reminder_rules(uuid, text, uuid, int[], text) from public;
+revoke all on function replace_schedule_item_recurrence(
+  uuid, text, uuid, text, text, text, text, uuid, timestamptz, timestamptz,
+  timestamptz, text, text
+) from public;
+
+grant execute on function update_schedule_item(
+  uuid, text, uuid, text, text, text, text, uuid, timestamptz, timestamptz,
+  timestamptz, text
+) to anon, authenticated;
+grant execute on function set_schedule_item_status(uuid, text, uuid, text)
+  to anon, authenticated;
+grant execute on function delete_schedule_item(uuid, text, uuid, text)
+  to anon, authenticated;
+grant execute on function set_schedule_reminder_rules(uuid, text, uuid, int[], text)
+  to anon, authenticated;
+grant execute on function replace_schedule_item_recurrence(
+  uuid, text, uuid, text, text, text, text, uuid, timestamptz, timestamptz,
+  timestamptz, text, text
+) to anon, authenticated;
+
+insert into app_schema_migrations (version, name, description)
+values (
+  '20260711035232_schedule_assignment_state_consistency',
+  'schedule_assignment_state_consistency',
+  'Aligns accepted responsibility with schedule management, dashboards, recurrence responses, and reminder delivery.'
+)
+on conflict (version) do nothing;
+
+-- Create all assistant cards for one multi-date request in one transaction.
+-- Any invalid draft rolls back the complete batch, including card messages.
+
+alter table assistant_action_cards
+  add column if not exists batch_request_id uuid,
+  add column if not exists batch_index int;
+
+do $$
+begin
+  if not exists (
+    select 1
+      from pg_constraint
+     where conname = 'assistant_action_cards_batch_pair_check'
+       and conrelid = 'assistant_action_cards'::regclass
+  ) then
+    alter table assistant_action_cards
+      add constraint assistant_action_cards_batch_pair_check
+      check (
+        (batch_request_id is null and batch_index is null)
+        or (
+          batch_request_id is not null
+          and batch_index between 0 and 30
+        )
+      );
+  end if;
+end;
+$$;
+
+create unique index if not exists assistant_action_cards_batch_request_idx
+  on assistant_action_cards (
+    family_id,
+    created_by_member_id,
+    batch_request_id,
+    batch_index
+  )
+  where batch_request_id is not null;
+
+create or replace function create_assistant_action_cards_batch(
+  p_member_id uuid,
+  p_member_token text,
+  p_batch_request_id uuid,
+  p_cards jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+#variable_conflict use_column
+declare
+  v_member record;
+  v_card jsonb;
+  v_result jsonb;
+  v_results jsonb := '[]'::jsonb;
+  v_card_id uuid;
+  v_count int;
+  v_existing_count int;
+  v_position int;
+begin
+  select * into v_member from current_member_from_token(p_member_id, p_member_token);
+  if not found then
+    raise exception 'unauthorized';
+  end if;
+
+  if p_batch_request_id is null or jsonb_typeof(p_cards) <> 'array' then
+    raise exception 'invalid_assistant_card_batch';
+  end if;
+
+  v_count := jsonb_array_length(p_cards);
+  if v_count < 1 or v_count > 31 then
+    raise exception 'invalid_assistant_card_batch';
+  end if;
+
+  select count(*) into v_existing_count
+    from assistant_action_cards a
+   where a.family_id = v_member.family_id
+     and a.created_by_member_id = v_member.id
+     and a.batch_request_id = p_batch_request_id;
+
+  if v_existing_count > 0 then
+    if v_existing_count <> v_count then
+      raise exception 'assistant_card_batch_incomplete';
+    end if;
+
+    select coalesce(
+      jsonb_agg(
+        jsonb_build_object(
+          'card_id', a.id,
+          'message_id', a.card_message_id
+        )
+        order by a.batch_index
+      ),
+      '[]'::jsonb
+    ) into v_results
+      from assistant_action_cards a
+     where a.family_id = v_member.family_id
+       and a.created_by_member_id = v_member.id
+       and a.batch_request_id = p_batch_request_id;
+    return v_results;
+  end if;
+
+  begin
+    for v_card, v_position in
+      select entry.value, (entry.position - 1)::int
+        from jsonb_array_elements(p_cards) with ordinality as entry(value, position)
+       order by entry.position
+    loop
+      if jsonb_typeof(v_card) <> 'object' then
+        raise exception 'invalid_assistant_card_batch';
+      end if;
+
+      v_result := create_assistant_action_card(
+        p_member_id,
+        p_member_token,
+        v_card->>'card_type',
+        v_card->>'title',
+        v_card->>'summary',
+        case
+          when jsonb_typeof(v_card->'payload') = 'object' then v_card->'payload'
+          else '{}'::jsonb
+        end,
+        nullif(v_card->>'source_message_id', '')::uuid,
+        nullif(v_card->>'target_message_id', '')::uuid
+      );
+
+      v_card_id := nullif(v_result->>'card_id', '')::uuid;
+      update assistant_action_cards
+         set batch_request_id = p_batch_request_id,
+             batch_index = v_position,
+             updated_at = now()
+       where id = v_card_id
+         and family_id = v_member.family_id
+         and created_by_member_id = v_member.id;
+      if not found then
+        raise exception 'assistant_card_batch_incomplete';
+      end if;
+
+      v_results := v_results || jsonb_build_array(v_result);
+    end loop;
+  exception
+    when unique_violation then
+      select count(*) into v_existing_count
+        from assistant_action_cards a
+       where a.family_id = v_member.family_id
+         and a.created_by_member_id = v_member.id
+         and a.batch_request_id = p_batch_request_id;
+      if v_existing_count <> v_count then
+        raise;
+      end if;
+
+      select coalesce(
+        jsonb_agg(
+          jsonb_build_object(
+            'card_id', a.id,
+            'message_id', a.card_message_id
+          )
+          order by a.batch_index
+        ),
+        '[]'::jsonb
+      ) into v_results
+        from assistant_action_cards a
+       where a.family_id = v_member.family_id
+         and a.created_by_member_id = v_member.id
+         and a.batch_request_id = p_batch_request_id;
+  end;
+
+  return v_results;
+end;
+$$;
+
+revoke all on function create_assistant_action_cards_batch(uuid, text, uuid, jsonb)
+  from public;
+grant execute on function create_assistant_action_cards_batch(uuid, text, uuid, jsonb)
+  to anon, authenticated;
+
+insert into app_schema_migrations (version, name, description)
+values (
+  '20260711044649_atomic_assistant_action_card_batch',
+  'atomic_assistant_action_card_batch',
+  'Creates every assistant card for a multi-date request atomically so retries cannot follow a partial batch.'
+)
+on conflict (version) do nothing;
+
+create index if not exists family_schedule_collaboration_claims_schedule_item_idx
+  on family_schedule_collaboration_push_claims (schedule_item_id);
+
+create index if not exists family_schedule_collaboration_claims_actor_member_idx
+  on family_schedule_collaboration_push_claims (actor_member_id);
+
+insert into app_schema_migrations (version, name, description)
+values (
+  '20260711051618_schedule_collaboration_claim_indexes',
+  'schedule_collaboration_claim_indexes',
+  'Adds covering indexes for schedule and actor foreign keys on collaboration Push claims.'
+)
+on conflict (version) do nothing;
+
+-- A creator who assigns a schedule to themselves owns an already-confirmed
+-- responsibility. It must not be possible to decline that self-assignment.
+
+update family_schedule_items
+   set assignee_response = 'accepted',
+       assignee_responded_at = coalesce(assignee_responded_at, created_at),
+       assignee_response_note = null,
+       updated_at = now()
+ where creator_member_id = assignee_member_id
+   and assignee_response <> 'accepted';
+
+do $$
+begin
+  if not exists (
+    select 1
+      from pg_constraint
+     where conname = 'family_schedule_items_self_assignment_accepted_check'
+       and conrelid = 'family_schedule_items'::regclass
+  ) then
+    alter table family_schedule_items
+      add constraint family_schedule_items_self_assignment_accepted_check
+      check (
+        creator_member_id <> assignee_member_id
+        or assignee_response = 'accepted'
+      );
+  end if;
+end;
+$$;
+
+create or replace function respond_schedule_assignment(
+  p_member_id uuid,
+  p_member_token text,
+  p_schedule_item_id uuid,
+  p_response text,
+  p_note text default null
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+#variable_conflict use_column
+declare
+  v_member record;
+  v_item family_schedule_items%rowtype;
+  v_response text;
+  v_note text;
+  v_activity text;
+begin
+  select * into v_member from current_member_from_token(p_member_id, p_member_token);
+  if not found then
+    raise exception 'unauthorized';
+  end if;
+
+  v_response := trim(coalesce(p_response, ''));
+  v_note := nullif(trim(coalesce(p_note, '')), '');
+  if v_response not in ('accepted', 'declined') then
+    raise exception 'invalid_schedule_response';
+  end if;
+  if v_note is not null and length(v_note) > 300 then
+    raise exception 'schedule_response_note_too_long';
+  end if;
+
+  select * into v_item
+    from family_schedule_items s
+   where s.id = p_schedule_item_id
+     and s.family_id = v_member.family_id
+     and s.deleted_at is null
+     and s.status = 'active'
+   for update;
+  if not found then
+    raise exception 'schedule_item_not_found';
+  end if;
+  if v_item.assignee_member_id <> v_member.id then
+    raise exception 'not_allowed';
+  end if;
+  if v_item.creator_member_id = v_item.assignee_member_id then
+    raise exception 'not_allowed';
+  end if;
+
+  update family_schedule_items s
+     set assignee_response = v_response,
+         assignee_responded_at = now(),
+         assignee_response_note = case when v_response = 'declined' then v_note else null end,
+         updated_at = now()
+   where s.family_id = v_item.family_id
+     and s.deleted_at is null
+     and s.status = 'active'
+     and s.assignee_member_id = v_member.id
+     and (
+       s.id = v_item.id
+       or (
+         v_item.recurrence_group_id is not null
+         and s.recurrence_group_id = v_item.recurrence_group_id
+       )
+     );
+
+  v_activity := case when v_response = 'accepted' then 'accepted' else 'declined' end;
+  perform add_schedule_activity_log(
+    v_item.id,
+    v_member.id,
+    v_activity,
+    case
+      when v_response = 'accepted' then v_member.nickname || ' accepted the assignment'
+      else v_member.nickname || ' declined the assignment'
+    end,
+    case
+      when v_response = 'declined' and v_note is not null then jsonb_build_object('has_note', true)
+      else '{}'::jsonb
+    end
+  );
+  perform insert_schedule_context_event(
+    v_item.id,
+    'member',
+    v_member.id,
+    v_activity,
+    case
+      when v_response = 'accepted' then v_member.nickname || ' accepted the assignment'
+      when v_note is not null then v_member.nickname || ' declined the assignment: ' || v_note
+      else v_member.nickname || ' declined the assignment'
+    end,
+    null,
+    null
+  );
+end;
+$$;
+
+revoke all on function respond_schedule_assignment(uuid, text, uuid, text, text)
+  from public;
+grant execute on function respond_schedule_assignment(uuid, text, uuid, text, text)
+  to anon, authenticated;
+
+insert into app_schema_migrations (version, name, description)
+values (
+  '20260711052009_schedule_self_assignment_guard',
+  'schedule_self_assignment_guard',
+  'Keeps creator self-assignments accepted and rejects meaningless self-decline responses.'
+)
+on conflict (version) do nothing;
+
+-- Snoozing replaces the previous pending delivery. Private assignees may only
+-- snooze after accepting responsibility for the schedule.
+
+create or replace function snooze_schedule_reminder(
+  p_member_id uuid,
+  p_member_token text,
+  p_delivery_id uuid,
+  p_minutes int
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+#variable_conflict use_column
+declare
+  v_member record;
+  v_delivery family_schedule_reminder_deliveries%rowtype;
+  v_item family_schedule_items%rowtype;
+  v_id uuid;
+  v_scheduled_for timestamptz;
+begin
+  select * into v_member from current_member_from_token(p_member_id, p_member_token);
+  if not found then
+    raise exception 'unauthorized';
+  end if;
+  if p_minutes not in (5, 10, 30) then
+    raise exception 'invalid_schedule_snooze_minutes';
+  end if;
+
+  select * into v_delivery
+    from family_schedule_reminder_deliveries d
+   where d.id = p_delivery_id
+     and d.family_id = v_member.family_id
+     and d.member_id = v_member.id
+   for update;
+  if not found then
+    raise exception 'schedule_reminder_not_found';
+  end if;
+  if v_delivery.status not in ('pending', 'failed', 'sent') then
+    raise exception 'schedule_reminder_not_allowed';
+  end if;
+
+  select * into v_item
+    from family_schedule_items s
+   where s.id = v_delivery.schedule_item_id
+     and s.family_id = v_member.family_id
+     and s.deleted_at is null
+     and s.status = 'active'
+   for update;
+  if not found then
+    raise exception 'schedule_reminder_not_allowed';
+  end if;
+  if not (
+    v_item.visibility = 'family'
+    or v_item.creator_member_id = v_member.id
+    or (
+      v_item.assignee_member_id = v_member.id
+      and v_item.assignee_response = 'accepted'
+    )
+  ) then
+    raise exception 'schedule_reminder_not_allowed';
+  end if;
+
+  update family_schedule_reminder_deliveries d
+     set status = 'skipped',
+         skipped_reason = 'snooze_replaced',
+         next_retry_at = null,
+         error_status = null,
+         error_message = null,
+         updated_at = now()
+   where d.schedule_item_id = v_item.id
+     and d.member_id = v_member.id
+     and d.reminder_kind = 'snooze'
+     and d.status in ('pending', 'failed')
+     and d.id <> v_delivery.id;
+
+  if v_delivery.status in ('pending', 'failed') then
+    update family_schedule_reminder_deliveries
+       set status = 'skipped',
+           skipped_reason = 'snoozed',
+           next_retry_at = null,
+           error_status = null,
+           error_message = null,
+           updated_at = now()
+     where id = v_delivery.id;
+  end if;
+
+  v_scheduled_for := now() + (p_minutes * interval '1 minute');
+
+  insert into family_schedule_reminder_deliveries (
+    family_id,
+    schedule_item_id,
+    member_id,
+    scheduled_for,
+    reminder_kind,
+    status,
+    snoozed_from_delivery_id,
+    snoozed_by_member_id,
+    updated_at
+  )
+  values (
+    v_delivery.family_id,
+    v_delivery.schedule_item_id,
+    v_member.id,
+    v_scheduled_for,
+    'snooze',
+    'pending',
+    v_delivery.id,
+    v_member.id,
+    now()
+  )
+  on conflict (schedule_item_id, member_id, scheduled_for)
+  do update set
+    status = 'pending',
+    reminder_kind = 'snooze',
+    attempt_count = 0,
+    delivered_at = null,
+    last_attempt_at = null,
+    next_retry_at = null,
+    skipped_reason = null,
+    error_status = null,
+    error_message = null,
+    snoozed_from_delivery_id = excluded.snoozed_from_delivery_id,
+    snoozed_by_member_id = excluded.snoozed_by_member_id,
+    updated_at = now()
+  returning id into v_id;
+
+  return v_id;
+end;
+$$;
+
+revoke all on function snooze_schedule_reminder(uuid, text, uuid, int) from public;
+grant execute on function snooze_schedule_reminder(uuid, text, uuid, int)
+  to anon, authenticated;
+
+insert into app_schema_migrations (version, name, description)
+values (
+  '20260711162532_schedule_snooze_business_consistency',
+  'schedule_snooze_business_consistency',
+  'Makes snooze replace pending deliveries and blocks private assignees who have not accepted responsibility.'
+)
+on conflict (version) do nothing;
+
+-- Atomically claim reminder deliveries before sending Push so overlapping
+-- workers cannot send the same delivery in parallel.
+
+alter table family_schedule_reminder_deliveries
+  drop constraint if exists family_schedule_reminder_deliveries_status_check;
+
+alter table family_schedule_reminder_deliveries
+  add constraint family_schedule_reminder_deliveries_status_check
+  check (status in ('pending', 'processing', 'sent', 'skipped', 'failed', 'gone'));
+
+create or replace function claim_schedule_reminder_deliveries(
+  p_mode text,
+  p_limit int default 100
+)
+returns table (
+  id uuid,
+  family_id uuid,
+  schedule_item_id uuid,
+  member_id uuid,
+  scheduled_for timestamptz,
+  reminder_kind text,
+  status text,
+  attempt_count int
+)
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+#variable_conflict use_column
+declare
+  v_mode text;
+  v_limit int;
+  v_now timestamptz := now();
+begin
+  v_mode := trim(coalesce(p_mode, ''));
+  if v_mode not in ('due', 'retry') then
+    raise exception 'invalid_schedule_reminder_claim_mode';
+  end if;
+  v_limit := greatest(1, least(coalesce(p_limit, 100), 100));
+
+  update family_schedule_reminder_deliveries d
+     set status = 'failed',
+         next_retry_at = case
+           when d.attempt_count < 3 then v_now
+           else null
+         end,
+         error_status = null,
+         error_message = 'reminder_processing_timeout',
+         updated_at = v_now
+   where d.status = 'processing'
+     and d.last_attempt_at < v_now - interval '5 minutes';
+
+  return query
+  with candidates as materialized (
+    select d.id
+      from family_schedule_reminder_deliveries d
+     where (
+       v_mode = 'due'
+       and d.status = 'pending'
+       and d.scheduled_for <= v_now
+     ) or (
+       v_mode = 'retry'
+       and d.status = 'failed'
+       and d.next_retry_at is not null
+       and d.next_retry_at <= v_now
+       and d.attempt_count < 3
+     )
+     order by case
+       when v_mode = 'retry' then d.next_retry_at
+       else d.scheduled_for
+     end asc
+     for update skip locked
+     limit v_limit
+  )
+  update family_schedule_reminder_deliveries d
+     set status = 'processing',
+         attempt_count = d.attempt_count + 1,
+         last_attempt_at = v_now,
+         next_retry_at = null,
+         skipped_reason = null,
+         error_status = null,
+         error_message = null,
+         updated_at = v_now
+    from candidates c
+   where d.id = c.id
+  returning d.id,
+            d.family_id,
+            d.schedule_item_id,
+            d.member_id,
+            d.scheduled_for,
+            d.reminder_kind,
+            d.status,
+            d.attempt_count;
+end;
+$$;
+
+revoke all on function claim_schedule_reminder_deliveries(text, int)
+  from public, anon, authenticated;
+grant execute on function claim_schedule_reminder_deliveries(text, int)
+  to service_role;
+
+insert into app_schema_migrations (version, name, description)
+values (
+  '20260711170904_schedule_reminder_atomic_claims',
+  'schedule_reminder_atomic_claims',
+  'Claims due and retry reminder deliveries atomically and recovers abandoned processing claims.'
+)
+on conflict (version) do nothing;
+
+-- Do not create overdue reminders for long-abandoned schedule items. Delivery
+-- workers apply their own tighter freshness rules before sending Push.
+
+create or replace function ensure_overdue_schedule_reminders()
+returns int
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_inserted int;
+begin
+  insert into family_schedule_reminder_deliveries (
+    family_id,
+    schedule_item_id,
+    member_id,
+    scheduled_for,
+    reminder_kind,
+    status,
+    updated_at
+  )
+  select s.family_id,
+         s.id,
+         s.assignee_member_id,
+         s.starts_at + interval '10 minutes',
+         'overdue',
+         'pending',
+         now()
+    from family_schedule_items s
+    join family_members fm on fm.id = s.assignee_member_id
+   where s.status = 'active'
+     and s.deleted_at is null
+     and s.assignee_response = 'accepted'
+     and s.starts_at <= now() - interval '10 minutes'
+     and s.starts_at >= now() - interval '24 hours'
+     and fm.status = 'active'
+     and not exists (
+       select 1 from family_schedule_reminder_deliveries d
+        where d.schedule_item_id = s.id
+          and d.member_id = s.assignee_member_id
+          and d.reminder_kind = 'overdue'
+     )
+   order by s.starts_at asc
+   limit 100
+  on conflict (schedule_item_id, member_id, scheduled_for) do nothing;
+
+  get diagnostics v_inserted = row_count;
+  return v_inserted;
+end;
+$$;
+
+revoke all on function ensure_overdue_schedule_reminders()
+  from public, anon, authenticated;
+grant execute on function ensure_overdue_schedule_reminders()
+  to service_role;
+
+insert into app_schema_migrations (version, name, description)
+values (
+  '20260711174308_schedule_reminder_stale_guard',
+  'schedule_reminder_stale_guard',
+  'Limits overdue generation to the last 24 hours and keeps the internal RPC service-role only.'
+)
+on conflict (version) do nothing;
+
+-- Restore multi-offset reminder generation while preserving assignment-aware
+-- delivery audiences. Also keep reminder status focused on the current rules.
+
+create or replace function ensure_schedule_reminder_deliveries(
+  p_schedule_item_id uuid
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+#variable_conflict use_column
+declare
+  v_item family_schedule_items%rowtype;
+  v_now timestamptz := now();
+begin
+  select * into v_item
+    from family_schedule_items
+   where id = p_schedule_item_id;
+
+  if not found then
+    return;
+  end if;
+
+  if v_item.deleted_at is not null or v_item.status <> 'active' then
+    update family_schedule_reminder_deliveries d
+       set status = 'skipped',
+           skipped_reason = 'schedule_not_active',
+           updated_at = v_now
+     where d.schedule_item_id = v_item.id
+       and d.status in ('pending', 'failed');
+    return;
+  end if;
+
+  if not exists (
+    select 1
+      from family_schedule_reminder_rules r
+     where r.schedule_item_id = v_item.id
+  ) and v_item.remind_at is null then
+    update family_schedule_reminder_deliveries d
+       set status = 'skipped',
+           skipped_reason = 'reminder_not_configured',
+           updated_at = v_now
+     where d.schedule_item_id = v_item.id
+       and d.status in ('pending', 'failed')
+       and d.reminder_kind = 'before_start';
+    return;
+  end if;
+
+  update family_schedule_reminder_deliveries d
+     set status = 'skipped',
+         skipped_reason = 'reminder_changed',
+         updated_at = v_now
+   where d.schedule_item_id = v_item.id
+     and d.status in ('pending', 'failed')
+     and d.reminder_kind = 'before_start'
+     and not exists (
+       with offsets as (
+         select r.offset_minutes
+           from family_schedule_reminder_rules r
+          where r.schedule_item_id = v_item.id
+         union
+         select greatest(
+                  0,
+                  round(extract(epoch from (v_item.starts_at - v_item.remind_at)) / 60)::int
+                )
+          where v_item.remind_at is not null
+            and not exists (
+              select 1
+                from family_schedule_reminder_rules rr
+               where rr.schedule_item_id = v_item.id
+            )
+       )
+       select 1
+         from offsets o
+        where d.scheduled_for =
+              v_item.starts_at - (o.offset_minutes * interval '1 minute')
+     );
+
+  update family_schedule_reminder_deliveries d
+     set status = 'skipped',
+         skipped_reason = case
+           when v_item.visibility = 'private'
+             and d.member_id = v_item.assignee_member_id
+             and d.member_id <> v_item.creator_member_id
+             and v_item.assignee_response <> 'accepted'
+           then 'assignment_not_accepted'
+           else 'not_visible'
+         end,
+         updated_at = v_now
+   where d.schedule_item_id = v_item.id
+     and d.status in ('pending', 'failed')
+     and not exists (
+       select 1
+         from family_members fm
+        where fm.id = d.member_id
+          and fm.family_id = v_item.family_id
+          and fm.status = 'active'
+          and (
+            v_item.visibility = 'family'
+            or fm.id = v_item.creator_member_id
+            or (
+              fm.id = v_item.assignee_member_id
+              and v_item.assignee_response = 'accepted'
+            )
+          )
+     );
+
+  insert into family_schedule_reminder_deliveries (
+    family_id,
+    schedule_item_id,
+    member_id,
+    scheduled_for,
+    reminder_kind,
+    status,
+    delivered_at,
+    last_attempt_at,
+    attempt_count,
+    next_retry_at,
+    skipped_reason,
+    error_status,
+    error_message,
+    updated_at
+  )
+  with offsets as (
+    select r.offset_minutes
+      from family_schedule_reminder_rules r
+     where r.schedule_item_id = v_item.id
+    union
+    select greatest(
+             0,
+             round(extract(epoch from (v_item.starts_at - v_item.remind_at)) / 60)::int
+           )
+     where v_item.remind_at is not null
+       and not exists (
+         select 1
+           from family_schedule_reminder_rules rr
+          where rr.schedule_item_id = v_item.id
+       )
+  )
+  select v_item.family_id,
+         v_item.id,
+         fm.id,
+         v_item.starts_at - (o.offset_minutes * interval '1 minute'),
+         'before_start',
+         'pending',
+         null,
+         null,
+         0,
+         null,
+         null,
+         null,
+         null,
+         v_now
+    from offsets o
+    join family_members fm on fm.family_id = v_item.family_id
+   where fm.status = 'active'
+     and (
+       v_item.visibility = 'family'
+       or fm.id = v_item.creator_member_id
+       or (
+         fm.id = v_item.assignee_member_id
+         and v_item.assignee_response = 'accepted'
+       )
+     )
+  on conflict (schedule_item_id, member_id, scheduled_for)
+  do update set
+    reminder_kind = excluded.reminder_kind,
+    status = excluded.status,
+    delivered_at = null,
+    last_attempt_at = null,
+    attempt_count = 0,
+    next_retry_at = null,
+    skipped_reason = null,
+    error_status = null,
+    error_message = null,
+    updated_at = excluded.updated_at
+  where family_schedule_reminder_deliveries.reminder_kind = 'before_start'
+    and family_schedule_reminder_deliveries.status = 'skipped'
+    and family_schedule_reminder_deliveries.skipped_reason in (
+      'assignment_not_accepted',
+      'not_visible',
+      'schedule_not_active',
+      'reminder_not_configured',
+      'reminder_changed'
+    );
+end;
+$$;
+
+revoke all on function ensure_schedule_reminder_deliveries(uuid)
+  from public, anon, authenticated;
+grant execute on function ensure_schedule_reminder_deliveries(uuid)
+  to service_role;
+
+create or replace function get_schedule_reminder_status_for_member(
+  p_member_id uuid,
+  p_member_token text,
+  p_schedule_item_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+#variable_conflict use_column
+declare
+  v_member record;
+  v_item family_schedule_items%rowtype;
+  v_can_view_members boolean;
+  v_result jsonb;
+begin
+  select * into v_member
+    from current_member_from_token(p_member_id, p_member_token);
+  if not found then
+    raise exception 'unauthorized';
+  end if;
+
+  select * into v_item
+    from family_schedule_items s
+   where s.id = p_schedule_item_id
+     and s.family_id = v_member.family_id
+     and s.deleted_at is null;
+
+  if not found or not schedule_item_is_visible_to_member(v_item, v_member.id) then
+    raise exception 'schedule_reminder_not_allowed';
+  end if;
+
+  perform ensure_schedule_reminder_deliveries(v_item.id);
+
+  v_can_view_members := v_item.creator_member_id = v_member.id
+    or (v_item.visibility = 'family' and v_member.is_admin);
+
+  with current_offsets as (
+    select r.offset_minutes
+      from family_schedule_reminder_rules r
+     where r.schedule_item_id = v_item.id
+    union
+    select greatest(
+             0,
+             round(extract(epoch from (v_item.starts_at - v_item.remind_at)) / 60)::int
+           )
+     where v_item.remind_at is not null
+       and not exists (
+         select 1
+           from family_schedule_reminder_rules rr
+          where rr.schedule_item_id = v_item.id
+       )
+  ),
+  visible_deliveries as (
+    select d.*, fm.nickname
+      from family_schedule_reminder_deliveries d
+      join family_members fm on fm.id = d.member_id
+     where d.schedule_item_id = v_item.id
+       and fm.status = 'active'
+       and (
+         v_item.visibility = 'family'
+         or d.member_id = v_item.creator_member_id
+         or (
+           d.member_id = v_item.assignee_member_id
+           and v_item.assignee_response = 'accepted'
+         )
+       )
+       and (
+         v_can_view_members
+         or d.member_id = v_member.id
+       )
+       and (
+         (
+           d.reminder_kind = 'before_start'
+           and exists (
+             select 1
+               from current_offsets o
+              where d.scheduled_for =
+                    v_item.starts_at - (o.offset_minutes * interval '1 minute')
+           )
+         )
+         or (
+           d.reminder_kind = 'snooze'
+           and not (
+             d.status = 'skipped'
+             and d.skipped_reason = 'snooze_replaced'
+           )
+         )
+         or d.reminder_kind = 'overdue'
+       )
+  )
+  select jsonb_build_object(
+    'configured', exists (select 1 from current_offsets),
+    'remind_at', v_item.remind_at,
+    'rules', coalesce((
+      select jsonb_agg(o.offset_minutes order by o.offset_minutes)
+        from current_offsets o
+    ), '[]'::jsonb),
+    'current_member_delivery',
+    (
+      select jsonb_build_object(
+        'id', d.id,
+        'member_id', d.member_id,
+        'nickname', d.nickname,
+        'scheduled_for', d.scheduled_for,
+        'reminder_kind', d.reminder_kind,
+        'status', d.status,
+        'attempt_count', d.attempt_count,
+        'delivered_at', d.delivered_at,
+        'last_attempt_at', d.last_attempt_at,
+        'next_retry_at', d.next_retry_at,
+        'skipped_reason', d.skipped_reason,
+        'error_status', d.error_status,
+        'error_message', case
+          when d.error_message is null then null
+          else 'schedule_reminder_failed'
+        end,
+        'updated_at', d.updated_at
+      )
+        from visible_deliveries d
+       where d.member_id = v_member.id
+       order by
+         case
+           when d.status in ('pending', 'processing', 'failed') then 0
+           when d.status = 'sent' then 1
+           else 2
+         end,
+         case
+           when d.status in ('pending', 'processing', 'failed')
+           then d.scheduled_for
+         end asc nulls last,
+         d.scheduled_for desc,
+         d.created_at desc
+       limit 1
+    ),
+    'deliveries',
+    coalesce((
+      select jsonb_agg(
+        jsonb_build_object(
+          'id', x.id,
+          'member_id', x.member_id,
+          'nickname', x.nickname,
+          'scheduled_for', x.scheduled_for,
+          'reminder_kind', x.reminder_kind,
+          'status', x.status,
+          'attempt_count', x.attempt_count,
+          'delivered_at', x.delivered_at,
+          'last_attempt_at', x.last_attempt_at,
+          'next_retry_at', x.next_retry_at,
+          'skipped_reason', x.skipped_reason,
+          'error_status', x.error_status,
+          'error_message', case
+            when x.error_message is null then null
+            else 'schedule_reminder_failed'
+          end,
+          'updated_at', x.updated_at
+        )
+        order by x.scheduled_for desc, x.nickname asc, x.member_id asc
+      )
+        from (
+          select *
+            from visible_deliveries
+           order by scheduled_for desc, nickname asc, member_id asc
+           limit 100
+        ) x
+    ), '[]'::jsonb)
+  )
+  into v_result;
+
+  return v_result;
+end;
+$$;
+
+revoke all on function get_schedule_reminder_status_for_member(uuid, text, uuid)
+  from public;
+grant execute on function get_schedule_reminder_status_for_member(uuid, text, uuid)
+  to anon, authenticated, service_role;
+
+do $$
+declare
+  v_item_id uuid;
+begin
+  for v_item_id in
+    select s.id
+      from family_schedule_items s
+     where s.deleted_at is null
+       and s.status = 'active'
+       and (
+         s.remind_at is not null
+         or exists (
+           select 1
+             from family_schedule_reminder_rules r
+            where r.schedule_item_id = s.id
+         )
+       )
+  loop
+    perform ensure_schedule_reminder_deliveries(v_item_id);
+  end loop;
+end;
+$$;
+
+insert into app_schema_migrations (version, name, description)
+values (
+  '20260711184844_schedule_reminder_rule_consistency',
+  'schedule_reminder_rule_consistency',
+  'Restores multi-offset reminder delivery generation and returns only current reminder rules and deliveries.'
+)
+on conflict (version) do nothing;

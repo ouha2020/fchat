@@ -655,6 +655,10 @@ async function sendOnePush({
   try {
     await getWebPush().sendNotification(toWebPushSubscription(sub), payload, {
       TTL: 60 * 60,
+      // High urgency asks the push service (FCM/APNs) to deliver promptly even
+      // when the device is in Doze / under battery optimization — normal
+      // urgency gets batched or dropped on Android in the background.
+      urgency: "high",
     });
     return { status: "sent" };
   } catch (error) {

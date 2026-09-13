@@ -9,17 +9,19 @@ import {
   sendScheduleCollaborationPush,
   type ScheduleCollaborationNotifyType,
 } from "@/lib/scheduleCollaborationPushServer";
+import { uuidSchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const EVENTS = new Set(["assigned", "accepted", "declined", "commented"]);
+const EVENTS = new Set(["created", "assigned", "accepted", "declined", "commented"]);
 
 interface NotifyBody {
   memberId?: unknown;
   memberToken?: unknown;
   scheduleItemId?: unknown;
   eventType?: unknown;
+  contextEventId?: unknown;
 }
 
 export async function POST(request: Request) {
@@ -33,7 +35,12 @@ export async function POST(request: Request) {
       typeof body.memberToken !== "string" ||
       typeof body.scheduleItemId !== "string" ||
       typeof body.eventType !== "string" ||
-      !EVENTS.has(body.eventType)
+      !EVENTS.has(body.eventType) ||
+      !uuidSchema.safeParse(body.memberId).success ||
+      !uuidSchema.safeParse(body.scheduleItemId).success ||
+      (body.eventType === "commented" &&
+        (typeof body.contextEventId !== "string" ||
+          !uuidSchema.safeParse(body.contextEventId).success))
     ) {
       return NextResponse.json({ ok: false });
     }
@@ -43,6 +50,8 @@ export async function POST(request: Request) {
       memberToken: body.memberToken,
       scheduleItemId: body.scheduleItemId,
       eventType: body.eventType as ScheduleCollaborationNotifyType,
+      contextEventId:
+        typeof body.contextEventId === "string" ? body.contextEventId : null,
     });
     return NextResponse.json(result);
   } catch (error) {

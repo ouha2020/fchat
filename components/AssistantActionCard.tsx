@@ -22,7 +22,6 @@ interface Props {
   ) => Promise<boolean> | boolean | void;
   currentMemberId?: string | null;
   onOpenSchedule?: (card: AssistantActionCard) => void;
-  onAcceptTask?: (card: AssistantActionCard) => void;
   onCompleteTask?: (card: AssistantActionCard) => void;
   onSnoozeTask?: (card: AssistantActionCard) => void;
 }
@@ -45,7 +44,6 @@ export default function AssistantActionCardView({
   onSubmitEdit,
   currentMemberId,
   onOpenSchedule,
-  onAcceptTask,
   onCompleteTask,
   onSnoozeTask,
 }: Props) {
@@ -129,7 +127,7 @@ export default function AssistantActionCardView({
           <div className="truncate text-[11px] font-semibold text-emerald-700">
             {t(cardTypeKey(card.card_type))}
           </div>
-          <div className="mt-0.5 break-words font-semibold leading-5 text-slate-900">
+          <div className="mt-1 break-words text-base font-semibold leading-6 text-slate-900">
             {card.title}
           </div>
         </div>
@@ -140,7 +138,7 @@ export default function AssistantActionCardView({
         </span>
       </div>
 
-      <div className="mt-2 space-y-1 text-xs leading-5 text-slate-700">
+      <div className="mt-3 space-y-1 text-sm leading-5 text-slate-700">
         {timeLabel ? (
           <div>{t("assistantCardTime", { time: timeLabel })}</div>
         ) : null}
@@ -196,7 +194,7 @@ export default function AssistantActionCardView({
             <div className="assistant-action-row">
               <button
                 type="button"
-                className="assistant-action-button bg-brand-500 text-white shadow-sm"
+                className="assistant-action-button bg-brand-500 text-brand-950 shadow-sm"
                 disabled={submitting || !titleDraft.trim()}
                 onClick={async () => {
                   const startsAtIso =
@@ -226,7 +224,7 @@ export default function AssistantActionCardView({
           <div className="assistant-action-row mt-3">
             <button
               type="button"
-              className="assistant-action-button bg-brand-500 text-white shadow-sm"
+              className="assistant-action-button bg-brand-500 text-brand-950 shadow-sm"
               disabled={submitting}
               onClick={() => onConfirm(card)}
             >
@@ -260,28 +258,22 @@ export default function AssistantActionCardView({
         <div className="assistant-action-row mt-3">
           <button
             type="button"
-            className="assistant-action-button bg-white text-emerald-700 ring-1 ring-emerald-100"
-            disabled={submitting}
-            onClick={() => onAcceptTask?.(card)}
-          >
-            {t("assistantTaskAccept")}
-          </button>
-          <button
-            type="button"
-            className="assistant-action-button bg-brand-500 text-white shadow-sm"
+            className="assistant-action-button bg-brand-500 text-brand-950 shadow-sm"
             disabled={submitting}
             onClick={() => onCompleteTask?.(card)}
           >
             {t("assistantTaskComplete")}
           </button>
-          <button
-            type="button"
-            className="assistant-action-button bg-white text-slate-600 ring-1 ring-slate-200"
-            disabled={submitting}
-            onClick={() => onSnoozeTask?.(card)}
-          >
-            {t("assistantTaskSnooze")}
-          </button>
+          {canSnoozeTask(card, currentMemberId) ? (
+            <button
+              type="button"
+              className="assistant-action-button bg-white text-slate-600 ring-1 ring-slate-200"
+              disabled={submitting}
+              onClick={() => onSnoozeTask?.(card)}
+            >
+              {t("assistantTaskSnooze")}
+            </button>
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -319,4 +311,15 @@ function canHandleTask(
   if (card.status !== "confirmed") return false;
   if (!card.result_schedule_item_id) return false;
   return card.payload.assignee_member_id === currentMemberId;
+}
+
+function canSnoozeTask(
+  card: AssistantActionCard,
+  currentMemberId?: string | null,
+): boolean {
+  return (
+    canHandleTask(card, currentMemberId) &&
+    typeof card.payload.remind_at === "string" &&
+    card.payload.remind_at.length > 0
+  );
 }

@@ -1,5 +1,8 @@
 "use client";
 
+
+import { HomeIcon, LockClosedIcon } from "@/components/ui/FamilyIcons";
+
 import Link from "next/link";
 import { useRef, useState } from "react";
 
@@ -55,7 +58,7 @@ function MediaProgressRing({
   const dashoffset = circumference * (1 - value);
   const overlay = variant === "overlay";
   const trackStroke = overlay ? "rgba(255,255,255,0.3)" : "rgba(100,116,139,0.25)";
-  const progressStroke = overlay ? "#ffffff" : "#4f6cf7";
+  const progressStroke = overlay ? "#ffffff" : "#52752d";
   const percent = Math.round(value * 100);
   return (
     <div
@@ -116,7 +119,6 @@ interface Props {
     edit: AssistantCardEdit,
   ) => Promise<boolean> | boolean | void;
   onOpenAssistantSchedule?: (card: AssistantActionCard) => void;
-  onAcceptAssistantTask?: (card: AssistantActionCard) => void;
   onCompleteAssistantTask?: (card: AssistantActionCard) => void;
   onSnoozeAssistantTask?: (card: AssistantActionCard) => void;
   onRequestActions?: (
@@ -141,7 +143,6 @@ export default function ChatMessage({
   onCancelAssistantCard,
   onSubmitAssistantCardEdit,
   onOpenAssistantSchedule,
-  onAcceptAssistantTask,
   onCompleteAssistantTask,
   onSnoozeAssistantTask,
   onRequestActions,
@@ -187,8 +188,8 @@ export default function ChatMessage({
   if (isAssistantSystemMessage(message)) {
     return (
       <div className="flex w-full gap-2 py-1" {...actionHandlers}>
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-sm font-semibold text-emerald-700 shadow-sm ring-1 ring-white/80 sm:h-9 sm:w-9 sm:text-base">
-          家
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-100 text-sm font-semibold text-brand-950 shadow-none ring-1 ring-white/80 sm:h-9 sm:w-9 sm:text-base">
+          <HomeIcon className="h-7 w-7" aria-hidden="true" />
         </div>
         <div className={`flex ${messageBodyWidthClass} flex-col items-start gap-1`}>
           <div className={messageMetaClass}>
@@ -199,7 +200,7 @@ export default function ChatMessage({
             <span className="shrink-0">{formatTime(message.created_at, language)}</span>
           </div>
           <div
-            className={`max-w-full rounded-[22px] bg-white/95 px-3.5 py-2.5 text-sm text-slate-800 shadow-[0_10px_26px_rgba(47,83,67,0.08)] ring-1 ring-white/80 ${actionClass} ${highlightClass}`}
+            className={`max-w-full rounded-[18px] bg-white px-3.5 py-2.5 text-sm text-slate-800 shadow-none ring-1 ring-white/80 ${actionClass} ${highlightClass}`}
           >
             <AssistantActionCardView
               card={assistantCard ?? null}
@@ -210,7 +211,6 @@ export default function ChatMessage({
               onCancel={(card) => onCancelAssistantCard?.(card)}
               onSubmitEdit={onSubmitAssistantCardEdit}
               onOpenSchedule={(card) => onOpenAssistantSchedule?.(card)}
-              onAcceptTask={(card) => onAcceptAssistantTask?.(card)}
               onCompleteTask={(card) => onCompleteAssistantTask?.(card)}
               onSnoozeTask={(card) => onSnoozeAssistantTask?.(card)}
             />
@@ -227,7 +227,7 @@ export default function ChatMessage({
           className={`flex min-w-0 max-w-[86%] items-start gap-2 rounded-3xl bg-emerald-50/95 px-3 py-2.5 text-sm text-slate-800 shadow-[0_10px_24px_rgba(47,83,67,0.08)] ring-1 ring-white/80 sm:max-w-md ${actionClass} ${highlightClass}`}
         >
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-sm font-black text-emerald-700 shadow-sm ring-1 ring-emerald-100">
-            家
+            <HomeIcon className="h-7 w-7" aria-hidden="true" />
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-1.5 text-[11px] font-semibold leading-4 text-emerald-700">
@@ -330,7 +330,7 @@ function MemberAvatar({
       name={sender?.nickname ?? "?"}
       className={`h-8 w-8 rounded-full text-sm font-semibold sm:h-9 sm:w-9 sm:text-base ${
         isMine
-          ? "bg-brand-500 text-white shadow-[0_8px_18px_rgba(79,108,247,0.22)] ring-1 ring-white/30"
+          ? "bg-brand-100 text-brand-950"
           : "bg-white/90 text-slate-700 shadow-[0_8px_18px_rgba(71,64,49,0.08)] ring-1 ring-white/80"
       }`}
     />
@@ -435,14 +435,14 @@ function Bubble({
   onRetryUpload?: (message: Message) => void;
 }) {
   const { t } = useLanguage();
-  const base = `max-w-full rounded-[20px] px-3.5 py-2.5 text-sm ${
+  const base = `max-w-full rounded-[18px] px-3.5 py-2.5 text-base ${
     isPrivate && isMine
       ? "bg-violet-500 text-white shadow-[0_10px_24px_rgba(124,58,237,0.22)] ring-1 ring-violet-300/70"
       : isPrivate
         ? "bg-white/95 text-slate-800 shadow-[0_8px_22px_rgba(88,70,118,0.08)] ring-1 ring-violet-100"
         : isMine
-      ? "bg-brand-500 text-white shadow-[0_10px_24px_rgba(79,108,247,0.22)] ring-1 ring-white/20"
-      : "bg-white/95 text-slate-800 shadow-[0_8px_22px_rgba(77,67,50,0.08)] ring-1 ring-white/80"
+      ? "bg-brand-100 text-brand-950"
+      : "bg-white text-slate-800"
   }`;
   const highlightClass = highlighted
     ? "important-message-highlight"
@@ -629,12 +629,12 @@ function Bubble({
           <span>{t("messageLocationTitle")}</span>
         </span>
         <span
-          className={`text-xs leading-5 ${isMine ? "text-brand-50" : "text-slate-700"}`}
+          className={`text-xs leading-5 ${isMine && isPrivate ? "text-white/90" : "text-slate-700"}`}
         >
           {detail}
         </span>
         <span
-          className={`text-xs font-medium leading-5 ${isMine ? "text-brand-100" : "text-brand-500"}`}
+          className={`text-xs font-medium leading-5 ${isMine && isPrivate ? "text-white" : "text-brand-700"}`}
         >
           {t("messageOpenMap")}
         </span>
@@ -661,7 +661,7 @@ function Bubble({
         <LinkifiedText
           text={message.content ?? ""}
           linkClassName={
-            isMine
+            isMine && isPrivate
               ? "text-white decoration-white/60 hover:decoration-white"
               : "text-brand-600 decoration-brand-300 hover:decoration-brand-500"
           }
@@ -723,11 +723,6 @@ function WhisperInlineLabel({ className = "" }: { className?: string }) {
 function WhisperIcon() {
   return (
     // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src="/ui-icons/whisper-lock.png"
-      alt=""
-      className="h-3.5 w-3.5 shrink-0 rounded-[3px]"
-      draggable={false}
-    />
+    <LockClosedIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
   );
 }

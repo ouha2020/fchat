@@ -1,5 +1,8 @@
 "use client";
 
+import { ArrowLeftIcon, ShieldCheckIcon, KeyIcon, BellIcon, EyeIcon, EyeSlashIcon as EyeOffIcon } from "@heroicons/react/24/outline";
+import { HomeIcon, UsersIcon, UserIcon } from "@/components/ui/FamilyIcons";
+
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
@@ -51,6 +54,9 @@ export default function SettingsPage() {
   const [reminderHealth, setReminderHealth] =
     useState<ScheduleReminderHealth | null>(null);
   const [reminderHealthLoading, setReminderHealthLoading] = useState(false);
+  const pushReady =
+    push.enabled &&
+    (diagnostics ? isCurrentEndpointSaved(diagnostics) : true);
 
   async function loadDiagnostics() {
     if (!session) return;
@@ -316,6 +322,7 @@ export default function SettingsPage() {
     setBusy("push");
     try {
       await push.enable();
+      await loadDiagnostics();
       toast.success(t("settingsPushEnabledAlert"));
     } catch (err) {
       toast.error(pushNotificationErrorMessage(err, t));
@@ -343,12 +350,12 @@ export default function SettingsPage() {
 
   if (loadError) {
     return (
-      <main className="min-h-dvh bg-[#fbfff7] px-4 py-6 text-slate-900">
-        <div className="mx-auto w-full max-w-2xl rounded-[26px] bg-white/95 p-5 text-center shadow-[0_18px_50px_rgba(79,168,95,0.12)] ring-1 ring-[#dff3d8]">
+      <main className="min-h-dvh bg-[#f8f7f3] px-4 py-6 text-slate-900">
+        <div className="mx-auto w-full max-w-2xl rounded-[26px] bg-white/95 p-5 text-center shadow-none ring-1 ring-[#e8e9e2]">
           <h1 className="text-lg font-bold text-slate-900">
             {t("chatLoadFailedTitle")}
           </h1>
-          <p className="mt-2 text-sm leading-relaxed text-[#526452]">
+          <p className="mt-2 text-sm leading-relaxed text-[#59635b]">
             {loadError}
           </p>
           <div className="mt-5 grid grid-cols-2 gap-3">
@@ -379,51 +386,23 @@ export default function SettingsPage() {
   const canManageFamily = session.is_admin;
 
   return (
-    <main className="min-h-dvh overflow-x-hidden bg-[#fbfff7] text-slate-900">
+    <main className="min-h-dvh overflow-x-hidden bg-[#f8f7f3] text-slate-900">
       <div
-        className="mx-auto w-full max-w-2xl px-4 pb-8 sm:px-6"
+        className="mx-auto w-full max-w-3xl px-4 pb-8 sm:px-6"
         style={{
           paddingTop: "max(env(safe-area-inset-top), 14px)",
           paddingBottom: "calc(env(safe-area-inset-bottom) + 28px)",
         }}
       >
-        <header className="mb-5 flex items-center justify-between gap-3">
-          <Link
-            href="/chat"
-            className="inline-flex min-h-10 items-center gap-1.5 rounded-full bg-white/95 px-3 text-sm font-semibold text-[#2f7d42] shadow-[0_10px_28px_rgba(79,168,95,0.12)] ring-1 ring-[#dff3d8] backdrop-blur-xl transition hover:bg-white active:translate-y-px active:scale-[0.985] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#72c982]"
-          >
-            <span>{t("commonBackToChat")}</span>
+        <header className="mb-5 flex min-h-11 items-center gap-3">
+          <Link href="/chat" className="tool-icon-button !bg-white" aria-label={t("commonBackToChat")}>
+            <ArrowLeftIcon className="tool-icon" aria-hidden="true" />
           </Link>
-          <span className="min-w-0 truncate rounded-full bg-[#ddf8d7] px-3 py-1.5 text-xs font-semibold text-[#2f7d42] shadow-[0_6px_18px_rgba(79,168,95,0.10)]">
-            {session.family_name}
-          </span>
-        </header>
-
-        <section className="mb-5 rounded-[28px] bg-gradient-to-br from-white via-[#fbfff7] to-[#eaf9e2] p-4 shadow-[0_18px_50px_rgba(79,168,95,0.14)] ring-1 ring-[#dff3d8] backdrop-blur-xl">
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#4fa85f] text-lg font-black text-white shadow-[0_10px_24px_rgba(79,168,95,0.28)]">
-              家
-            </div>
-            <div className="min-w-0 flex-1">
-              <h1 className="truncate text-[26px] font-bold leading-tight tracking-normal text-slate-950">
-                {t("settingsTitle")}
-              </h1>
-              <p className="mt-1 truncate text-sm text-[#526452]">
-                {session.nickname} ·{" "}
-                {
-                  {
-                    father: t("roleFather"),
-                    mother: t("roleMother"),
-                    child: t("roleChild"),
-                  }[session.role]
-                }
-              </p>
-            </div>
-            <StatusBadge ok={session.is_admin}>
-              {session.is_admin ? t("commonAdmin") : t("commonMe")}
-            </StatusBadge>
+          <div className="min-w-0 flex-1">
+            <h1 className="page-title">{t("settingsTitle")}</h1>
+            <p className="mt-1 truncate text-xs text-slate-500">{session.family_name} · {session.nickname}</p>
           </div>
-        </section>
+        </header>
 
         <SettingsSection>
           <SettingsGroup>
@@ -455,7 +434,7 @@ export default function SettingsPage() {
                       pressed={showFamilyCode}
                       onClick={() => setShowFamilyCode((visible) => !visible)}
                     >
-                      {showFamilyCode ? <EyeOffIcon /> : <EyeIcon />}
+                      {showFamilyCode ? <EyeOffIcon className="h-5 w-5" aria-hidden="true" /> : <EyeIcon className="h-5 w-5" aria-hidden="true" />}
                     </IconButton>
                   </span>
                 }
@@ -479,7 +458,7 @@ export default function SettingsPage() {
           </SettingsGroup>
 
           {canManageFamily ? (
-            <div className="mt-3 grid grid-cols-2 gap-2">
+            <div className="settings-action-grid mt-3">
               <SoftButton onClick={handleCopyFamilyCode}>
                 复制家庭代码
               </SoftButton>
@@ -493,23 +472,23 @@ export default function SettingsPage() {
             </InfoPanel>
           )}
 
-          <Link href="/me" className="mt-3 flex min-h-12 items-center justify-center rounded-2xl bg-white/95 px-4 text-sm font-semibold text-[#2f7d42] shadow-[0_10px_26px_rgba(79,168,95,0.10)] ring-1 ring-[#dff3d8] transition hover:bg-white active:translate-y-px active:scale-[0.985] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#72c982]">
+          <Link href="/me" className="btn btn-secondary mt-3 w-full">
             {t("meTitle")}
           </Link>
         </SettingsSection>
 
         <SettingsSection title={t("settingsLanguage")}>
-          <div className="grid grid-cols-3 rounded-[18px] bg-[#e2f8dc] p-1 shadow-inner ring-1 ring-[#cdeec8]">
+          <div className="grid grid-cols-3 gap-1 rounded-xl bg-stone-50 p-1">
             {LANGUAGE_OPTIONS.map((opt) => {
               const selected = language === opt.value;
               return (
                 <button
                   key={opt.value}
                   type="button"
-                  className={`min-h-10 rounded-[14px] px-2 text-sm font-semibold transition active:translate-y-px active:scale-[0.985] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#72c982] ${
+                  className={`min-h-11 rounded-xl px-2 text-sm font-semibold transition active:translate-y-px active:scale-[0.985] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#52752d] ${
                     selected
-                      ? "bg-white text-[#2f7d42] shadow-[0_8px_20px_rgba(79,168,95,0.16)]"
-                      : "text-[#5b735d] hover:text-[#244f2c]"
+                      ? "bg-brand-100 text-brand-950 shadow-none"
+                      : "text-[#667067] hover:text-[#293d1d]"
                   }`}
                   onClick={() => setLanguage(opt.value)}
                 >
@@ -545,16 +524,16 @@ export default function SettingsPage() {
                 <SettingsRow
                   label={t("settingsPushNewMessages")}
                   value={
-                    <StatusBadge ok={push.enabled}>
-                      {push.enabled ? t("commonYes") : t("commonNo")}
+                    <StatusBadge ok={pushReady}>
+                      {pushReady ? t("commonYes") : t("commonNo")}
                     </StatusBadge>
                   }
                 />
               </SettingsGroup>
-              <div className="mt-3 grid grid-cols-2 gap-2">
+              <div className="settings-action-grid mt-3">
                 <SoftButton
                   variant="primary"
-                  disabled={!!busy || push.busy || push.enabled}
+                  disabled={!!busy || push.busy || pushReady}
                   onClick={handleEnablePush}
                 >
                   {t("settingsPushEnable")}
@@ -585,7 +564,8 @@ export default function SettingsPage() {
         </SettingsSection>
 
         {push.support?.supported && diagnostics ? (
-          <SettingsSection title={t("settingsPushDiagnostics")}>
+          <details className="surface-group mt-5">
+            <summary className="min-h-14 cursor-pointer px-4 py-4 text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600">{t("settingsPushDiagnostics")}</summary>
             <SettingsGroup>
               <DiagRow
                 label={t("settingsPushDiagnosticsPermission")}
@@ -678,12 +658,12 @@ export default function SettingsPage() {
                 <p className="font-semibold text-slate-900">
                   {t("settingsPushDiagnosticsAndroidTip")}
                 </p>
-                <p className="mt-1 text-[#526452]">
+                <p className="mt-1 text-[#59635b]">
                   {t("settingsPushDiagnosticsAndroidTipText")}
                 </p>
               </InfoPanel>
             ) : null}
-          </SettingsSection>
+          </details>
         ) : null}
 
         {canManageFamily ? (
@@ -715,13 +695,13 @@ export default function SettingsPage() {
               管理操作使用创建者邮箱账号验证，不再单独使用管理员密码。
             </InfoPanel>
 
-            <div className="mt-3 rounded-[22px] bg-white/95 p-3 shadow-[0_12px_30px_rgba(79,168,95,0.10)] ring-1 ring-[#dff3d8]">
+            <div className="mt-3 rounded-[18px] bg-white/95 p-3 shadow-none ring-1 ring-[#e8e9e2]">
               <div className="flex min-w-0 items-center justify-between gap-3">
                 <div className="min-w-0">
                   <h3 className="truncate text-sm font-semibold text-slate-900">
                     {t("scheduleReminderHealthTitle")}
                   </h3>
-                  <p className="mt-1 text-xs leading-5 text-[#627263]">
+                  <p className="mt-1 text-xs leading-5 text-[#667067]">
                     {t("scheduleReminderHealthDescription")}
                   </p>
                 </div>
@@ -781,23 +761,23 @@ function ReminderHealthPanel({
         {rows.map(([label, value]) => (
           <div
             key={label}
-            className="rounded-2xl bg-[#f8fff4] p-2.5 text-center shadow-inner ring-1 ring-[#dff3d8]"
+            className="rounded-2xl bg-[#f8f7f3] p-2.5 text-center shadow-none ring-1 ring-[#e8e9e2]"
           >
             <div className="text-lg font-bold leading-tight text-slate-900">
               {value}
             </div>
-            <div className="mt-1 truncate text-xs text-[#627263]">{label}</div>
+            <div className="mt-1 truncate text-xs text-[#667067]">{label}</div>
           </div>
         ))}
       </div>
-      <div className="rounded-2xl bg-[#f8fff4] p-3 text-sm ring-1 ring-[#dff3d8]">
+      <div className="rounded-2xl bg-[#f8f7f3] p-3 text-sm ring-1 ring-[#e8e9e2]">
         <div className="flex min-w-0 items-center justify-between gap-2">
           <span className="min-w-0 truncate font-semibold text-slate-800">
             {t("scheduleReminderPrivateFailureCount")}
           </span>
-          <span className="shrink-0 text-[#526452]">{health.private_failed}</span>
+          <span className="shrink-0 text-[#59635b]">{health.private_failed}</span>
         </div>
-        <p className="mt-1 text-xs leading-5 text-[#627263]">
+        <p className="mt-1 text-xs leading-5 text-[#667067]">
           {t("scheduleReminderHealthPrivacyNote")}
         </p>
       </div>
@@ -809,7 +789,7 @@ function ReminderHealthPanel({
           {health.recentFailures.slice(0, 5).map((failure) => (
             <div
               key={failure.deliveryId}
-              className="rounded-2xl bg-[#f8fff4] p-3 text-xs text-[#526452] ring-1 ring-[#dff3d8]"
+              className="rounded-2xl bg-[#f8f7f3] p-3 text-xs text-[#59635b] ring-1 ring-[#e8e9e2]"
             >
               <div className="flex min-w-0 items-center justify-between gap-2">
                 <span className="min-w-0 truncate font-mono">
@@ -830,7 +810,7 @@ function ReminderHealthPanel({
           ))}
         </div>
       ) : (
-        <p className="rounded-2xl bg-[#f8fff4] p-3 text-sm text-[#627263] ring-1 ring-[#dff3d8]">
+        <p className="rounded-2xl bg-[#f8f7f3] p-3 text-sm text-[#667067] ring-1 ring-[#e8e9e2]">
           {t("scheduleReminderNoRecentFailures")}
         </p>
       )}
@@ -852,14 +832,14 @@ function SettingsSection({
   children: ReactNode;
 }) {
   return (
-    <section className="mt-5">
+    <section className="section-card mt-4">
       {title ? (
-        <div className="mb-2 px-1">
-          <h2 className="text-[13px] font-bold uppercase tracking-[0.08em] text-[#2f7d42]">
+        <div className="mb-3">
+          <h2 className="text-base font-semibold text-ink">
             {title}
           </h2>
           {description ? (
-            <p className="mt-1 text-sm leading-6 text-[#526452]">
+            <p className="mt-1 text-sm leading-6 text-[#59635b]">
               {description}
             </p>
           ) : null}
@@ -872,19 +852,25 @@ function SettingsSection({
 
 function SettingsGroup({ children }: { children: ReactNode }) {
   return (
-    <div className="overflow-hidden rounded-[22px] bg-white/95 shadow-[0_14px_36px_rgba(79,168,95,0.10)] ring-1 ring-[#dff3d8] backdrop-blur-xl">
+    <div className="space-y-1">
       {children}
     </div>
   );
 }
 
 function SettingsRow({ label, value }: { label: string; value: ReactNode }) {
+  const { t } = useLanguage();
+  const Icon = label === t("settingsFamilyName") ? HomeIcon
+    : label === t("settingsFamilyCode") ? KeyIcon
+    : label === t("settingsMyNickname") ? UserIcon
+    : label === t("settingsMyRole") ? UsersIcon
+    : label === t("settingsIsAdmin") ? ShieldCheckIcon : BellIcon;
   return (
-    <div className="flex min-h-[52px] items-center justify-between gap-3 border-b border-[#dff3d8]/80 px-4 py-3 last:border-b-0">
-      <span className="min-w-0 max-w-[45%] shrink-0 truncate text-sm font-medium text-[#627263]">
-        {label}
+    <div className="flex min-h-[56px] items-center justify-between gap-3 px-0 py-3 last:border-b-0">
+      <span className="min-w-0 max-w-[55%] break-words text-base font-medium text-slate-800">
+        <span className="flex items-center gap-3"><Icon className="h-7 w-7 shrink-0" aria-hidden="true" />{label}</span>
       </span>
-      <span className="min-w-0 flex-1 text-right text-sm font-semibold leading-5 text-slate-800 [overflow-wrap:anywhere]">
+      <span className="min-w-0 flex-1 text-right text-base font-medium leading-5 text-slate-800 [overflow-wrap:anywhere]">
         {value}
       </span>
     </div>
@@ -905,14 +891,13 @@ function ActionRow({
   return (
     <button
       type="button"
-      className={`flex min-h-[52px] w-full items-center justify-between gap-3 border-b border-[#dff3d8]/80 px-4 py-3 text-left text-sm font-semibold transition last:border-b-0 active:translate-y-px active:scale-[0.985] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#72c982] disabled:cursor-not-allowed disabled:opacity-50 ${
-        danger ? "text-rose-600" : "text-slate-800 hover:bg-[#f4fff0]"
+      className={`flex min-h-[56px] w-full items-center justify-between gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold transition last:border-b-0 active:translate-y-px active:scale-[0.985] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#52752d] disabled:cursor-not-allowed disabled:opacity-50 ${
+        danger ? "text-rose-600" : "text-slate-800 hover:bg-[#f2f8e8]"
       }`}
       disabled={disabled}
       onClick={onClick}
     >
       <span className="min-w-0 truncate">{label}</span>
-      <ChevronRightIcon />
     </button>
   );
 }
@@ -929,8 +914,8 @@ function ToggleRow({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <label className="flex min-h-[52px] items-center justify-between gap-3 border-b border-[#dff3d8]/80 px-4 py-3 transition active:translate-y-px active:scale-[0.985] last:border-b-0">
-      <span className="min-w-0 truncate text-sm font-semibold text-slate-800">
+    <label className="flex min-h-[56px] items-center justify-between gap-3 px-0 py-3 transition active:translate-y-px active:scale-[0.985] last:border-b-0">
+      <span className="min-w-0 break-words text-sm font-semibold text-slate-800">
         {label}
       </span>
       <span className="relative inline-flex h-8 w-[52px] shrink-0 items-center">
@@ -941,8 +926,8 @@ function ToggleRow({
           disabled={disabled}
           onChange={(e) => onChange(e.target.checked)}
         />
-        <span className="absolute inset-0 rounded-full bg-[#dce9db] transition peer-checked:bg-[#4fa85f] peer-focus-visible:ring-2 peer-focus-visible:ring-[#72c982] peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-white peer-disabled:opacity-50" />
-        <span className="absolute left-1 h-6 w-6 rounded-full bg-white shadow-[0_4px_12px_rgba(71,64,49,0.22)] transition peer-checked:translate-x-5 peer-disabled:opacity-80" />
+        <span className="absolute inset-0 rounded-full bg-[#e3e5df] transition peer-checked:bg-[#b5de75] peer-focus-visible:ring-2 peer-focus-visible:ring-[#52752d] peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-white peer-disabled:opacity-50" />
+        <span className="absolute left-1 h-6 w-6 rounded-full bg-white shadow-none transition peer-checked:translate-x-5 peer-disabled:opacity-80" />
       </span>
     </label>
   );
@@ -963,16 +948,16 @@ function SoftButton({
 }) {
   const tone =
     variant === "primary"
-      ? "bg-[#4fa85f] text-white shadow-[0_12px_26px_rgba(79,168,95,0.26)] hover:bg-[#3f9650]"
-      : "bg-white/95 text-[#2f7d42] shadow-[0_10px_24px_rgba(79,168,95,0.10)] ring-1 ring-[#dff3d8] hover:bg-[#fbfff7]";
+      ? "btn-primary"
+      : "btn-secondary";
   return (
     <button
       type="button"
-      className={`inline-flex min-h-11 min-w-0 items-center justify-center rounded-2xl px-4 text-sm font-semibold transition active:translate-y-px active:scale-[0.985] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#72c982] disabled:cursor-not-allowed disabled:opacity-50 ${tone} ${className}`}
+      className={`inline-flex min-h-11 min-w-0 items-center justify-center rounded-xl px-4 text-sm font-semibold transition active:translate-y-px active:scale-[0.985] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#52752d] disabled:cursor-not-allowed disabled:opacity-50 ${tone} ${className}`}
       disabled={disabled}
       onClick={onClick}
     >
-      <span className="truncate">{children}</span>
+      <span className="min-w-0 break-words">{children}</span>
     </button>
   );
 }
@@ -987,8 +972,8 @@ function InfoPanel({
   className?: string;
 }) {
   const toneClass = {
-    neutral: "bg-white/92 text-[#526452] ring-[#dff3d8]",
-    green: "bg-[#e7f9df] text-[#355f3b] ring-[#cdeec8]",
+    neutral: "bg-stone-50 text-slate-600 ring-transparent",
+    green: "bg-[#eaf5d5] text-[#3f5d24] ring-[#d8edb3]",
     blue: "bg-sky-50/90 text-sky-800 ring-sky-100",
     danger: "bg-rose-50/90 text-rose-700 ring-rose-100",
   }[tone];
@@ -1010,17 +995,17 @@ function StatusBadge({
     <span
       className={`inline-flex min-h-7 max-w-full items-center gap-1.5 rounded-full px-2.5 text-xs font-bold ${
         ok
-          ? "bg-[#ddf8d7] text-[#2f7d42]"
-          : "bg-[#edf6eb] text-[#5b735d]"
+          ? "bg-[#eaf5d5] text-[#293d1d]"
+          : "bg-[#f3f3ee] text-[#667067]"
       }`}
     >
       <span
         aria-hidden="true"
         className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-          ok ? "bg-[#4fa85f]" : "bg-[#8fa08f]"
+          ok ? "bg-[#b5de75]" : "bg-[#8fa08f]"
         }`}
       />
-      <span className="truncate">{children}</span>
+      <span className="min-w-0 break-words">{children}</span>
     </span>
   );
 }
@@ -1041,7 +1026,7 @@ function IconButton({
   return (
     <button
       type="button"
-      className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#e7f9df] text-[#2f7d42] transition hover:bg-[#ddf8d7] hover:text-[#244f2c] active:translate-y-px active:scale-[0.985] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#72c982]"
+      className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#eaf5d5] text-[#293d1d] transition hover:bg-[#eaf5d5] hover:text-[#293d1d] active:translate-y-px active:scale-[0.985] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#52752d]"
       aria-label={ariaLabel}
       title={title}
       aria-pressed={pressed}
@@ -1049,44 +1034,6 @@ function IconButton({
     >
       {children}
     </button>
-  );
-}
-
-function EyeIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      className="h-[18px] w-[18px]"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z" />
-      <circle cx="12" cy="12" r="3" />
-    </svg>
-  );
-}
-
-function EyeOffIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      className="h-[18px] w-[18px]"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M3 3l18 18" />
-      <path d="M10.6 10.6A2 2 0 0 0 12 14a2 2 0 0 0 1.4-.6" />
-      <path d="M9.9 5.2A10.8 10.8 0 0 1 12 5c6.5 0 10 7 10 7a18.6 18.6 0 0 1-3.1 4.2" />
-      <path d="M6.6 6.6C3.6 8.7 2 12 2 12s3.5 7 10 7a10.8 10.8 0 0 0 4.1-.8" />
-    </svg>
   );
 }
 
@@ -1100,8 +1047,8 @@ function DiagRow({
   ok: boolean;
 }) {
   return (
-    <div className="flex min-h-[52px] items-center justify-between gap-3 border-b border-[#dff3d8]/80 px-4 py-3 last:border-b-0">
-      <span className="min-w-0 max-w-[45%] shrink-0 truncate text-sm font-medium text-[#627263]">
+    <div className="flex min-h-[56px] items-center justify-between gap-3 px-0 py-3 last:border-b-0">
+      <span className="min-w-0 max-w-[55%] break-words text-base font-medium text-slate-800">
         {label}
       </span>
       <span
@@ -1112,29 +1059,12 @@ function DiagRow({
         <span
           aria-hidden="true"
           className={`h-2 w-2 shrink-0 rounded-full ${
-            ok ? "bg-[#4fa85f]" : "bg-rose-400"
+            ok ? "bg-[#b5de75]" : "bg-rose-400"
           }`}
         />
         <span className="min-w-0 [overflow-wrap:anywhere]">{value}</span>
       </span>
     </div>
-  );
-}
-
-function ChevronRightIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      className="h-4 w-4 shrink-0 text-slate-300"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M9 18l6-6-6-6" />
-    </svg>
   );
 }
 

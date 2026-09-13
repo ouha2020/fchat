@@ -1,5 +1,5 @@
-const PRECACHE = "family-chat-precache-v14";
-const RUNTIME = "family-chat-runtime-v14";
+const PRECACHE = "family-chat-precache-v15";
+const RUNTIME = "family-chat-runtime-v15";
 
 const PUSH_RECEIVED = "family-chat:push-received";
 const SCHEDULE_REMINDER_RECEIVED = "family-chat:schedule-reminder";
@@ -112,7 +112,7 @@ self.addEventListener("push", (event) => {
     },
   };
 
-  event.waitUntil(deliverForegroundOrNotify(title, options));
+  event.waitUntil(deliverPushAndNotify(title, options));
 });
 
 self.addEventListener("message", (event) => {
@@ -259,22 +259,21 @@ async function cacheFirst(request) {
   return response;
 }
 
-async function deliverForegroundOrNotify(title, options) {
+async function deliverPushAndNotify(title, options) {
   const visibleAppClients = await getVisibleAppWindowClients();
-  if (visibleAppClients.length > 0) {
-    visibleAppClients.forEach((client) => {
-      client.postMessage(
-        buildClientPushMessage({
-          isScheduleReminder: options.data.type === "schedule-reminder",
-          familyId: options.data.familyId,
-          messageId: options.data.messageId,
-          scheduleItemId: options.data.scheduleItemId,
-        }),
-      );
-    });
-    return;
-  }
+  visibleAppClients.forEach((client) => {
+    client.postMessage(
+      buildClientPushMessage({
+        isScheduleReminder: options.data.type === "schedule-reminder",
+        familyId: options.data.familyId,
+        messageId: options.data.messageId,
+        scheduleItemId: options.data.scheduleItemId,
+      }),
+    );
+  });
 
+  // Every delivered Web Push must produce a user-visible notification.
+  // Server-side presence filtering still avoids normal foreground alerts.
   return self.registration.showNotification(title, options);
 }
 

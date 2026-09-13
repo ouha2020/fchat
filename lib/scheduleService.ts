@@ -90,29 +90,26 @@ export async function createScheduleItem(
 ): Promise<string> {
   const parsed = parseCreateInput(input);
   const sb = getSupabase();
-  const { data, error } = await sb.rpc("create_schedule_item", {
-    p_member_id: session.member_id,
-    p_member_token: session.member_token,
-    p_title: parsed.title,
-    p_note: parsed.note,
-    p_item_type: parsed.item_type,
-    p_visibility: parsed.visibility,
-    p_starts_at: parsed.starts_at,
-    p_ends_at: parsed.ends_at,
-    p_remind_at: parsed.remind_at,
-    p_assignee_member_id: parsed.assignee_member_id,
-    p_recurrence_rule: parsed.recurrence_rule,
-  });
+  const { data, error } = await sb.rpc(
+    "create_schedule_item_with_reminder_rules",
+    {
+      p_member_id: session.member_id,
+      p_member_token: session.member_token,
+      p_title: parsed.title,
+      p_note: parsed.note,
+      p_item_type: parsed.item_type,
+      p_visibility: parsed.visibility,
+      p_starts_at: parsed.starts_at,
+      p_ends_at: parsed.ends_at,
+      p_remind_at: parsed.remind_at,
+      p_assignee_member_id: parsed.assignee_member_id,
+      p_recurrence_rule: parsed.recurrence_rule,
+      p_reminder_offsets: parsed.reminder_offsets ?? [],
+    },
+  );
   if (error) throw error;
   const itemId = data as string;
-  if (needsExplicitReminderRules(parsed.reminder_offsets)) {
-    await setScheduleReminderRules(
-      session,
-      itemId,
-      parsed.reminder_offsets ?? [],
-      parsed.recurrence_rule === "none" ? "single" : "all",
-    );
-  }
+  uuidSchema.parse(itemId);
   return itemId;
 }
 
@@ -140,7 +137,7 @@ export async function updateScheduleItem(
   const parsed = parseCreateInput(input);
   const scope = parseScope(input.recurrence_scope);
   const sb = getSupabase();
-  const { error } = await sb.rpc("update_schedule_item", {
+  const { error } = await sb.rpc("update_schedule_item_with_reminder_rules", {
     p_member_id: session.member_id,
     p_member_token: session.member_token,
     p_item_id: input.id,
@@ -153,14 +150,9 @@ export async function updateScheduleItem(
     p_ends_at: parsed.ends_at,
     p_remind_at: parsed.remind_at,
     p_recurrence_scope: scope,
+    p_reminder_offsets: parsed.reminder_offsets ?? [],
   });
   if (error) throw error;
-  await setScheduleReminderRules(
-    session,
-    input.id,
-    parsed.reminder_offsets ?? [],
-    scope,
-  );
 }
 
 export async function replaceScheduleItemRecurrence(
@@ -171,32 +163,28 @@ export async function replaceScheduleItemRecurrence(
   const parsed = parseCreateInput(input);
   const scope = parseScope(input.recurrence_scope);
   const sb = getSupabase();
-  const { data, error } = await sb.rpc("replace_schedule_item_recurrence", {
-    p_member_id: session.member_id,
-    p_member_token: session.member_token,
-    p_item_id: input.id,
-    p_title: parsed.title,
-    p_note: parsed.note,
-    p_item_type: parsed.item_type,
-    p_visibility: parsed.visibility,
-    p_assignee_member_id: parsed.assignee_member_id,
-    p_starts_at: parsed.starts_at,
-    p_ends_at: parsed.ends_at,
-    p_remind_at: parsed.remind_at,
-    p_recurrence_rule: parsed.recurrence_rule,
-    p_recurrence_scope: scope,
-  });
+  const { data, error } = await sb.rpc(
+    "replace_schedule_item_recurrence_with_reminder_rules",
+    {
+      p_member_id: session.member_id,
+      p_member_token: session.member_token,
+      p_item_id: input.id,
+      p_title: parsed.title,
+      p_note: parsed.note,
+      p_item_type: parsed.item_type,
+      p_visibility: parsed.visibility,
+      p_assignee_member_id: parsed.assignee_member_id,
+      p_starts_at: parsed.starts_at,
+      p_ends_at: parsed.ends_at,
+      p_remind_at: parsed.remind_at,
+      p_recurrence_rule: parsed.recurrence_rule,
+      p_recurrence_scope: scope,
+      p_reminder_offsets: parsed.reminder_offsets ?? [],
+    },
+  );
   if (error) throw error;
   const itemId = data as string;
   uuidSchema.parse(itemId);
-  if (needsExplicitReminderRules(parsed.reminder_offsets)) {
-    await setScheduleReminderRules(
-      session,
-      itemId,
-      parsed.reminder_offsets ?? [],
-      parsed.recurrence_rule === "none" ? "single" : "all",
-    );
-  }
   return itemId;
 }
 
@@ -489,24 +477,6 @@ function parseCreateInput(input: CreateScheduleItemInput): CreateScheduleItemInp
   };
 }
 
-async function setScheduleReminderRules(
-  session: LocalSession,
-  scheduleItemId: string,
-  offsets: ScheduleReminderOffset[],
-  recurrenceScope: ScheduleRecurrenceScope,
-): Promise<void> {
-  uuidSchema.parse(scheduleItemId);
-  const sb = getSupabase();
-  const { error } = await sb.rpc("set_schedule_reminder_rules", {
-    p_member_id: session.member_id,
-    p_member_token: session.member_token,
-    p_schedule_item_id: scheduleItemId,
-    p_offsets: normalizeReminderOffsets(offsets),
-    p_recurrence_scope: recurrenceScope,
-  });
-  if (error) throw error;
-}
-
 function normalizeReminderOffsets(
   offsets: ScheduleReminderOffset[] | undefined,
 ): ScheduleReminderOffset[] {
@@ -518,12 +488,6 @@ function normalizeReminderOffsets(
     throw new Error("invalid_schedule_reminder_offset");
   }
   return unique as ScheduleReminderOffset[];
-}
-
-function needsExplicitReminderRules(
-  offsets: ScheduleReminderOffset[] | undefined,
-): boolean {
-  return normalizeReminderOffsets(offsets).length > 1;
 }
 
 function earliestReminderIso(

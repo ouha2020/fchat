@@ -1,5 +1,16 @@
 "use client";
 
+import PageHeader from "@/components/ui/PageHeader";
+
+import {
+  ArrowPathIcon,
+  CameraIcon,
+  CheckCircleIcon,
+  ChevronRightIcon,
+  Cog6ToothIcon,
+  ClockIcon,
+  TrashIcon,
+} from "@heroicons/react/24/outline";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -7,6 +18,10 @@ import type { ReactNode } from "react";
 
 import AppLoading from "@/components/AppLoading";
 import { useDialog } from "@/components/Dialog";
+import {
+  CalendarDaysIcon,
+  UsersIcon,
+} from "@/components/ui/FamilyIcons";
 import { useLanguage } from "@/components/LanguageProvider";
 import MemberAvatarCircle from "@/components/MemberAvatarCircle";
 import { useToast } from "@/components/Toast";
@@ -229,72 +244,93 @@ export default function MePage() {
 
   return (
     <div className="app-page">
-      <header className="app-header">
-        <div className="min-w-0 flex-1">
-          <Link href="/chat" className="back-link">
-            {t("commonBackToChat")}
-          </Link>
-          <h1 className="page-title mt-2">
-            {t("meTitle")}
-          </h1>
-          <p className="mt-1 break-words text-sm leading-5 text-slate-500">
-            {profile.nickname} · {roleLabel(profile.role, t)} ·{" "}
-            {profile.family_name}
-          </p>
-        </div>
-        <button
-          type="button"
-          className="btn-secondary shrink-0 px-3"
-          disabled={refreshing}
-          onClick={() => refreshDashboard(session, false)}
-        >
-          {refreshing ? t("commonLoading") : t("meRefresh")}
-        </button>
-      </header>
+      <PageHeader
+        title={t("meTitle")}
+        backLabel={t("commonBackToChat")}
+        action={
+          <button
+            type="button"
+            className="btn-ghost shrink-0 gap-1.5 px-3"
+            disabled={refreshing}
+            aria-busy={refreshing}
+            onClick={() => refreshDashboard(session, false)}
+          >
+            <ArrowPathIcon
+              className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
+              aria-hidden="true"
+            />
+            <span>{refreshing ? t("commonLoading") : t("meRefresh")}</span>
+          </button>
+        }
+      />
 
-      <section className="section-card mb-4">
-        <div className="flex flex-col gap-3 min-[390px]:flex-row min-[390px]:items-center min-[390px]:justify-between">
-          <div className="min-w-0">
-            <p className="text-xs font-semibold text-brand-600">
-              {t("meIdentity")}
-            </p>
-            <h2 className="mt-1 break-words text-lg font-bold leading-tight text-slate-900">
-              {profile.nickname}
-            </h2>
-            <p className="mt-1 break-words text-sm leading-5 text-slate-500">
-              {roleLabel(profile.role, t)} ·{" "}
-              {profile.is_admin ? t("commonAdmin") : t("meMember")}
-            </p>
-          </div>
-          <div className="flex shrink-0 flex-col items-center gap-2">
+      <section className="relative mb-4 overflow-hidden rounded-[28px] bg-[#f2f7e9] px-4 py-5 ring-1 ring-brand-100/80 min-[390px]:px-5">
+        <span
+          className="pointer-events-none absolute -right-8 -top-12 h-32 w-32 rounded-full bg-brand-200/35"
+          aria-hidden="true"
+        />
+        <span
+          className="pointer-events-none absolute -bottom-14 left-8 h-24 w-24 rounded-full bg-amber-100/55"
+          aria-hidden="true"
+        />
+
+        <div className="relative flex min-w-0 items-center gap-4">
+          <div className="relative shrink-0">
             <MemberAvatarCircle
               session={session}
               avatarRef={profile.avatar_url}
               name={profile.nickname}
-              className="h-16 w-16 rounded-3xl bg-brand-50 text-xl font-bold text-brand-700 ring-1 ring-brand-100"
+              className="h-20 w-20 rounded-full bg-white text-2xl font-bold text-brand-700 shadow-sm ring-4 ring-white min-[390px]:h-24 min-[390px]:w-24"
             />
-            <input
-              ref={avatarInputRef}
-              className="hidden"
-              type="file"
-              accept="image/*"
-              onChange={(event) => {
-                void handleAvatarFile(event.target.files?.[0] ?? null);
-              }}
+            <span
+              className="absolute bottom-1 right-0 h-4 w-4 rounded-full border-[3px] border-white bg-brand-500"
+              aria-hidden="true"
             />
           </div>
+
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-brand-700">
+              {t("meIdentity")}
+            </p>
+            <h2 className="mt-1 break-words text-2xl font-bold leading-tight text-slate-950">
+              {profile.nickname}
+            </h2>
+            <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5">
+              <span className="tone-chip tone-chip-success">
+                {roleLabel(profile.role, t)}
+              </span>
+              <span className="tone-chip tone-chip-muted">
+                {profile.is_admin ? t("commonAdmin") : t("meMember")}
+              </span>
+            </div>
+            <p className="mt-2 min-w-0 break-words text-sm leading-5 text-slate-600">
+              {profile.family_name}
+            </p>
+          </div>
         </div>
+
+        <input
+          ref={avatarInputRef}
+          className="hidden"
+          type="file"
+          accept="image/*"
+          onChange={(event) => {
+            void handleAvatarFile(event.target.files?.[0] ?? null);
+          }}
+        />
+
         <div
-          className={`mt-3 grid grid-cols-1 gap-2 ${
+          className={`relative mt-5 grid grid-cols-1 gap-2 ${
             profile.avatar_url ? "min-[390px]:grid-cols-2" : ""
           }`}
         >
           <button
             type="button"
-            className="btn-secondary min-w-0 px-3 text-sm"
+            className="btn-secondary min-w-0 gap-2 bg-white/85 px-3 text-sm"
             disabled={avatarBusy}
             onClick={() => avatarInputRef.current?.click()}
           >
+            <CameraIcon className="h-4 w-4" aria-hidden="true" />
             {avatarBusy
               ? t("commonLoading")
               : profile.avatar_url
@@ -304,75 +340,109 @@ export default function MePage() {
           {profile.avatar_url ? (
             <button
               type="button"
-              className="btn-ghost min-w-0 px-3 text-sm text-rose-600 hover:bg-rose-50"
+              className="btn-ghost min-w-0 gap-2 bg-white/45 px-3 text-sm text-rose-600 hover:bg-rose-50"
               disabled={avatarBusy}
               onClick={() => {
                 void handleRemoveAvatar();
               }}
             >
+              <TrashIcon className="h-4 w-4" aria-hidden="true" />
               {t("meAvatarRemove")}
             </button>
           ) : null}
         </div>
-        <p className="info-note mt-3">
-          {t("meIdentitySaved")}
-        </p>
-        <div className="mt-3 grid grid-cols-1 gap-2 min-[420px]:grid-cols-3">
-          <Link href="/settings" className="btn-secondary text-center">
-            {t("chatSettings")}
-          </Link>
-          <Link href="/members" className="btn-secondary text-center">
-            {t("chatMembers")}
-          </Link>
-          <Link href="/schedule" className="btn-secondary text-center">
-            {t("scheduleTitle")}
-          </Link>
+
+        <div className="relative mt-4 flex min-w-0 items-start gap-2 border-t border-brand-200/70 pt-3 text-xs leading-5 text-slate-600">
+          <CheckCircleIcon
+            className="mt-0.5 h-4 w-4 shrink-0 text-brand-700"
+            aria-hidden="true"
+          />
+          <p className="min-w-0 break-words">{t("meIdentitySaved")}</p>
         </div>
       </section>
 
-      <DashboardSection
-        title={t("meTodayAssigned")}
-        empty={t("meTodayAssignedEmpty")}
-        items={dashboard.today_assigned}
-        language={language}
-        t={t}
-        onOpen={openSchedule}
-      />
-      <DashboardSection
-        title={t("meUpcoming")}
-        empty={t("meUpcomingEmpty")}
-        items={dashboard.upcoming}
-        language={language}
-        t={t}
-        onOpen={openSchedule}
-        footer={
-          dashboard.upcoming.length >= 8 ? (
-            <Link
-              href="/schedule"
-              className="inline-flex min-h-9 items-center rounded-full px-1 text-sm font-semibold text-brand-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
-            >
-              {t("meViewSchedule")}
-            </Link>
-          ) : null
-        }
-      />
-      <DashboardSection
-        title={t("meCreatedByMe")}
-        empty={t("meCreatedByMeEmpty")}
-        items={dashboard.created_by_me}
-        language={language}
-        t={t}
-        onOpen={openSchedule}
-      />
-      <DashboardSection
-        title={t("meRecentDone")}
-        empty={t("meRecentDoneEmpty")}
-        items={dashboard.recent_done}
-        language={language}
-        t={t}
-        onOpen={openSchedule}
-        done
-      />
+      <nav className="grid grid-cols-3 gap-2" aria-label={t("meTitle")}>
+        <Link
+          href="/settings"
+          className="group flex min-w-0 flex-col items-center justify-center gap-1.5 rounded-2xl bg-white px-2 py-3 text-center ring-1 ring-slate-100 transition hover:-translate-y-0.5 hover:ring-brand-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-300"
+        >
+          <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-amber-50 text-amber-700">
+            <Cog6ToothIcon className="h-6 w-6" aria-hidden="true" />
+          </span>
+          <span className="min-w-0 max-w-full truncate text-xs font-semibold text-slate-700">
+            {t("chatSettings")}
+          </span>
+        </Link>
+        <Link
+          href="/members"
+          className="group flex min-w-0 flex-col items-center justify-center gap-1.5 rounded-2xl bg-white px-2 py-3 text-center ring-1 ring-slate-100 transition hover:-translate-y-0.5 hover:ring-brand-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-300"
+        >
+          <UsersIcon className="h-10 w-10" />
+          <span className="min-w-0 max-w-full truncate text-xs font-semibold text-slate-700">
+            {t("chatMembers")}
+          </span>
+        </Link>
+        <Link
+          href="/schedule"
+          className="group flex min-w-0 flex-col items-center justify-center gap-1.5 rounded-2xl bg-white px-2 py-3 text-center ring-1 ring-slate-100 transition hover:-translate-y-0.5 hover:ring-brand-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-300"
+        >
+          <CalendarDaysIcon className="h-10 w-10" />
+          <span className="min-w-0 max-w-full truncate text-xs font-semibold text-slate-700">
+            {t("scheduleTitle")}
+          </span>
+        </Link>
+      </nav>
+
+      <div className="mt-7 space-y-6">
+        <DashboardSection
+          title={t("meTodayAssigned")}
+          empty={t("meTodayAssignedEmpty")}
+          items={dashboard.today_assigned}
+          language={language}
+          t={t}
+          onOpen={openSchedule}
+          tone="brand"
+        />
+        <DashboardSection
+          title={t("meUpcoming")}
+          empty={t("meUpcomingEmpty")}
+          items={dashboard.upcoming}
+          language={language}
+          t={t}
+          onOpen={openSchedule}
+          tone="amber"
+          footer={
+            dashboard.upcoming.length >= 8 ? (
+              <Link
+                href="/schedule"
+                className="inline-flex min-h-9 items-center gap-1 rounded-full px-1 text-sm font-semibold text-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+              >
+                {t("meViewSchedule")}
+                <ChevronRightIcon className="h-4 w-4" aria-hidden="true" />
+              </Link>
+            ) : null
+          }
+        />
+        <DashboardSection
+          title={t("meCreatedByMe")}
+          empty={t("meCreatedByMeEmpty")}
+          items={dashboard.created_by_me}
+          language={language}
+          t={t}
+          onOpen={openSchedule}
+          tone="sky"
+        />
+        <DashboardSection
+          title={t("meRecentDone")}
+          empty={t("meRecentDoneEmpty")}
+          items={dashboard.recent_done}
+          language={language}
+          t={t}
+          onOpen={openSchedule}
+          tone="slate"
+          done
+        />
+      </div>
     </div>
   );
 }
@@ -385,6 +455,7 @@ function DashboardSection({
   t,
   onOpen,
   footer,
+  tone,
   done = false,
 }: {
   title: string;
@@ -394,42 +465,65 @@ function DashboardSection({
   t: ReturnType<typeof useLanguage>["t"];
   onOpen: (item: PersonalDashboardScheduleItem) => void;
   footer?: ReactNode;
+  tone: DashboardTone;
   done?: boolean;
 }) {
+  const sectionTone = dashboardTone(tone);
+
   return (
-    <section className="section-card mb-4 min-w-0">
-      <div className="mb-3 flex flex-col items-start gap-2 min-[390px]:flex-row min-[390px]:items-center min-[390px]:justify-between">
-        <h2 className="min-w-0 break-words text-base font-semibold text-slate-900">
-          {title}
-        </h2>
+    <section className="min-w-0 border-b border-stone-200/70 px-1 pb-6 last:border-b-0">
+      <div className="mb-3 flex min-w-0 items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <span
+            className={`h-2.5 w-2.5 shrink-0 rounded-full ${sectionTone.dot}`}
+            aria-hidden="true"
+          />
+          <h2 className="min-w-0 break-words text-base font-bold text-slate-900">
+            {title}
+          </h2>
+          <span className="flex h-6 min-w-6 shrink-0 items-center justify-center rounded-full bg-white px-1.5 text-[11px] font-bold text-slate-500 ring-1 ring-slate-100">
+            {items.length}
+          </span>
+        </div>
         {footer}
       </div>
       {items.length === 0 ? (
-        <p className="status-note">{empty}</p>
+        <div
+          className={`flex min-w-0 items-center gap-3 rounded-2xl border border-dashed px-4 py-4 ${sectionTone.empty}`}
+        >
+          <ClockIcon className="h-5 w-5 shrink-0" aria-hidden="true" />
+          <p className="min-w-0 break-words text-sm leading-6">{empty}</p>
+        </div>
       ) : (
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-3">
           {items.map((item) => (
             <button
               key={item.id}
               type="button"
-              className={`min-w-0 w-full rounded-2xl bg-white p-3 text-left ring-1 ring-slate-100 transition hover:ring-brand-200 ${
-                done ? "opacity-75" : ""
-              }`}
+              className="group min-w-0 w-full rounded-[22px] bg-white p-3 text-left shadow-[0_8px_24px_rgba(45,55,35,0.04)] ring-1 ring-slate-100 transition hover:-translate-y-0.5 hover:ring-brand-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-300"
               onClick={() => onOpen(item)}
             >
               <div className="flex min-w-0 items-start gap-3">
-                <div className="w-14 shrink-0 text-center">
-                  <div className="text-sm font-bold text-brand-600">
+                <div
+                  className={`w-[72px] shrink-0 rounded-2xl px-2 py-2.5 text-center ${
+                    done ? "bg-slate-100" : sectionTone.date
+                  }`}
+                >
+                  <div
+                    className={`whitespace-nowrap text-xs font-bold ${
+                      done ? "text-slate-500" : sectionTone.time
+                    }`}
+                  >
                     {formatTime(item.starts_at, language)}
                   </div>
-                  <div className="mt-1 text-[11px] text-slate-400">
+                  <div className="mt-1 text-[11px] font-medium text-slate-500">
                     {formatShortDate(item.starts_at, language)}
                   </div>
                 </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex min-w-0 items-center gap-1.5">
+                <div className="min-w-0 flex-1 py-0.5">
+                  <div className="flex min-w-0 items-start gap-1.5">
                     <span
-                      className={`min-w-0 flex-1 break-words text-sm font-semibold ${
+                      className={`min-w-0 flex-1 break-words text-sm font-bold leading-5 ${
                         done ? "line-through text-slate-500" : "text-slate-900"
                       }`}
                     >
@@ -438,9 +532,17 @@ function DashboardSection({
                     {item.visibility === "private" ? (
                       <LockBadge label={t("scheduleVisibilityPrivate")} />
                     ) : null}
+                    <ChevronRightIcon
+                      className="mt-0.5 h-4 w-4 shrink-0 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-brand-600"
+                      aria-hidden="true"
+                    />
                   </div>
-                  <div className="mt-1 flex min-w-0 flex-wrap gap-1.5">
-                    <span className="meta-chip min-w-0 whitespace-normal break-words">
+                  <div className="mt-2 flex min-w-0 flex-wrap gap-1.5">
+                    <span
+                      className={`tone-chip min-w-0 whitespace-normal break-words ${itemTypeTone(
+                        item.item_type,
+                      )}`}
+                    >
                       {itemTypeLabel(item.item_type, t)}
                     </span>
                     <span className="meta-chip min-w-0 whitespace-normal break-words">
@@ -460,6 +562,52 @@ function DashboardSection({
       )}
     </section>
   );
+}
+
+type DashboardTone = "brand" | "amber" | "sky" | "slate";
+
+function dashboardTone(tone: DashboardTone): {
+  dot: string;
+  date: string;
+  time: string;
+  empty: string;
+} {
+  if (tone === "amber") {
+    return {
+      dot: "bg-amber-400",
+      date: "bg-amber-50",
+      time: "text-amber-700",
+      empty: "border-amber-200 bg-amber-50/60 text-amber-800",
+    };
+  }
+  if (tone === "sky") {
+    return {
+      dot: "bg-sky-400",
+      date: "bg-sky-50",
+      time: "text-sky-700",
+      empty: "border-sky-200 bg-sky-50/60 text-sky-800",
+    };
+  }
+  if (tone === "slate") {
+    return {
+      dot: "bg-slate-400",
+      date: "bg-slate-100",
+      time: "text-slate-600",
+      empty: "border-slate-200 bg-white/60 text-slate-500",
+    };
+  }
+  return {
+    dot: "bg-brand-500",
+    date: "bg-brand-50",
+    time: "text-brand-700",
+    empty: "border-brand-200 bg-brand-50/60 text-brand-800",
+  };
+}
+
+function itemTypeTone(type: string): string {
+  if (type === "todo") return "tone-chip-private";
+  if (type === "reminder") return "tone-chip-warning";
+  return "tone-chip-success";
 }
 
 function LockBadge({ label }: { label: string }) {

@@ -1,17 +1,22 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { canReceiveScheduleReminder } from "@/lib/scheduleAssignmentPolicy";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import {
   getWebPush,
   isGonePushError,
   pushErrorStatus,
   toWebPushSubscription,
+  WEB_PUSH_DELIVERY_OPTIONS,
   type StoredPushSubscription,
 } from "@/lib/webPushServer";
 
 const MAX_BATCH_SIZE = 100;
 const ACTIVE_THRESHOLD_MS = 60_000;
 const MAX_RETRY_COUNT = 3;
+const START_REMINDER_GRACE_MS = 5 * 60_000;
+const SNOOZE_GRACE_MS = 30 * 60_000;
+const OVERDUE_GRACE_MS = 24 * 60 * 60_000;
 
 export interface ScheduleReminderStats {
   ok: true;
@@ -29,7 +34,13 @@ interface ReminderDeliveryRow {
   member_id: string;
   scheduled_for: string;
   reminder_kind: ScheduleReminderKind;
-  status: "pending" | "sent" | "skipped" | "failed" | "gone";
+  status:
+    | "pending"
+    | "processing"
+    | "sent"
+    | "skipped"
+    | "failed"
+    | "gone";
   attempt_count: number;
 }
 
@@ -40,6 +51,7 @@ interface ScheduleReminderRow {
   family_id: string;
   creator_member_id: string;
   assignee_member_id: string;
+  assignee_response: "pending" | "accepted" | "declined";
   visibility: "family" | "private";
   status: "active" | "done" | "cancelled";
   deleted_at: string | null;
@@ -67,33 +79,26 @@ type DeliveryOutcome = "sent" | "gone" | "skipped" | "failed";
 export async function flushDueScheduleReminders(): Promise<ScheduleReminderStats> {
   const sb = getSupabaseAdmin();
   await sb.rpc("ensure_overdue_schedule_reminders");
-  const now = new Date().toISOString();
-  const { data, error } = await sb
-    .from("family_schedule_reminder_deliveries")
-    .select("id, family_id, schedule_item_id, member_id, scheduled_for, reminder_kind, status, attempt_count")
-    .eq("status", "pending")
-    .lte("scheduled_for", now)
-    .order("scheduled_for", { ascending: true })
-    .limit(MAX_BATCH_SIZE);
-  if (error) throw error;
-
-  return processDeliveries(sb, (data ?? []) as ReminderDeliveryRow[]);
+  const deliveries = await claimScheduleReminderDeliveries(sb, "due");
+  return processDeliveries(sb, deliveries);
 }
 
 export async function retryFailedScheduleReminders(): Promise<ScheduleReminderStats> {
   const sb = getSupabaseAdmin();
-  const now = new Date().toISOString();
-  const { data, error } = await sb
-    .from("family_schedule_reminder_deliveries")
-    .select("id, family_id, schedule_item_id, member_id, scheduled_for, reminder_kind, status, attempt_count")
-    .eq("status", "failed")
-    .lte("next_retry_at", now)
-    .lt("attempt_count", MAX_RETRY_COUNT)
-    .order("next_retry_at", { ascending: true })
-    .limit(MAX_BATCH_SIZE);
-  if (error) throw error;
+  const deliveries = await claimScheduleReminderDeliveries(sb, "retry");
+  return processDeliveries(sb, deliveries);
+}
 
-  return processDeliveries(sb, (data ?? []) as ReminderDeliveryRow[]);
+async function claimScheduleReminderDeliveries(
+  sb: SupabaseClient,
+  mode: "due" | "retry",
+): Promise<ReminderDeliveryRow[]> {
+  const { data, error } = await sb.rpc("claim_schedule_reminder_deliveries", {
+    p_mode: mode,
+    p_limit: MAX_BATCH_SIZE,
+  });
+  if (error) throw error;
+  return (data ?? []) as ReminderDeliveryRow[];
 }
 
 async function processDeliveries(
@@ -135,15 +140,20 @@ async function processDelivery(
       fetchMember(sb, delivery.member_id),
     ]);
 
-    if (!item || !isDeliveryStillDue(delivery, item)) {
+    if (!item) {
       await markDeliverySkipped(sb, delivery.id, "schedule_not_active", now);
+      return "skipped";
+    }
+    const skipReason = scheduleReminderSkipReason(delivery, item);
+    if (skipReason) {
+      await markDeliverySkipped(sb, delivery.id, skipReason, now);
       return "skipped";
     }
     if (!member || member.family_id !== item.family_id || member.status !== "active") {
       await markDeliverySkipped(sb, delivery.id, "member_not_active", now);
       return "skipped";
     }
-    if (!memberCanViewItem(member.id, item)) {
+    if (!canReceiveScheduleReminder(item, member.id)) {
       await markDeliverySkipped(sb, delivery.id, "not_visible", now);
       return "skipped";
     }
@@ -152,7 +162,7 @@ async function processDelivery(
       return "skipped";
     }
 
-    const subscriptions = await fetchSubscriptions(sb, member.id);
+    const subscriptions = await fetchSubscriptions(sb, item.family_id, member.id);
     if (subscriptions.length === 0) {
       await markDeliverySkipped(sb, delivery.id, "no_subscription", now);
       return "skipped";
@@ -214,7 +224,7 @@ async function fetchScheduleItem(
   const { data, error } = await sb
     .from("family_schedule_items")
     .select(
-      "id, family_id, creator_member_id, assignee_member_id, visibility, status, deleted_at, remind_at, starts_at",
+      "id, family_id, creator_member_id, assignee_member_id, assignee_response, visibility, status, deleted_at, remind_at, starts_at",
     )
     .eq("id", scheduleItemId)
     .maybeSingle();
@@ -235,33 +245,42 @@ async function fetchMember(
   return data as MemberRow | null;
 }
 
-function isDeliveryStillDue(
+export function scheduleReminderSkipReason(
   delivery: ReminderDeliveryRow,
   item: ScheduleReminderRow,
-): boolean {
-  if (item.status !== "active" || item.deleted_at !== null) return false;
-  if (delivery.reminder_kind === "snooze") return true;
-  if (delivery.reminder_kind === "overdue") {
-    return item.starts_at <= new Date().toISOString();
+  nowMs = Date.now(),
+): string | null {
+  if (item.status !== "active" || item.deleted_at !== null) {
+    return "schedule_not_active";
   }
-  return true;
-}
-
-function memberCanViewItem(memberId: string, item: ScheduleReminderRow): boolean {
-  return (
-    item.visibility === "family" ||
-    item.creator_member_id === memberId ||
-    item.assignee_member_id === memberId
-  );
+  const scheduledForMs = Date.parse(delivery.scheduled_for);
+  const startsAtMs = Date.parse(item.starts_at);
+  if (!Number.isFinite(scheduledForMs) || !Number.isFinite(startsAtMs)) {
+    return "reminder_invalid_time";
+  }
+  if (scheduledForMs > nowMs + 60_000) return "reminder_not_due";
+  if (delivery.reminder_kind === "snooze") {
+    return nowMs - scheduledForMs > SNOOZE_GRACE_MS ? "reminder_stale" : null;
+  }
+  if (delivery.reminder_kind === "overdue") {
+    return startsAtMs > nowMs || nowMs - scheduledForMs > OVERDUE_GRACE_MS
+      ? "reminder_stale"
+      : null;
+  }
+  return nowMs > startsAtMs + START_REMINDER_GRACE_MS
+    ? "reminder_stale"
+    : null;
 }
 
 async function fetchSubscriptions(
   sb: SupabaseClient,
+  familyId: string,
   memberId: string,
 ): Promise<PushSubscriptionRow[]> {
   const { data, error } = await sb
     .from("push_subscriptions")
     .select("id, family_id, member_id, endpoint, p256dh, auth, enabled, messages_enabled")
+    .eq("family_id", familyId)
     .eq("member_id", memberId)
     .eq("enabled", true)
     .eq("messages_enabled", true);
@@ -307,9 +326,11 @@ async function sendSchedulePush(
   });
 
   try {
-    await getWebPush().sendNotification(toWebPushSubscription(sub), payload, {
-      TTL: 60 * 60,
-    });
+    await getWebPush().sendNotification(
+      toWebPushSubscription(sub),
+      payload,
+      WEB_PUSH_DELIVERY_OPTIONS,
+    );
     return { status: "sent" };
   } catch (error) {
     if (isGonePushError(error)) return { status: "gone" };
@@ -349,7 +370,6 @@ async function markDeliverySent(
     .from("family_schedule_reminder_deliveries")
     .update({
       status: "sent",
-      attempt_count: delivery.attempt_count + 1,
       delivered_at: timestamp,
       last_attempt_at: timestamp,
       next_retry_at: null,
@@ -404,7 +424,7 @@ async function markDeliveryFailed(
   errorMessage: string,
   timestamp: string,
 ): Promise<void> {
-  const attemptCount = delivery.attempt_count + 1;
+  const attemptCount = delivery.attempt_count;
   await sb
     .from("family_schedule_reminder_deliveries")
     .update({

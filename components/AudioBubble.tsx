@@ -87,13 +87,13 @@ export default function AudioBubble({
   const width = Math.min(260, 164 + capped * 1.8);
 
   const baseColors = isMine
-    ? "bg-brand-500 text-white"
+    ? "bg-brand-500 text-brand-950"
     : "bg-white text-slate-800 ring-1 ring-slate-100";
-  const subColors = isMine ? "text-white/80" : "text-slate-500";
+  const subColors = isMine ? "text-brand-950" : "text-slate-500";
   const buttonRing = isMine
     ? "bg-white/20 hover:bg-white/30"
     : "bg-brand-500/10 text-brand-600 hover:bg-brand-500/20";
-  const barColor = isMine ? "bg-white/80" : "bg-slate-400";
+  const barColor = isMine ? "bg-brand-700" : "bg-slate-400";
 
   // Pseudo-random but stable bar heights. Seeded by the message id — signed
   // media URLs rotate every few minutes, so seeding by URL would reshuffle

@@ -1,6 +1,7 @@
 import type { FamilyRole } from "@/types/family";
 import type {
   ScheduleItemType,
+  ScheduleAssigneeResponseStatus,
   ScheduleRecurrenceRule,
   ScheduleStatus,
   ScheduleVisibility,
@@ -27,6 +28,7 @@ export interface PersonalDashboardScheduleItem {
   status: ScheduleStatus;
   assignee_member_id: string;
   assignee_nickname: string;
+  assignee_response: ScheduleAssigneeResponseStatus;
   creator_member_id: string;
   creator_nickname: string;
   recurrence_group_id: string | null;

@@ -25,6 +25,48 @@ export async function createAssistantActionCard(
   session: LocalSession,
   input: CreateAssistantActionCardInput,
 ): Promise<AssistantActionResult> {
+  const prepared = prepareCreateInput(input);
+  const sb = getSupabase();
+  const { data, error } = await sb.rpc("create_assistant_action_card", {
+    p_member_id: session.member_id,
+    p_member_token: session.member_token,
+    p_card_type: prepared.card_type,
+    p_title: prepared.title,
+    p_summary: prepared.summary,
+    p_payload: prepared.payload,
+    p_source_message_id: prepared.source_message_id,
+    p_target_message_id: prepared.target_message_id,
+  });
+  if (error) throw error;
+  return normalizeActionResult(data);
+}
+
+export async function createAssistantActionCards(
+  session: LocalSession,
+  inputs: CreateAssistantActionCardInput[],
+): Promise<AssistantActionResult[]> {
+  if (inputs.length === 0) return [];
+  if (inputs.length > 31) throw new Error("invalid_assistant_card_batch");
+
+  const cards = inputs.map(prepareCreateInput);
+  const batchRequestId = crypto.randomUUID();
+  const sb = getSupabase();
+  const args = {
+    p_member_id: session.member_id,
+    p_member_token: session.member_token,
+    p_batch_request_id: batchRequestId,
+    p_cards: cards,
+  };
+  let { data, error } = await sb.rpc("create_assistant_action_cards_batch", args);
+  if (error) {
+    ({ data, error } = await sb.rpc("create_assistant_action_cards_batch", args));
+  }
+  if (error) throw error;
+  if (!Array.isArray(data)) throw new Error("invalid_assistant_card_batch_result");
+  return data.map(normalizeActionResult);
+}
+
+function prepareCreateInput(input: CreateAssistantActionCardInput) {
   const title = input.title.trim();
   const summary = input.summary?.trim() || null;
   if (!title) throw new Error("assistant_card_title_required");
@@ -35,19 +77,14 @@ export async function createAssistantActionCard(
   if (input.source_message_id) uuidSchema.parse(input.source_message_id);
   if (input.target_message_id) uuidSchema.parse(input.target_message_id);
 
-  const sb = getSupabase();
-  const { data, error } = await sb.rpc("create_assistant_action_card", {
-    p_member_id: session.member_id,
-    p_member_token: session.member_token,
-    p_card_type: input.card_type,
-    p_title: title,
-    p_summary: summary,
-    p_payload: input.payload ?? {},
-    p_source_message_id: input.source_message_id ?? null,
-    p_target_message_id: input.target_message_id ?? null,
-  });
-  if (error) throw error;
-  return normalizeActionResult(data);
+  return {
+    card_type: input.card_type,
+    title,
+    summary,
+    payload: input.payload ?? {},
+    source_message_id: input.source_message_id ?? null,
+    target_message_id: input.target_message_id ?? null,
+  };
 }
 
 export async function updateAssistantActionCard(

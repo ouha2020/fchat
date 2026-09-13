@@ -47,6 +47,7 @@ const UPDATE_RE =
   /(改到|改为|改為|改成|变更|変更|ずら|変更して|change|move|reschedule)/i;
 const CANCEL_RE =
   /(取消|删除|刪除|キャンセル|取り消|やめ|cancel|delete)/i;
+const MAX_BATCH_OCCURRENCES = 31;
 
 export function parseAssistantIntent(
   rawText: string,
@@ -70,7 +71,8 @@ export function parseAssistantIntents(
 
   const important = IMPORTANT_RE.test(text);
   const reminder = REMINDER_RE.test(text);
-  const parsedTime = parseRelativeDateTime(text, now);
+  const parsedTimes = parseMultipleDateTimes(text, now);
+  const parsedTime = parsedTimes?.[0] ?? parseRelativeDateTime(text, now);
   const schedule = SCHEDULE_RE.test(text) || looksLikeScheduledTrip(text, now);
   const assignee = findAssignee(text, context.members, context.currentMemberId);
   const hasExplicitAssignee = Boolean(assignee?.explicit);
@@ -124,7 +126,13 @@ export function parseAssistantIntents(
   // Explicit calendar dates ("N号 / N日 / M月N号"), possibly several. The time
   // parser must not read those digits as a clock time, so we parse the dates
   // out first and read the time from the remaining text.
-  const { dates, strippedText } = resolveCalendarDates(text, now);
+  const explicitDates = parsedTimes
+    ? {
+        dates: parsedTimes,
+        strippedText: text.replace(multipleDateWordsRe(), " "),
+      }
+    : resolveCalendarDates(text, now);
+  const { dates, strippedText } = explicitDates;
   if (dates.length > 0) {
     const title = compactTitle(strippedText, cardType, context.members);
     return dates.map((startsAt) => ({
@@ -303,6 +311,123 @@ function emptyImportantDraft(text: string): AssistantCreateDraft {
   };
 }
 
+function parseMultipleDateTimes(text: string, now: Date): Date[] | null {
+  const time = resolveExplicitTime(text);
+  if (!time) return null;
+
+  const days = parseExplicitDaySelections(text, now);
+  if (days.length < 2) return null;
+
+  const period = resolvePeriod(text);
+  const dates = days
+    .map(({ year, monthIndex, day }) =>
+      buildOccurrenceDate(year, monthIndex, day, time, period),
+    )
+    .filter((date): date is Date => Boolean(date))
+    .sort((a, b) => a.getTime() - b.getTime());
+  const unique = dates.filter(
+    (date, index, list) =>
+      index === 0 || date.getTime() !== list[index - 1].getTime(),
+  );
+  return unique.length > 1 ? unique.slice(0, MAX_BATCH_OCCURRENCES) : null;
+}
+
+function parseExplicitDaySelections(
+  text: string,
+  now: Date,
+): Array<{ year: number; monthIndex: number; day: number }> {
+  const rangeMatch = text.match(
+    /(?:(?<year>\d{4})\s*年\s*)?(?:(?<month>\d{1,2})\s*月\s*)?(?<start>\d{1,2})\s*(?:-|－|—|–|~|〜|到|至)\s*(?<end>\d{1,2})\s*(?:日|号|號)/,
+  );
+  if (rangeMatch?.groups) {
+    const start = Number(rangeMatch.groups.start);
+    const end = Number(rangeMatch.groups.end);
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start > end) {
+      return [];
+    }
+    const context = resolveMonthContext(
+      rangeMatch.groups.year,
+      rangeMatch.groups.month,
+      start,
+      now,
+    );
+    return Array.from({ length: end - start + 1 }, (_, index) => ({
+      ...context,
+      day: start + index,
+    }));
+  }
+
+  const listMatch = text.match(
+    /(?:(?<year>\d{4})\s*年\s*)?(?:(?<month>\d{1,2})\s*月\s*)?(?<days>\d{1,2}(?:\s*[、,，]\s*\d{1,2}){1,})\s*(?:日|号|號)/,
+  );
+  if (!listMatch?.groups) return [];
+  const days = listMatch.groups.days
+    .split(/[、,，]/)
+    .map((value) => Number(value.trim()))
+    .filter((value) => Number.isInteger(value));
+  if (days.length < 2) return [];
+  const context = resolveMonthContext(
+    listMatch.groups.year,
+    listMatch.groups.month,
+    days[0],
+    now,
+  );
+  return days.map((day) => ({ ...context, day }));
+}
+
+function resolveMonthContext(
+  yearText: string | undefined,
+  monthText: string | undefined,
+  firstDay: number,
+  now: Date,
+): { year: number; monthIndex: number } {
+  let year = yearText ? Number(yearText) : now.getFullYear();
+  let monthIndex = monthText ? Number(monthText) - 1 : now.getMonth();
+  const hasExplicitMonth = Boolean(yearText || monthText);
+
+  if (!hasExplicitMonth) {
+    const today = new Date(now);
+    today.setHours(0, 0, 0, 0);
+    const firstCandidate = new Date(year, monthIndex, firstDay);
+    firstCandidate.setHours(0, 0, 0, 0);
+    if (firstCandidate < today) {
+      monthIndex += 1;
+      if (monthIndex > 11) {
+        monthIndex = 0;
+        year += 1;
+      }
+    }
+  }
+
+  return { year, monthIndex };
+}
+
+function buildOccurrenceDate(
+  year: number,
+  monthIndex: number,
+  day: number,
+  time: { hour: number; minute: number },
+  period: "morning" | "afternoon" | "evening" | null,
+): Date | null {
+  if (monthIndex < 0 || monthIndex > 11 || day < 1 || day > 31) return null;
+  const date = new Date(year, monthIndex, day);
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== monthIndex ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+
+  let hour = time.hour;
+  if ((period === "afternoon" || period === "evening") && hour < 12) {
+    hour += 12;
+  }
+  if (hour < 0 || hour > 23 || time.minute < 0 || time.minute > 59) return null;
+  date.setHours(hour, time.minute, 0, 0);
+  return date;
+}
+
 function parseRelativeDateTime(text: string, now: Date): Date | null {
   const dayOffset = resolveDayOffset(text, now);
   const time = resolveTime(text);
@@ -391,6 +516,13 @@ function resolveTime(text: string): { hour: number; minute: number } | null {
   return normalizeTimeMatch(raw);
 }
 
+function resolveExplicitTime(text: string): { hour: number; minute: number } | null {
+  const matches = [...text.matchAll(explicitTimePattern())];
+  const raw = matches.at(-1);
+  if (!raw) return null;
+  return normalizeTimeMatch(raw);
+}
+
 function resolveLastTime(text: string): { hour: number; minute: number } | null {
   return resolveTime(text);
 }
@@ -419,6 +551,10 @@ function normalizeTimeMatch(match: RegExpMatchArray): { hour: number; minute: nu
 
 function timePattern(): RegExp {
   return /(?<prefix>上午|早上|下午|晚上|午前|午後|朝|夜|morning|afternoon|evening|night)?\s*(?:at\s*)?(?<hour>[01]?\d|2[0-3])\s*(?:(?::|：|点|點|時|时)\s*(?<minute>[0-5]?\d)?(?<half>半)?)?\s*(?<suffix>am|pm)?/gi;
+}
+
+function explicitTimePattern(): RegExp {
+  return /(?<prefix>上午|早上|下午|晚上|午前|午後|朝|夜|morning|afternoon|evening|night)?\s*(?:at\s*)?(?<hour>[01]?\d|2[0-3])\s*(?:(?::|：|点|點|時|时)\s*(?<minute>[0-5]?\d)?(?<half>半)?|(?<suffix>am|pm)\b)/gi;
 }
 
 function resolvePeriod(text: string): "morning" | "afternoon" | "evening" | null {
@@ -480,6 +616,7 @@ function compactTitle(
     .replace(PRIVATE_RE, " ")
     .replace(/(请|請|帮我|幫我|お願い|please|ask)/gi, " ")
     .replace(/(から|まで|には|では|へ|を|に|は|で)/g, " ")
+    .replace(multipleDateWordsRe(), " ")
     // Calendar-date tokens ("7月9日", "13，17号", "17日") and any stray 号/日.
     .replace(/\d{1,2}\s*月\s*\d{1,2}\s*[号號日]?/g, " ")
     .replace(/\d{1,2}(?:\s*[,，、]\s*\d{1,2})*\s*[号號日]/g, " ")
@@ -533,6 +670,10 @@ function buildScheduleSearchRange(text: string, now: Date): { start: Date; end: 
 
 function timeWordsRe(): RegExp {
   return /(今天|今日|きょう|明天|明日|あした|あす|后天|後天|明後日|あさって|today|tomorrow|day\s+after\s+tomorrow|周[一二三四五六日天]|星期[一二三四五六日天]|礼拜[一二三四五六日天]|[月火水木金土日]曜日?|monday|tuesday|wednesday|thursday|friday|saturday|sunday|上午|早上|下午|晚上|午前|午後|朝|夜|morning|afternoon|evening|night|(?:at\s*)?\d{1,2}\s*(?::|：|点|點|時|时)?\s*\d{0,2}\s*(?:am|pm)?)/gi;
+}
+
+function multipleDateWordsRe(): RegExp {
+  return /(?:(?:\d{4}\s*年\s*)?(?:\d{1,2}\s*月\s*)?)?(?:\d{1,2}\s*(?:-|－|—|–|~|〜|到|至)\s*\d{1,2}|\d{1,2}(?:\s*[、,，]\s*\d{1,2})+)\s*(?:日|号|號)/g;
 }
 
 function roleWordsRe(): RegExp {

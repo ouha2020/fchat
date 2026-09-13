@@ -1,8 +1,13 @@
 import webPush from "web-push";
-import type { PushSubscription } from "web-push";
+import type { PushSubscription, RequestOptions } from "web-push";
 import type { MessageType } from "@/types/message";
 
 let configured = false;
+
+export const WEB_PUSH_DELIVERY_OPTIONS = {
+  TTL: 60 * 60,
+  urgency: "high",
+} satisfies RequestOptions;
 
 export interface PushPayload {
   title: string;

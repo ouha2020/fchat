@@ -7,6 +7,7 @@ import {
   isGonePushError,
   pushErrorStatus,
   toWebPushSubscription,
+  WEB_PUSH_DELIVERY_OPTIONS,
   type StoredPushSubscription,
 } from "@/lib/webPushServer";
 import type { MessageType } from "@/types/message";
@@ -653,13 +654,11 @@ async function sendOnePush({
   });
 
   try {
-    await getWebPush().sendNotification(toWebPushSubscription(sub), payload, {
-      TTL: 60 * 60,
-      // High urgency asks the push service (FCM/APNs) to deliver promptly even
-      // when the device is in Doze / under battery optimization — normal
-      // urgency gets batched or dropped on Android in the background.
-      urgency: "high",
-    });
+    await getWebPush().sendNotification(
+      toWebPushSubscription(sub),
+      payload,
+      WEB_PUSH_DELIVERY_OPTIONS,
+    );
     return { status: "sent" };
   } catch (error) {
     return {

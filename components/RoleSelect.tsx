@@ -48,7 +48,7 @@ export default function RoleSelect({ value, onChange }: Props) {
           >
             {active ? (
               <span
-                className="absolute right-2 top-2 inline-flex h-5 w-5 items-center justify-center rounded-full bg-brand-500 text-white shadow-sm"
+                className="absolute right-2 top-2 inline-flex h-5 w-5 items-center justify-center rounded-full bg-brand-500 text-brand-950 shadow-sm"
                 aria-hidden="true"
               >
                 <svg

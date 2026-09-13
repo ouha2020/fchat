@@ -17,8 +17,19 @@ const me: FamilyMember = {
   last_active_at: "2026-07-08T00:00:00.000Z",
 };
 
+const mother: FamilyMember = {
+  id: "m2",
+  family_id: "f1",
+  nickname: "妈妈",
+  role: "mother",
+  is_admin: false,
+  status: "active",
+  avatar_url: null,
+  last_active_at: "2026-07-08T00:00:00.000Z",
+};
+
 function ctx(now: Date) {
-  return { members: [me], currentMemberId: "m1", now };
+  return { members: [me, mother], currentMemberId: "m1", now };
 }
 
 function createDraftsOf(text: string, now: Date) {
@@ -43,6 +54,66 @@ describe("parseAssistantIntents — day-of-month dates", () => {
     const first = new Date(drafts[0].payload!.starts_at as string);
     expect(first.getHours()).toBe(9);
     expect(first.getMonth()).toBe(6); // still July
+  });
+
+  it("supports a longer comma-linked list with an explicit time", () => {
+    const now = new Date(2026, 6, 10, 9, 0, 0);
+    const drafts = createDraftsOf("17，18，19,23,30日4点提醒学音乐", now);
+
+    expect(drafts.map((draft) => draft.title)).toEqual([
+      "学音乐",
+      "学音乐",
+      "学音乐",
+      "学音乐",
+      "学音乐",
+    ]);
+    expect(
+      drafts.map((draft) =>
+        new Date(draft.payload!.starts_at as string).getDate(),
+      ),
+    ).toEqual([17, 18, 19, 23, 30]);
+    expect(
+      drafts.map((draft) =>
+        new Date(draft.payload!.starts_at as string).getHours(),
+      ),
+    ).toEqual([4, 4, 4, 4, 4]);
+  });
+
+  it.each(["17-21日4点提醒学音乐", "17到21日4点提醒学音乐"])(
+    "supports a daily range: %s",
+    (text) => {
+      const now = new Date(2026, 6, 10, 9, 0, 0);
+      const drafts = createDraftsOf(text, now);
+
+      expect(
+        drafts.map((draft) =>
+          new Date(draft.payload!.starts_at as string).getDate(),
+        ),
+      ).toEqual([17, 18, 19, 20, 21]);
+      expect(drafts.every((draft) => draft.title === "学音乐")).toBe(true);
+    },
+  );
+
+  it("keeps the same assignee and family visibility on every range item", () => {
+    const now = new Date(2026, 6, 10, 9, 0, 0);
+    const drafts = createDraftsOf("17-21日4点提醒妈妈学音乐", now);
+
+    expect(drafts).toHaveLength(5);
+    for (const draft of drafts) {
+      expect(draft.payload?.visibility).toBe("family");
+      expect(draft.payload?.assignee_member_id).toBe(mother.id);
+    }
+  });
+
+  it("keeps a private date range assigned to the current member", () => {
+    const now = new Date(2026, 6, 10, 9, 0, 0);
+    const drafts = createDraftsOf("只提醒我17到21日4点学音乐", now);
+
+    expect(drafts).toHaveLength(5);
+    for (const draft of drafts) {
+      expect(draft.payload?.visibility).toBe("private");
+      expect(draft.payload?.assignee_member_id).toBe(me.id);
+    }
   });
 
   it("does not misread the day number as a clock time", () => {

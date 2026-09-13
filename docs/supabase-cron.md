@@ -2,6 +2,19 @@
 
 本文记录 HomeTree / FamilyChat 的计划任务迁移方案。目标是让定时任务在 Supabase 侧执行，不再通过 Vercel Cron 调用 Next.js API Route，从而避免触发 Vercel Cron 相关计费。
 
+## 当前生产状态
+
+截至 2026-07-11，生产项目已完成日程提醒链路配置：
+
+- `schedule-reminders` Edge Function 已部署并启用 JWT 校验。
+- `hometree-schedule-reminders-flush` 每分钟运行。
+- `hometree-schedule-reminders-retry` 每 5 分钟运行。
+- Function Secrets 与 Vault 已配置；本文不记录任何密钥值。
+- 发送任务通过数据库原子领取，重叠执行不会并行发送同一条提醒。
+- 开始前提醒、延期提醒与逾期提醒都有过期保护，不补发长期历史提醒。
+
+修改 Edge Function、Vault 或 Cron 后，必须重新执行本文的 Cron、HTTP 响应和积压检查，不能只以部署成功作为完成依据。
+
 ## 任务边界
 
 - Vercel Cron 配置已从 `vercel.json` 移除。

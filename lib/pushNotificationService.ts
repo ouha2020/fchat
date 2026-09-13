@@ -338,7 +338,7 @@ async function ensureServiceWorker(): Promise<ServiceWorkerRegistration> {
 }
 
 const HEALTH_CHECK_DEBOUNCE_MS = 300_000; // 5 minutes between re-saves
-let lastHealthSaveAt = 0;
+const lastHealthSaveAt = new Map<string, number>();
 
 export async function checkPushSubscriptionHealth(
   session: LocalSession,
@@ -357,14 +357,16 @@ export async function checkPushSubscriptionHealth(
     return "expired";
   }
 
+  const healthKey = `${session.member_id}:${subscription.endpoint}`;
   const now = Date.now();
-  if (!options.force && now - lastHealthSaveAt < HEALTH_CHECK_DEBOUNCE_MS) {
+  const previousSaveAt = lastHealthSaveAt.get(healthKey) ?? 0;
+  if (!options.force && now - previousSaveAt < HEALTH_CHECK_DEBOUNCE_MS) {
     return "ok";
   }
-  lastHealthSaveAt = now;
 
   const prefs = getPushPreferences(session);
   await savePushSubscription(session, subscription, prefs);
+  lastHealthSaveAt.set(healthKey, Date.now());
   return options.force ? "resubscribed" : "ok";
 }
 

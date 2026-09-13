@@ -51,6 +51,7 @@
 
 ## Phase 4 — 页面任务
 
+- [x] P1：`/me` 个人页视觉重设计。完成：身份摘要升级为新芽绿个人封面，头像操作并入身份区，设置/成员/日程改为彩色快捷导航，个人看板改为分色日期卡和轻量空态；保留长文本收缩、私密锁语义、头像上传、个人看板 RPC 与日程跳转逻辑；验证状态见 `docs/iteration-log/_latest.md`。
 - [x] P1：`/chat` read-only 回归审计与最小 `mid` guard 修复。完成：`docs/agent-reports/20260525-phase4-chat-regression-orchestrator.md`；将 `/chat?mid=` 通知定位 guard 从一次性 boolean 改为按 message id 去重，允许同一 mounted chat page 继续处理后续不同通知目标；未改 Service Worker、Push payload、RPC、Realtime、Storage 或数据库。
 - [ ] P1：真机/PWA 手动验证连续两个不同 `mid` 通知点击，确认每次都能滚动并高亮目标消息；覆盖 iOS/Android 可用设备、前台/后台/已打开 chat client。
 - [x] P2：`ChatInput` 录音中 visual viewport / orientation 变化专项审计。完成：`docs/agent-reports/20260525-phase4-chatinput-recording-viewport.md`；采用隐私取消策略而不是静默重算 release/cancel safe rect；录音中 visual viewport `resize` / `scroll`、窗口 `resize` 和 `orientationchange` 会取消录音并展示隐私提示；未改录音服务、上传、发送、RPC、Push、Service Worker 或数据库；更新三语提示文案并用临时 route 验证 360px/390px/430px 授权 Dialog 无横向溢出，临时 route 已删除。
@@ -94,3 +95,20 @@
 - [ ] P1：日程相关改动手动回归新增、编辑、删除、筛选、评论、负责人响应、提醒状态。
 - [ ] P1：浏览器/真机补测 W4 未完成的 360px、390px、430px 宽度检查；本轮 in-app Browser 被 `net::ERR_BLOCKED_BY_CLIENT` 阻断。
 - [ ] P2：记录缺失的自动化脚本：当前没有 `test`、`test:e2e`、`test:lhci`。
+
+## 新芽绿统一（2026-09-13 用户已确认）
+
+- [x] S1 / P1：公共 token、按钮、输入、页面壳；浅绿深字与对比度。
+- [x] S2 / P1：设置页去渐变重阴影，沿用真实权限与通知状态。
+- [x] S3 / P1：个人/成员页的标题、列表和操作图标；账号流程沿用公共基础。
+- [x] S4 / P1：聊天导航与输入工具图标、普通气泡与管家卡视觉；不改发送/录音/私密。
+- [x] S5 / P1：日程头部、月份控制、普通分类色与详情控件；不改日期/RPC/提醒。
+- [x] S6 / P1：360/390/430px 页面与浮层验证、视觉QA、lint/typecheck/build。
+
+- [ ] S7 / P1：真机补测 iOS/Android 键盘、录音、日程详情评论与 PWA 安全区；管理员独有区域补测。
+
+- [x] S8 / P2：设置页使用公共 section-card 与按钮、统一分区层级和触控尺寸（用户确认整体风格一致）。
+
+- [x] S9 / P2：Imagegen 花园彩色家庭/日程/成员/个人图标，替换主题入口，保留操作图标与可访问名称。
+
+- [x] S10 / P2：补齐图片、位置、悄悄话、加号、麦克风彩色图标，覆盖聊天和日程同类入口。

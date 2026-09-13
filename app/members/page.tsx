@@ -1,5 +1,9 @@
 "use client";
 
+import PageHeader from "@/components/ui/PageHeader";
+
+import { HomeIcon, LockClosedIcon } from "@/components/ui/FamilyIcons";
+
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -153,14 +157,7 @@ export default function MembersPage() {
 
   return (
     <div className="app-page">
-      <header className="app-header">
-        <div className="min-w-0">
-          <Link href="/chat" className="back-link">
-            {t("commonBackToChat")}
-          </Link>
-          <h1 className="page-title mt-2">{t("membersTitle")}</h1>
-        </div>
-      </header>
+      <PageHeader title={t("membersTitle")} backLabel={t("commonBackToChat")} />
 
       {loadError ? (
         <div className="section-card text-center">
@@ -191,11 +188,11 @@ export default function MembersPage() {
           </div>
         </div>
       ) : (
-        <ul className="section-card divide-y divide-slate-100 p-0">
+        <ul className="surface-group divide-y divide-stone-100">
           <li className="flex flex-col gap-3 px-4 py-3 min-[430px]:flex-row min-[430px]:items-center">
             <div className="flex min-w-0 flex-1 items-center gap-3">
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-base font-semibold text-emerald-700">
-                係
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-brand-100 text-base font-semibold text-brand-950">
+                <HomeIcon className="h-8 w-8" aria-hidden="true" />
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex min-w-0 flex-wrap items-center gap-1.5">
@@ -213,11 +210,11 @@ export default function MembersPage() {
             </div>
             <Link
               href="/chat?keeper=1"
-              className="ml-14 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-sm font-bold text-emerald-700 shadow-sm ring-1 ring-emerald-100 transition hover:bg-emerald-100 active:bg-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-200 min-[430px]:ml-0"
+              className="ml-14 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-sm font-bold text-emerald-700 shadow-none ring-1 ring-emerald-100 transition hover:bg-emerald-100 active:bg-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-200 min-[430px]:ml-0"
               aria-label={t("keeperTalk")}
               title={t("keeperTalk")}
             >
-              係
+              <HomeIcon className="h-8 w-8" aria-hidden="true" />
             </Link>
           </li>
           {members.map((m) => (
@@ -260,16 +257,12 @@ export default function MembersPage() {
                 <div className="ml-14 flex min-w-0 flex-wrap items-center gap-2 min-[430px]:ml-0 min-[430px]:shrink-0">
                   <Link
                     href={`/chat?whisper=${encodeURIComponent(m.id)}`}
-                    className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-50 p-2 shadow-sm ring-1 ring-violet-100 transition hover:bg-violet-100 active:bg-violet-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-200"
+                    className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-violet-50 p-2 shadow-none ring-1 ring-violet-100 transition hover:bg-violet-100 active:bg-violet-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-200"
                     aria-label={`${t("membersSendWhisper")} ${m.nickname}`}
                     title={`${t("membersSendWhisper")} ${m.nickname}`}
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src="/ui-icons/whisper-lock.png"
-                      alt=""
-                      className="h-full w-full rounded-md object-contain"
-                    />
+                    <LockClosedIcon className="tool-icon text-violet-700" aria-hidden="true" />
                   </Link>
                   {session?.is_admin ? (
                     <button

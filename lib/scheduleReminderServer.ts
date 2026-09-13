@@ -7,6 +7,7 @@ import {
   isGonePushError,
   pushErrorStatus,
   toWebPushSubscription,
+  WEB_PUSH_DELIVERY_OPTIONS,
   type StoredPushSubscription,
 } from "@/lib/webPushServer";
 
@@ -325,9 +326,11 @@ async function sendSchedulePush(
   });
 
   try {
-    await getWebPush().sendNotification(toWebPushSubscription(sub), payload, {
-      TTL: 60 * 60,
-    });
+    await getWebPush().sendNotification(
+      toWebPushSubscription(sub),
+      payload,
+      WEB_PUSH_DELIVERY_OPTIONS,
+    );
     return { status: "sent" };
   } catch (error) {
     if (isGonePushError(error)) return { status: "gone" };

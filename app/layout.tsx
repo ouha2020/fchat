@@ -26,7 +26,7 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
-  themeColor: "#4f6cf7",
+  themeColor: "#f8f7f3",
 };
 
 export default function RootLayout({
@@ -37,7 +37,7 @@ export default function RootLayout({
   return (
     <html lang="zh-CN">
       <body>
-        <div className="mx-auto flex min-h-screen w-full max-w-3xl flex-col bg-slate-50">
+        <div className="mx-auto flex min-h-screen w-full max-w-3xl flex-col bg-canvas">
           <LanguageProvider>
             <ToastProvider>
               <DialogProvider>

@@ -11,6 +11,7 @@ import {
   getWebPush,
   isGonePushError,
   toWebPushSubscription,
+  WEB_PUSH_DELIVERY_OPTIONS,
   type StoredPushSubscription,
 } from "@/lib/webPushServer";
 
@@ -124,7 +125,7 @@ export async function sendScheduleCollaborationPush(input: NotifyInput) {
           scheduleItemId: item.id,
           tag: `family-schedule-collaboration-${item.id}-${input.eventType}`,
         }),
-        { TTL: 60 * 60 },
+        WEB_PUSH_DELIVERY_OPTIONS,
       );
       sent += 1;
       sentSubscriptionIds.push(sub.id);

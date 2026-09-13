@@ -1,5 +1,8 @@
 "use client";
 
+import { ArrowLeftIcon, ChevronLeftIcon, ChevronRightIcon, XMarkIcon } from "@heroicons/react/24/outline";
+import { CalendarDaysIcon, MapPinIcon, LockClosedIcon, PlusIcon, MicrophoneIcon } from "@/components/ui/FamilyIcons";
+
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -121,8 +124,7 @@ const VISIBILITY_FILTERS: ScheduleVisibilityFilter[] = [
 ];
 const SCHEDULE_MAX_RECORD_MS = 60_000;
 const SCHEDULE_MIN_RECORD_MS = 600;
-const SCHEDULE_COMPOSER_ICON_BUTTON_CLASS =
-  "native-press inline-flex h-10 w-10 shrink-0 overflow-hidden rounded-[14px] bg-white bg-cover bg-center bg-no-repeat shadow-sm ring-1 ring-slate-200 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200";
+const SCHEDULE_COMPOSER_ICON_BUTTON_CLASS = "tool-icon-button native-press";
 
 export default function SchedulePage() {
   const router = useRouter();
@@ -1104,13 +1106,13 @@ export default function SchedulePage() {
       <header className="mb-3 flex items-center gap-3">
         <Link
           href="/chat"
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-white text-lg font-semibold text-brand-600 shadow-sm ring-1 ring-slate-100"
+          className="tool-icon-button !bg-white"
           aria-label={t("commonBackToChat")}
         >
-          ←
+          <ArrowLeftIcon className="tool-icon" aria-hidden="true" />
         </Link>
         <div className="min-w-0 flex-1">
-          <h1 className="truncate text-xl font-bold text-slate-950">
+          <h1 className="page-title truncate">
             {t("scheduleTitle")}
           </h1>
           <p className="mt-0.5 truncate text-xs text-slate-500">
@@ -1120,18 +1122,9 @@ export default function SchedulePage() {
             })}
           </p>
         </div>
-      </header>
-
-      <div
-        className={
-          filtersOpen
-            ? "schedule-fab-shell schedule-fab-shell-hidden"
-            : "schedule-fab-shell"
-        }
-      >
         <button
           type="button"
-          className="schedule-fab-button"
+          className={`tool-icon-button ${filtersOpen ? "invisible" : ""}`}
           aria-label={showForm ? t("commonCancel") : t("scheduleNew")}
           title={showForm ? t("commonCancel") : t("scheduleNew")}
           onClick={() => {
@@ -1142,9 +1135,9 @@ export default function SchedulePage() {
             handleQuickAdd(selectedDate);
           }}
         >
-          {showForm ? "×" : "+"}
+          {showForm ? <XMarkIcon className="tool-icon" aria-hidden="true" /> : <PlusIcon className="h-8 w-8" aria-hidden="true" />}
         </button>
-      </div>
+      </header>
 
       <MyTodaySection
         items={myOpenTodayItems}
@@ -2590,7 +2583,6 @@ function ScheduleDetailPanel({
                         <button
                           type="button"
                           className={SCHEDULE_COMPOSER_ICON_BUTTON_CLASS}
-                          style={{ backgroundImage: "url(/ui-icons/location.png)" }}
                           aria-label={t("inputSendLocation")}
                           title={t("inputSendLocation")}
                           role="menuitem"
@@ -2600,13 +2592,10 @@ function ScheduleDetailPanel({
                             setWhisperPickerOpen(false);
                             void onAddLocation();
                           }}
-                        />
+                        ><MapPinIcon className="h-8 w-8" aria-hidden="true" /></button>
                         <button
                           type="button"
                           className={SCHEDULE_COMPOSER_ICON_BUTTON_CLASS}
-                          style={{
-                            backgroundImage: "url(/ui-icons/whisper-lock.png)",
-                          }}
                           aria-label={t("inputWhisper")}
                           title={
                             canPickWhisper
@@ -2629,7 +2618,7 @@ function ScheduleDetailPanel({
                             }
                             onContextVisibilityChange("private");
                           }}
-                        />
+                        ><LockClosedIcon className="h-8 w-8" aria-hidden="true" /></button>
                       </div>
                     ) : null}
                     {whisperPickerOpen ? (
@@ -2640,13 +2629,7 @@ function ScheduleDetailPanel({
                         aria-label={t("inputWhisperPick")}
                       >
                         <div className="flex items-center gap-2 border-b border-violet-50 px-3 py-2 text-sm font-semibold text-violet-800">
-                          <span
-                            aria-hidden="true"
-                            className="h-5 w-5 shrink-0 rounded-md bg-cover bg-center"
-                            style={{
-                              backgroundImage: "url(/ui-icons/whisper-lock.png)",
-                            }}
-                          />
+                          <LockClosedIcon className="h-5 w-5 shrink-0" aria-hidden="true" />
                           <span>{t("inputWhisperPick")}</span>
                         </div>
                         <div className="native-scroll max-h-48 overflow-y-auto p-2">
@@ -2727,7 +2710,6 @@ function ScheduleDetailPanel({
                             ? "ring-2 ring-brand-200"
                             : ""
                         }`}
-                        style={{ backgroundImage: "url(/ui-icons/plus.png)" }}
                         aria-label={t("scheduleRecordOptions")}
                         title={t("scheduleRecordOptions")}
                         aria-haspopup="menu"
@@ -2741,13 +2723,12 @@ function ScheduleDetailPanel({
                           setWhisperPickerOpen(false);
                           setComposerOptionsOpen((open) => !open);
                         }}
-                      />
+                      ><PlusIcon className="h-8 w-8" aria-hidden="true" /></button>
                       <button
                         type="button"
                         className={`${SCHEDULE_COMPOSER_ICON_BUTTON_CLASS} ${
                           recordingActive ? "ring-2 ring-brand-300" : ""
                         }`}
-                        style={{ backgroundImage: "url(/ui-icons/voice.png)" }}
                         aria-label={
                           recordingActive
                             ? t("inputStopRecording")
@@ -2768,7 +2749,7 @@ function ScheduleDetailPanel({
                           recordingPointerHeldRef.current = false;
                           if (recordingActive) void stopScheduleRecording(false);
                         }}
-                      />
+                      ><MicrophoneIcon className="h-8 w-8" aria-hidden="true" /></button>
                       <textarea
                         ref={commentInputRef}
                         className="field max-h-32 min-h-[44px] flex-1 resize-none rounded-[18px] border-slate-200 bg-slate-50/80 py-3 shadow-none focus:border-brand-300 focus:bg-white"
@@ -2793,7 +2774,7 @@ function ScheduleDetailPanel({
                       />
                       <button
                         type="button"
-                        className="btn-primary native-press h-10 shrink-0 rounded-[16px] px-4 shadow-[0_10px_18px_rgba(79,108,247,0.22)]"
+                        className="btn-primary native-press h-10 shrink-0 rounded-[16px] px-4 shadow-none"
                         disabled={sendDisabled}
                         onClick={() => {
                           setComposerOptionsOpen(false);
@@ -2938,11 +2919,7 @@ function ScheduleLocationBubble({
       className="flex min-w-40 max-w-full flex-col gap-1 no-underline sm:max-w-56"
     >
       <span className="flex items-center gap-1.5 text-sm font-semibold">
-        <span
-          aria-hidden="true"
-          className="h-4 w-4 shrink-0 rounded-md bg-cover bg-center"
-          style={{ backgroundImage: "url(/ui-icons/location.png)" }}
-        />
+        <MapPinIcon className="h-5 w-5" aria-hidden="true" />
         <span>{t("messageLocationTitle")}</span>
       </span>
       <span
@@ -2954,7 +2931,7 @@ function ScheduleLocationBubble({
       </span>
       <span
         className={`text-xs font-medium leading-5 ${
-          isMine ? "text-brand-100" : "text-brand-500"
+          isMine ? "text-brand-100" : "text-brand-700"
         }`}
       >
         {t("messageOpenMap")}
@@ -3316,15 +3293,15 @@ function ScheduleRangeControl({
   const holiday = viewMode !== "month" ? getJapanHoliday(selectedDate) : null;
 
   return (
-    <section className="mb-3 rounded-[22px] bg-white/95 p-2.5 shadow-sm ring-1 ring-slate-100">
+    <section className="mb-3">
       <div className="grid grid-cols-3 gap-1 rounded-2xl bg-slate-100/80 p-1">
         {VIEW_MODES.map((mode) => (
           <button
             key={mode}
             type="button"
-            className={`h-9 rounded-xl text-sm font-semibold transition ${
+            className={`min-h-11 rounded-xl text-sm font-semibold transition ${
               viewMode === mode
-                ? "bg-white text-brand-700 shadow-sm ring-1 ring-white/80"
+                ? "bg-brand-100 text-brand-950 ring-1 ring-brand-200"
                 : "text-slate-600 hover:bg-white/70"
             }`}
             onClick={() => onViewModeChange(mode)}
@@ -3336,18 +3313,18 @@ function ScheduleRangeControl({
       <div className="mt-2 flex items-center gap-2">
         <button
           type="button"
-          className="native-press flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-slate-50 text-lg font-semibold text-slate-600 ring-1 ring-slate-200 transition hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+          className="tool-icon-button !bg-white"
           aria-label={t("schedulePrevious")}
           onClick={onPrevious}
         >
-          ‹
+          <ChevronLeftIcon className="tool-icon" aria-hidden="true" />
         </button>
         <button
           type="button"
-          className="native-press flex min-h-10 min-w-0 flex-1 items-center justify-between gap-2 rounded-2xl bg-gradient-to-r from-slate-50 to-white px-3 py-2 text-left ring-1 ring-slate-200 transition hover:from-white hover:to-brand-50/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+          className="native-press flex min-h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-xl px-2 py-2 text-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
           onClick={onToday}
         >
-          <span className="min-w-0 flex-1 truncate text-sm font-bold text-slate-900">
+          <span className="min-w-0 flex-1 truncate text-lg font-bold text-slate-900">
             {rangeTitle(viewMode, selectedDate, language)}
           </span>
           <span className="flex shrink-0 items-center gap-1.5">
@@ -3361,11 +3338,11 @@ function ScheduleRangeControl({
         </button>
         <button
           type="button"
-          className="native-press flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-slate-50 text-lg font-semibold text-slate-600 ring-1 ring-slate-200 transition hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+          className="tool-icon-button !bg-white"
           aria-label={t("scheduleNext")}
           onClick={onNext}
         >
-          ›
+          <ChevronRightIcon className="tool-icon" aria-hidden="true" />
         </button>
       </div>
     </section>
@@ -3563,6 +3540,15 @@ function MyTodaySection({
   onSelectToday: () => void;
   onOpen: (itemId: string) => void;
 }) {
+  if (items.length === 0) {
+    return (
+      <section className="mb-4 flex min-h-[64px] items-center gap-3 rounded-[18px] bg-white px-4 py-3">
+        <CalendarDaysIcon className="h-8 w-8" aria-hidden="true" />
+        <p className="min-w-0 flex-1 text-sm font-medium text-slate-700">{t("scheduleMyTodayEmpty")}</p>
+        <button type="button" className="btn-ghost shrink-0 px-2" onClick={onSelectToday}>{t("scheduleTodayButton")}</button>
+      </section>
+    );
+  }
   const preview = items.slice(0, 2);
   const extraCount = Math.max(0, items.length - preview.length);
 
@@ -3818,12 +3804,12 @@ function scheduleToneClasses(item: ScheduleItem): ScheduleToneClasses {
       };
     default:
       return {
-        accent: "bg-cyan-500",
-        badge: "bg-cyan-50 text-cyan-700 ring-cyan-100",
-        cardRing: "ring-slate-100 hover:ring-cyan-100",
-        dot: "bg-cyan-500",
-        monthChip: "bg-cyan-500 text-white ring-cyan-200",
-        time: "text-cyan-700",
+        accent: "bg-brand-500",
+        badge: "bg-brand-50 text-brand-700 ring-brand-100",
+        cardRing: "ring-slate-100 hover:ring-brand-100",
+        dot: "bg-brand-500",
+        monthChip: "bg-brand-100 text-brand-950 ring-brand-200",
+        time: "text-brand-700",
       };
   }
 }
@@ -3843,7 +3829,7 @@ function dayNumberClass({
 }): string {
   const base =
     "inline-flex h-5 min-w-5 items-center justify-center rounded-[5px] px-1 text-[11px] font-bold leading-5";
-  if (isSelected) return `${base} bg-brand-500 text-white`;
+  if (isSelected) return `${base} bg-brand-500 text-brand-950`;
   if (isToday) return `${base} bg-amber-100 text-amber-700 ring-1 ring-amber-200`;
   if (!isCurrentMonth) return `${base} text-slate-300`;
   if (isHoliday) return `${base} bg-rose-50 text-rose-600 ring-1 ring-rose-100`;

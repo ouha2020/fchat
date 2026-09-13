@@ -102,19 +102,19 @@ export default function HomePage() {
             <div className="grid grid-cols-2 gap-2.5">
               <button
                 type="button"
-                className="native-press flex min-h-[4.25rem] w-full touch-manipulation flex-col items-center justify-center rounded-[18px] bg-[#5f934e] px-3 text-center text-lg font-bold leading-6 text-white shadow-[0_10px_22px_rgba(79,126,61,0.2),inset_0_1px_0_rgba(255,255,255,0.3)] transition hover:bg-[#538544] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c8deb5] disabled:cursor-not-allowed disabled:opacity-60"
+                className="native-press flex min-h-[4.25rem] w-full touch-manipulation flex-col items-center justify-center rounded-[18px] bg-brand-500 px-3 text-center text-lg font-bold leading-6 text-brand-950 shadow-none transition hover:bg-brand-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
                 disabled={busy}
                 onClick={handleCreateFamily}
               >
                 <span>创建家庭</span>
-                <span className="mt-0.5 text-xs font-semibold text-white/78">
+                <span className="mt-0.5 text-xs font-semibold text-brand-950">
                   注册邮箱
                 </span>
               </button>
 
               <Link
                 href="/join"
-                className="native-press flex min-h-[4.25rem] w-full touch-manipulation flex-col items-center justify-center rounded-[18px] border border-[#b9d1a7] bg-white/78 px-3 text-center text-lg font-bold leading-6 text-[#445f37] shadow-[inset_0_1px_0_rgba(255,255,255,0.86),0_8px_18px_rgba(96,82,54,0.07)] transition hover:bg-[#f5f9ef] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c8deb5]"
+                className="native-press flex min-h-[4.25rem] w-full touch-manipulation flex-col items-center justify-center rounded-[18px] border border-[#b9d1a7] bg-white/78 px-3 text-center text-lg font-bold leading-6 text-[#445f37] shadow-[inset_0_1px_0_rgba(255,255,255,0.86),0_8px_18px_rgba(96,82,54,0.07)] transition hover:bg-[#f5f9ef] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
               >
                 <span>加入家庭</span>
                 <span className="mt-0.5 text-xs font-semibold text-[#7a775f]">
@@ -125,7 +125,7 @@ export default function HomePage() {
             <div className="mt-3 flex min-h-9 items-center justify-center gap-3 text-sm font-medium leading-5 text-[#7a6c58]">
               <span>已有账号？</span>
               <Link
-                className="font-semibold text-[#5f934e] underline underline-offset-4"
+                className="font-semibold text-brand-700 underline underline-offset-4"
                 href="/login"
               >
                 登录
@@ -134,7 +134,7 @@ export default function HomePage() {
                 |
               </span>
               <Link
-                className="text-[#7a6c58] underline-offset-4 hover:text-[#5f934e] hover:underline"
+                className="text-[#7a6c58] underline-offset-4 hover:text-brand-700 hover:underline"
                 href="/forgot-password"
               >
                 忘记密码

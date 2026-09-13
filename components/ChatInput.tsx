@@ -1,5 +1,8 @@
 "use client";
 
+
+import { HomeIcon, PhotoIcon, MapPinIcon, LockClosedIcon, PlusIcon, MicrophoneIcon } from "@/components/ui/FamilyIcons";
+
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
@@ -59,8 +62,7 @@ const CONSENT_KEY = "family-chat:voice-recording-consent:v1";
 const POPOVER_VIEWPORT_MARGIN = 8;
 const POPOVER_MAX_HEIGHT = 320;
 const POPOVER_MIN_HEIGHT = 72;
-const iconButtonClass =
-  "native-icon-button native-press inline-flex h-10 w-10 shrink-0 overflow-hidden rounded-[14px] bg-white bg-cover bg-center bg-no-repeat ring-1 ring-white/80 hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200";
+const iconButtonClass = "tool-icon-button native-press";
 const inputShellClass =
   "native-input-bar relative z-50 mx-auto min-h-[61px] w-full max-w-3xl shrink-0 overflow-visible border-t border-white/70";
 
@@ -621,7 +623,7 @@ export default function ChatInput({
             </button>
             <button
               type="button"
-              className="btn-primary native-press h-10 px-4 text-sm shadow-[0_10px_18px_rgba(79,108,247,0.2)]"
+              className="btn-primary native-press h-10 px-4 text-sm shadow-none"
               onClick={() => void retrySend()}
             >
               {t("inputRetryAudioSend")}
@@ -651,28 +653,28 @@ export default function ChatInput({
           <button
             type="button"
             className={iconButtonClass}
-            style={{ backgroundImage: "url(/ui-icons/image.png)" }}
+
             aria-label={t("inputSendImage")}
             title={t("inputSendImage")}
             role="menuitem"
             disabled={disabled || sending}
             onClick={handlePickImage}
-          />
+          ><PhotoIcon className="h-8 w-8" aria-hidden="true" /></button>
           <button
             type="button"
             className={iconButtonClass}
-            style={{ backgroundImage: "url(/ui-icons/location.png)" }}
+
             aria-label={t("inputSendLocation")}
             title={t("inputSendLocation")}
             role="menuitem"
             disabled={disabled || sending}
             onClick={handleSendLocation}
-          />
+          ><MapPinIcon className="h-8 w-8" aria-hidden="true" /></button>
           <button
             ref={whisperButtonRef}
             type="button"
             className={iconButtonClass}
-            style={{ backgroundImage: "url(/ui-icons/whisper-lock.png)" }}
+
             aria-label={t("inputWhisper")}
             title={canPickWhisper ? t("inputWhisper") : t("inputWhisperNoMembers")}
             role="menuitem"
@@ -683,11 +685,11 @@ export default function ChatInput({
             }
             disabled={disabled || sending || !canPickWhisper}
             onClick={handleOpenWhisperPicker}
-          />
+          ><LockClosedIcon className="h-8 w-8" aria-hidden="true" /></button>
           {onOpenKeeper ? (
             <button
               type="button"
-              className="native-icon-button native-press inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-[14px] bg-emerald-50 text-sm font-black text-emerald-700 ring-1 ring-white/80 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-200"
+              className="tool-icon-button native-press"
               aria-label={t("keeperTalk")}
               title={t("keeperTalk")}
               role="menuitem"
@@ -698,7 +700,7 @@ export default function ChatInput({
                 onOpenKeeper();
               }}
             >
-              家
+              <HomeIcon className="h-8 w-8" aria-hidden="true" />
             </button>
           ) : null}
         </div>
@@ -714,11 +716,7 @@ export default function ChatInput({
           aria-label={t("inputWhisperPick")}
         >
           <div className="flex items-center gap-2 border-b border-violet-50 px-3 py-2 text-sm font-semibold text-violet-800">
-            <span
-              aria-hidden
-              className="h-5 w-5 shrink-0 rounded-md bg-cover bg-center"
-              style={{ backgroundImage: "url(/ui-icons/whisper-lock.png)" }}
-            />
+            <LockClosedIcon className="h-5 w-5 shrink-0" aria-hidden="true" />
             <span className="truncate">{t("inputWhisperPick")}</span>
           </div>
           <div className="native-scroll chat-input-whisper-list">
@@ -776,7 +774,7 @@ export default function ChatInput({
           ref={moreButtonRef}
           type="button"
           className={iconButtonClass}
-          style={{ backgroundImage: "url(/ui-icons/plus.png)" }}
+
           aria-label={t("inputMoreActions")}
           title={t("inputMoreActions")}
           disabled={disabled || sending}
@@ -787,13 +785,12 @@ export default function ChatInput({
             setWhisperPickerOpen(false);
             setActionsOpen((open) => !open);
           }}
-        />
+        ><PlusIcon className="h-8 w-8" aria-hidden="true" /></button>
         <button
           ref={voiceButtonRef}
           type="button"
           className={iconButtonClass}
           style={{
-            backgroundImage: "url(/ui-icons/voice.png)",
             touchAction: "none",
           }}
           aria-label={t("inputRecordVoice")}
@@ -802,10 +799,11 @@ export default function ChatInput({
           onPointerDown={(e) => {
             void handleVoicePointerDown(e);
           }}
-        />
+        ><MicrophoneIcon className="h-8 w-8" aria-hidden="true" /></button>
         <textarea
           rows={1}
-          className="field max-h-32 min-h-[44px] flex-1 resize-none rounded-[18px] border-[#dedbd2] bg-white/95 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_5px_14px_rgba(71,64,49,0.05)] focus:border-brand-300"
+          className="field max-h-32 min-h-[44px] flex-1 resize-none rounded-xl border-stone-200 bg-white/95 py-3 shadow-none focus:border-brand-300"
+          aria-label={keeperMode ? t("keeperInputPlaceholder") : t("inputPlaceholder")}
           placeholder={keeperMode ? t("keeperInputPlaceholder") : t("inputPlaceholder")}
           value={text}
           disabled={disabled}
@@ -820,7 +818,7 @@ export default function ChatInput({
         />
         <button
           type="button"
-          className="btn-primary native-press h-10 rounded-[16px] px-4 shadow-[0_10px_18px_rgba(79,108,247,0.22)]"
+          className="btn-primary native-press min-h-11 rounded-xl px-3 shadow-none"
           disabled={disabled || sending || !text.trim()}
           onClick={() => void submit()}
         >

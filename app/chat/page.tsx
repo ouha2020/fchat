@@ -1,5 +1,8 @@
 "use client";
 
+
+import { HomeIcon, CalendarDaysIcon, UsersIcon, UserIcon, LockClosedIcon } from "@/components/ui/FamilyIcons";
+
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -28,7 +31,6 @@ import {
 import {
   isAssistantCreateDraft,
   parseAssistantIntents,
-  type ParsedAssistantIntent,
   type ScheduleLookupIntent,
 } from "@/lib/assistantIntentParser";
 import {
@@ -139,8 +141,7 @@ const MESSAGE_ACTION_MENU_MARGIN = 8;
 const MESSAGE_ACTION_MENU_FALLBACK_WIDTH = 176;
 const MESSAGE_ACTION_MENU_FALLBACK_HEIGHT = 220;
 const MESSAGE_ACTION_MENU_MIN_VISIBLE_HEIGHT = 112;
-const chatHeaderIconClass =
-  "native-icon-button native-press inline-flex h-11 w-11 shrink-0 overflow-hidden rounded-[15px] bg-white bg-cover bg-center bg-no-repeat ring-1 ring-white/80 hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200";
+const chatHeaderIconClass = "tool-icon-button !bg-transparent native-press";
 const chatActionMenuButtonClass =
   "block min-h-11 w-full whitespace-normal break-words px-4 py-2.5 text-left text-sm font-medium leading-5 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset";
 
@@ -471,21 +472,6 @@ function assistantDraftFromText(text: string): string | null {
   return trimmed.slice(trigger.length).replace(/^[\s,，、。:：]+/, "").trim();
 }
 
-function shouldKeepAssistantDraftPrivate(
-  draft: ParsedAssistantIntent | null,
-): boolean {
-  if (!draft) return false;
-  if ("reason" in draft && draft.reason === "schedule_lookup") return true;
-  if (!isAssistantCreateDraft(draft) || draft.reason) return false;
-  return [
-    "reminder",
-    "schedule",
-    "todo",
-    "schedule_update",
-    "schedule_cancel",
-  ].includes(draft.card_type);
-}
-
 function buildScheduleChangeCardInput(
   item: ScheduleItem,
   lookup: ScheduleLookupIntent,
@@ -612,7 +598,7 @@ function AssistantReplyPendingBubble() {
   const { t } = useLanguage();
   return (
     <div className="flex w-full gap-2 py-1" aria-live="polite">
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-sm font-semibold text-emerald-700 shadow-sm ring-1 ring-white/80 sm:h-9 sm:w-9 sm:text-base">
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-100 text-sm font-semibold text-brand-700 shadow-sm ring-1 ring-white/80 sm:h-9 sm:w-9 sm:text-base">
         家
       </div>
       <div className="flex min-w-0 max-w-[78%] flex-col items-start gap-1 sm:max-w-md">
@@ -625,13 +611,13 @@ function AssistantReplyPendingBubble() {
           <div className="flex items-center gap-2">
             <span className="font-medium">{t("assistantThinking")}</span>
             <span className="flex items-center gap-1" aria-hidden>
-              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-emerald-400 [animation-delay:-0.2s]" />
-              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-emerald-400 [animation-delay:-0.1s]" />
-              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-emerald-400" />
+              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand-400 [animation-delay:-0.2s]" />
+              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand-400 [animation-delay:-0.1s]" />
+              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand-400" />
             </span>
           </div>
           <div className="mt-4 space-y-2" aria-hidden>
-            <span className="block h-2 w-28 animate-pulse rounded-full bg-emerald-100" />
+            <span className="block h-2 w-28 animate-pulse rounded-full bg-brand-100" />
             <span className="block h-2 w-20 animate-pulse rounded-full bg-slate-100" />
             <span className="block h-8 w-32 animate-pulse rounded-full bg-slate-50 ring-1 ring-slate-100" />
           </div>
@@ -701,7 +687,7 @@ function ChatEmptyState() {
       className="mx-auto flex w-full max-w-xs flex-col items-center justify-center px-5 py-10 text-center"
       role="status"
     >
-      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white/90 text-base font-black text-emerald-700 shadow-sm ring-1 ring-white/80">
+      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white/90 text-base font-black text-brand-700 shadow-sm ring-1 ring-white/80">
         家
       </div>
       <p className="mt-3 text-sm font-semibold leading-6 text-slate-600">
@@ -2886,7 +2872,7 @@ export default function ChatPage() {
     const assistantText = keeperMode ? text.trim() : explicitAssistantText ?? text;
     const latestTarget = latestOrdinaryVisibleMessage(messagesRef.current);
     const assistantDrafts =
-      !whisperTarget && assistantText.trim()
+      isAssistantAddressed && assistantText.trim()
         ? parseAssistantIntents(assistantText, {
             members: membersRef.current,
             currentMemberId: session.member_id,
@@ -2894,12 +2880,10 @@ export default function ChatPage() {
           })
         : [];
     const assistantDraft = assistantDrafts[0] ?? null;
-    const keepAssistantDraftPrivate =
-      !whisperTarget && shouldKeepAssistantDraftPrivate(assistantDraft);
 
     setSending(true);
     try {
-      if (isAssistantAddressed || keepAssistantDraftPrivate) {
+      if (isAssistantAddressed) {
         if (!assistantText.trim()) {
           toast.info(t("assistantNeedTimeExample"));
           return false;
@@ -2975,43 +2959,6 @@ export default function ChatPage() {
       });
       requestMessagePush(session, id);
       tryTriggerEffect(id, eff);
-      if (assistantDraft?.reason === "schedule_lookup") {
-        await runAssistantReplyAfterPause(id, async () => {
-          try {
-            await createScheduleChangeAssistantCard(id, assistantDraft.scheduleLookup);
-          } catch (assistantErr) {
-            toast.error(
-              t("assistantCreateFailed", {
-                message: humanizeError(assistantErr, language),
-              }),
-            );
-          }
-        });
-      } else if (assistantDraft?.reason === "missing_time") {
-        toast.info(t("assistantNeedTimeExample"));
-      } else if (assistantDraft?.reason === "missing_target") {
-        toast.info(t("assistantNeedTarget"));
-      } else if (isAssistantCreateDraft(assistantDraft)) {
-        await runAssistantReplyAfterPause(id, async () => {
-          try {
-            const createDrafts = assistantDrafts
-              .filter(isAssistantCreateDraft)
-              .filter((draft) => !draft.reason);
-            const drafts = createDrafts.length > 0 ? createDrafts : [assistantDraft];
-            await createAssistantDraftBatch(drafts, id);
-          } catch (assistantErr) {
-            toast.error(
-              t("assistantCreateFailed", {
-                message: humanizeError(assistantErr, language),
-              }),
-            );
-          }
-        });
-        if (keeperMode) {
-          setKeeperMode(false);
-          removeKeeperParamFromUrl();
-        }
-      }
       return true;
     } catch (err) {
       toast.error(humanizeError(err, language));
@@ -3439,7 +3386,7 @@ export default function ChatPage() {
         onSubmit={handleCreateKeeperRequest}
       />
       <header
-        className="relative z-20 flex min-h-[60px] items-center justify-between gap-2 border-b border-white/70 bg-white/[0.86] px-3 py-2 shadow-[0_8px_22px_rgba(62,56,44,0.06)] backdrop-blur-xl sm:px-5"
+        className="relative z-20 flex min-h-[64px] items-center justify-between gap-2 border-b border-stone-100 bg-white px-4 py-2 sm:px-5"
         onDoubleClick={handleHeaderDoubleClick}
         onTouchEnd={handleHeaderTouchEnd}
       >
@@ -3453,11 +3400,12 @@ export default function ChatPage() {
           <Link
             href="/schedule"
             className={`${chatHeaderIconClass} relative`}
-            style={{ backgroundImage: "url(/ui-icons/schedule.png)" }}
+
             aria-label={t("scheduleTitle")}
             title={t("scheduleTitle")}
             onClick={clearScheduleAttention}
           >
+            <CalendarDaysIcon className="h-8 w-8" aria-hidden="true" />
             {scheduleAttentionDot ? (
               <span
                 aria-hidden="true"
@@ -3468,18 +3416,13 @@ export default function ChatPage() {
           <Link
             href="/members"
             className={chatHeaderIconClass}
-            style={{ backgroundImage: "url(/ui-icons/members.png)" }}
+
             aria-label={t("chatMembers")}
             title={t("chatMembers")}
-          />
+          ><UsersIcon className="h-8 w-8" aria-hidden="true" /></Link>
           <Link
             href="/me"
             className={chatHeaderIconClass}
-            style={
-              currentAvatarUrl
-                ? undefined
-                : { backgroundImage: "url(/ui-icons/me.png)" }
-            }
             aria-label={t("meTitle")}
             title={t("meTitle")}
           >
@@ -3491,7 +3434,7 @@ export default function ChatPage() {
                 className="h-full w-full object-cover"
                 draggable={false}
               />
-            ) : null}
+            ) : <UserIcon className="h-8 w-8" aria-hidden="true" />}
           </Link>
         </div>
       </header>
@@ -3608,17 +3551,17 @@ export default function ChatPage() {
       <div ref={chatComposerRef} className="relative z-40 shrink-0">
       {keeperMode && !whisperTarget ? (
         <div
-          className="mx-auto flex h-10 w-full max-w-3xl items-center justify-between gap-2 border-t border-emerald-100/70 bg-emerald-50/90 px-3 text-sm text-emerald-800 shadow-[0_-10px_24px_rgba(47,83,67,0.08)] backdrop-blur-xl sm:px-4"
+          className="mx-auto flex h-10 w-full max-w-3xl items-center justify-between gap-2 border-t border-brand-100/70 bg-brand-50/90 px-3 text-sm text-brand-950 shadow-none backdrop-blur-xl sm:px-4"
         >
           <div className="flex min-w-0 items-center gap-2">
-            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white text-xs font-black text-emerald-700 ring-1 ring-emerald-100">
-              家
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white text-xs font-black text-brand-700 ring-1 ring-brand-100">
+              <HomeIcon className="h-4 w-4" aria-hidden="true" />
             </span>
             <span className="truncate font-semibold">{t("keeperModeLabel")}</span>
           </div>
           <button
             type="button"
-            className="native-press shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-200"
+            className="native-press shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold text-brand-700 hover:bg-brand-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
             onClick={exitKeeperMode}
           >
             {t("whisperExit")}
@@ -3630,11 +3573,7 @@ export default function ChatPage() {
         >
           <div className="flex min-w-0 items-center gap-2">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/ui-icons/whisper-lock.png"
-              alt=""
-              className="h-5 w-5 shrink-0 rounded-md"
-            />
+            <LockClosedIcon className="h-5 w-5 shrink-0" aria-hidden="true" />
             <span className="truncate font-semibold">
               {t("whisperModeLabel", { nickname: whisperTarget.nickname })}
             </span>

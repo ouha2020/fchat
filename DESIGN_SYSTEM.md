@@ -1,6 +1,6 @@
 # DESIGN_SYSTEM.md — 当前设计系统基线
 
-本文档记录当前 UI refactor 的设计系统基线。现阶段只描述和约束，不进行视觉重设计。代码级来源仍是 `tailwind.config.ts`、`app/globals.css`、`components/` 与各页面现有 Tailwind class。
+本文档记录当前 UI refactor 的设计系统基线。当前执行用户于 2026-09-13 确认的新芽绿视觉统一。代码级来源仍是 `tailwind.config.ts`、`app/globals.css`、`components/` 与各页面现有 Tailwind class。
 
 ## 技术基线
 
@@ -9,7 +9,7 @@
 - React：React 18，客户端页面大量使用 `"use client"`。
 - Styling：Tailwind CSS 3 + `app/globals.css` 全局语义类。
 - Package manager：npm，锁文件为 `package-lock.json`。
-- Icon / asset：无 lucide、heroicons、react-icons 依赖；当前图标资产位于 `public/ui-icons/`。
+- Icon / asset：新增 Heroicons 24px outline 系统图标，按需导入；已有角色/欢迎插画及头像继续保留。
 - Component library：无外部 UI 组件库；现有组件为本仓库自研。
 
 ## 样式来源
@@ -20,7 +20,7 @@
 
 ## 色彩
 
-- 主色：`brand-500 #4f6cf7`，用于主按钮、链接、主要强调。
+- 主色：`brand-500 #b5de75`，用于主按钮和选中态，必须搭配 `brand-950 #293d1d` 深色文字；链接/焦点使用深绿色，不能把浅绿用于正文。
 - 主色深浅：`brand-50` 到 `brand-700`，用于背景、焦点、hover、active。
 - 中性色：以 Tailwind `slate` 为主，用于文本、边框、页面背景。
 - 情绪/状态色：
@@ -332,3 +332,17 @@
 - 新增设计 token 或语义类必须能解释清楚复用场景。
 - 不在同一轮里同时做视觉重设计和业务流调整。
 - 每次 UI 迭代后更新 `docs/iteration-log/_latest.md`。
+
+## 2026-09-13 用户确认：新芽绿统一
+
+- 视觉依据：本轮选定的三屏新芽绿细化样板，保留真实业务结构、状态和权限，不复制假数据或无权限入口。
+- 暖白背景 #f8f7f3；内容白色；新芽绿 #b5de75；浅选中态 #eaf5d5；深文字 #293d1d。
+- 控件 44px 起，圆角12px；内容面18px；抽屉24px；间距8/12/16/24px。
+- 系统线性图标采用 Heroicons 24 outline：先设置/成员导航，再聊天工具，再日程；保留 aria 名称与触控区。替换清单由各轮日志记录，回滚只恢复对应 JSX 图标和样式。图标库按命名导入，禁止整库动态渲染。
+- 这一用户确认的迁移取代上文禁止混入线性图标的旧基线；品牌图/用户头像不替换。
+- 普通日程分类采用浅新芽绿和深字；提醒 amber、任务 violet、私密 fuchsia/锁、危险 rose 保留语义。
+- 同一批次只修改视觉层；每个小任务检查后继续。不得更改身份、RPC、消息/日程数据流、Push 或 SW。
+
+- 用户追加确认：家庭主题入口使用 Imagegen 生成的花园彩色轻立体图标（珊瑚粉/奶油黄/淡紫/浅蓝，绿色仅点缀）（home/calendar/members/profile），通过 FamilyIcons 复用。返回、发送、录音、锁等操作仍使用清晰线性图标；不替换用户头像。
+
+- 用户指出工具栏遗漏后，图片、位置、悄悄话、加号与录音入口也使用同套彩色生成图标；聊天和日程同类入口同步替换，保留44px按钮与可访问名称。

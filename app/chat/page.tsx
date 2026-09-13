@@ -1,7 +1,7 @@
 "use client";
 
 
-import { HomeIcon, CalendarDaysIcon, UsersIcon, UserIcon, LockClosedIcon } from "@/components/ui/FamilyIcons";
+import { HomeIcon, CalendarDaysIcon, UsersIcon, LockClosedIcon } from "@/components/ui/FamilyIcons";
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -10,6 +10,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import AppLoading from "@/components/AppLoading";
 import ChatInput from "@/components/ChatInput";
 import ChatMessage from "@/components/ChatMessage";
+import MemberAvatarCircle from "@/components/MemberAvatarCircle";
 import type { AssistantCardEdit } from "@/components/AssistantActionCard";
 import EffectOverlay from "@/components/EffectOverlay";
 import EnvWarning from "@/components/EnvWarning";
@@ -3204,10 +3205,6 @@ export default function ChatPage() {
   }
 
   const currentMember = session ? memberMap.get(session.member_id) ?? null : null;
-  const currentAvatarUrl = useCachedImage(
-    session,
-    currentMember?.avatar_url ?? null,
-  ).url;
   // Background reads from the same local image cache as chat images, so it
   // shows instantly, survives reloads, and works offline.
   const chatBackgroundUrl = useCachedImage(
@@ -3391,7 +3388,6 @@ export default function ChatPage() {
         onTouchEnd={handleHeaderTouchEnd}
       >
         <div className="min-w-0 flex-1 pr-1">
-          <div className="text-[12px] leading-4 text-slate-500">{t("chatFamily")}</div>
           <div className="truncate text-lg font-bold leading-6 text-slate-900">
             {session.family_name}
           </div>
@@ -3426,15 +3422,13 @@ export default function ChatPage() {
             aria-label={t("meTitle")}
             title={t("meTitle")}
           >
-            {currentAvatarUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={currentAvatarUrl}
-                alt=""
-                className="h-full w-full object-cover"
-                draggable={false}
-              />
-            ) : <UserIcon className="h-8 w-8" aria-hidden="true" />}
+            <MemberAvatarCircle
+              session={session}
+              avatarRef={currentMember?.avatar_url ?? null}
+              name={currentMember?.nickname ?? "?"}
+              className="h-full w-full rounded-full bg-brand-50 text-sm font-semibold text-brand-950"
+              ariaHidden
+            />
           </Link>
         </div>
       </header>

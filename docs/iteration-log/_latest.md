@@ -1,19 +1,27 @@
-# UI Iteration Log — 聊天顶部头像与标题精简
+# UI Iteration Log - 设置页精简退出入口
 
-日期：2026-09-13；S12。用户要求删除聊天页顶部的 “Family” 副标题，并让个人入口在头像加载期间显示昵称首字、加载完成后显示真实头像。
+## 基本信息
 
-## audit / select / implement
+- 日期：2026-09-21。
+- 执行者：Codex。
+- 任务来源：用户浏览器标注“为什么两个退出？一个就可以了”。
+- 优先级：P2，S15。
+- 范围：设置页会话区的退出按钮。
 
-使用 `frontend-design`，读取 UI 治理文档、聊天页头部、成员头像来源和现有头像缓存组件。选中 `/chat` 紧凑头部单点调整，不触碰消息、输入栏、Realtime、Push 或权限逻辑。
+## audit / select
 
-删除家庭名称上方重复的 “Family” 文案；个人入口始终使用 `MemberAvatarCircle`，不再经过默认人物图标分支。当前成员资料和头像解析期间显示昵称首字，头像解析完成后自动显示真实图片。入口原有 `aria-label`、`title` 和触控区域保持不变。
+沿用已读取的 UI 治理与 frontend-design 规范，检查两个退出处理函数。普通退出清除本地会话并登出 Auth；离开家庭会调用成员退出服务。选中 S15，保留普通退出。
 
-修改 `app/chat/page.tsx`、`TASKS_UI.md` 与本记录。无 migration、API、RPC、Auth、权限、Push、Service Worker、Realtime 或 Storage 变化；不部署。
+## implement
 
-## validate / review
+移除会话区“退出该家庭”按钮、页面内处理函数及其服务导入。保留“退出登录 / 切换家庭”的确认弹窗和现有逻辑。修改 `app/settings/page.tsx`、`TASKS_UI.md` 与本记录。
 
-本轮按当前协作约束未执行 lint、typecheck、build、git diff check 或浏览器尺寸回归。需后续验证 360px、390px、430px 下家庭名称截断、昵称首字占位和已设置头像的缓存命中与加载状态。
+## validate
 
-静态 UX/A11y/Security/Architecture review：头部高度、导航顺序和可读名称保持不变；复用现有头像组件与媒体解析链路，没有新增敏感信息展示、前端权限判断或数据请求。
+`npm run lint`、`npm run typecheck`、`npm run build` 和 `git diff --check` 均通过。构建前停止开发服务，完成后重启。未新增测试：只移除一个动作入口，保留的退出逻辑未变。360px、390px、430px 视觉回归及实际退出操作未执行，避免改变用户当前登录状态。
 
-风险：当前成员资料到达前可能短暂显示 `?`；资料到达后会切换为昵称首字或真实头像。下一步完成规定验证并确认实际头像显示符合预期。
+## review / record
+
+会话区只保留一个明确的普通退出操作，确认弹窗继续有效。没有调用离开家庭服务或变更任何成员身份；无 migration、API、RPC、权限变更。不提交或部署。
+
+风险与下一步：设置页不再提供离开家庭的入口；普通退出后成员记录仍保留。确认单按钮布局符合预期。恢复该按钮、处理函数及导入可撤销本轮改动。

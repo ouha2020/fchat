@@ -1,7 +1,7 @@
 "use client";
 
 
-import { HomeIcon, CalendarDaysIcon, UsersIcon, UserIcon, LockClosedIcon } from "@/components/ui/FamilyIcons";
+import { HomeIcon, CalendarDaysIcon, UsersIcon, LockClosedIcon } from "@/components/ui/FamilyIcons";
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -10,6 +10,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import AppLoading from "@/components/AppLoading";
 import ChatInput from "@/components/ChatInput";
 import ChatMessage from "@/components/ChatMessage";
+import MemberAvatarCircle from "@/components/MemberAvatarCircle";
 import type { AssistantCardEdit } from "@/components/AssistantActionCard";
 import EffectOverlay from "@/components/EffectOverlay";
 import EnvWarning from "@/components/EnvWarning";
@@ -88,6 +89,7 @@ import {
 import { addAlbumItem } from "@/lib/albumService";
 import { cacheImageBlob, useCachedImage } from "@/lib/imageCache";
 import { getCurrentLocation, createGoogleMapUrl } from "@/lib/locationService";
+import { createNotificationMessageLoader } from "@/lib/notificationMessageSync";
 import {
   installAudioUnlock,
   playNotificationSound,
@@ -130,7 +132,6 @@ const IMPORTANT_FALLBACK_POLL_MS = 30_000;
 const METADATA_FALLBACK_POLL_MS = 120_000;
 const INITIAL_CACHED_MESSAGE_LIMIT = 100;
 const CACHED_MESSAGE_PAGE_SIZE = 100;
-const PUSH_MESSAGE_DEDUPE_MS = 5_000;
 const REALTIME_BACKGROUND_DISCONNECT_MS = 120_000;
 const REALTIME_BATCH_FLUSH_MS = 150;
 const MESSAGE_DELIVERED_REPORT_DELAY_MS = 500;
@@ -745,6 +746,7 @@ export default function ChatPage() {
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(
     null,
   );
+  const [notificationTargetId, setNotificationTargetId] = useState<string | null>(null);
   const [messageActionMenu, setMessageActionMenu] =
     useState<MessageActionMenuState | null>(null);
   const [loading, setLoading] = useState(true);
@@ -802,7 +804,6 @@ export default function ChatPage() {
   }, []);
   const pendingRealtimeMessageIdsRef = useRef<Set<string>>(new Set());
   const realtimeBatchTimerRef = useRef<number | null>(null);
-  const pendingPushMessageIdsRef = useRef<Map<string, number>>(new Map());
   const pendingDeliveredMessageIdsRef = useRef<Set<string>>(new Set());
   const pendingReadMessageIdsRef = useRef<Set<string>>(new Set());
   const reportedDeliveredMessageIdsRef = useRef<Set<string>>(new Set());
@@ -947,6 +948,9 @@ export default function ChatPage() {
   const sessionRef = useRef<LocalSession | null>(null);
   useEffect(() => {
     sessionRef.current = session;
+    return () => {
+      sessionRef.current = null;
+    };
   }, [session]);
   useEffect(() => {
     if (!session) return;
@@ -1326,37 +1330,16 @@ export default function ChatPage() {
     [flushRealtimeMessages],
   );
 
-  const fetchPushMessageNow = useCallback(
-    async (messageId: string, scrollAfterFetch = false) => {
-      const activeSession = sessionRef.current;
-      if (!activeSession) return;
-
-      const now = Date.now();
-      const pending = pendingPushMessageIdsRef.current;
-      pending.forEach((expiresAt, id) => {
-        if (expiresAt <= now) pending.delete(id);
-      });
-
-      const existing = pending.get(messageId);
-      if (existing && existing > now) return;
-      pending.set(messageId, now + PUSH_MESSAGE_DEDUPE_MS);
-
-      try {
-        const fetched = await fetchRealtimeMessage(messageId);
-        if (!fetched) {
-          await syncMessages(activeSession, { onMessages: handleSyncedMessages });
-        }
-        if (scrollAfterFetch) {
-          window.setTimeout(() => scrollToMessage(messageId), 120);
-        }
-      } finally {
-        window.setTimeout(() => {
-          const expiresAt = pending.get(messageId);
-          if (expiresAt && expiresAt <= Date.now()) pending.delete(messageId);
-        }, PUSH_MESSAGE_DEDUPE_MS);
-      }
-    },
-    [fetchRealtimeMessage, handleSyncedMessages, scrollToMessage],
+  const fetchPushMessageNow = useMemo(
+    () => createNotificationMessageLoader({
+      getSession: () => sessionRef.current,
+      onMessage: (message) => {
+        handleSyncedMessages([message]);
+        setLoadError(null);
+        setLoading(false);
+      },
+    }),
+    [handleSyncedMessages],
   );
 
   useEffect(() => {
@@ -1396,7 +1379,11 @@ export default function ChatPage() {
       if (window.location.pathname !== "/chat") return;
 
       if (data.messageId) {
-        fetchPushMessageNow(data.messageId).catch(syncVisibleMessages);
+        const targetId = new URLSearchParams(window.location.search).get("mid");
+        if (targetId === data.messageId) setNotificationTargetId(data.messageId);
+        fetchPushMessageNow(data.messageId)
+          .then((fetched) => { if (!fetched) syncVisibleMessages(); })
+          .catch(syncVisibleMessages);
         return;
       }
 
@@ -1781,7 +1768,8 @@ export default function ChatPage() {
         if (cancelled) return;
         hadCachedMessages = cached.length > 0;
         if (hadCachedMessages) {
-          setMessages(filterVisibleMessages(cached, fresh));
+          const visible = filterVisibleMessages(cached, fresh);
+          setMessages((current) => mergeMessagesById(visible, current));
           setLoading(false);
         }
 
@@ -1806,7 +1794,10 @@ export default function ChatPage() {
           syncMessages(fresh, {
             forceFullRefresh: true,
             onMessages: (next) => {
-              if (!cancelled) setMessages(filterVisibleMessages(next, fresh));
+              if (!cancelled) {
+                const visible = filterVisibleMessages(next, fresh);
+                setMessages((current) => mergeMessagesById(current, visible));
+              }
             },
           }),
           CHAT_BOOTSTRAP_DATA_TIMEOUT_MS,
@@ -1814,12 +1805,13 @@ export default function ChatPage() {
         );
         if (cancelled) return;
         if (syncResult.messages.length > 0) {
-          setMessages(filterVisibleMessages(syncResult.messages, fresh));
+          const visible = filterVisibleMessages(syncResult.messages, fresh);
+          setMessages((current) => mergeMessagesById(visible, current));
         }
         setLoadError(null);
       } catch (err) {
         if (!cancelled) {
-          if (!hadCachedMessages) {
+          if (!hadCachedMessages && messagesRef.current.length === 0) {
             setLoadError(humanizeError(err, language) || t("chatLoadFailed"));
           }
         }
@@ -2113,20 +2105,48 @@ export default function ChatPage() {
     };
   }, [loading, scrollToBottom]);
 
-  // Scroll to the message targeted by a notification click (?mid=xxx).
-  const lastScrolledToNotifiedMessageIdRef = useRef<string | null>(null);
+  // Recover notification targets when identity is ready, even with no cache.
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const params = new URLSearchParams(window.location.search);
-    const mid = params.get("mid");
-    if (!mid || lastScrolledToNotifiedMessageIdRef.current === mid) return;
-    if (messages.some((m) => m.id === mid)) {
-      lastScrolledToNotifiedMessageIdRef.current = mid;
-      window.setTimeout(() => scrollToMessage(mid), 300);
-      return;
-    }
-    fetchPushMessageNow(mid, true).catch(() => undefined);
-  }, [fetchPushMessageNow, messages, scrollToMessage]);
+    if (!session) return;
+    let active = true;
+    let lastTarget: string | null = null;
+    const recoverTarget = () => {
+      if (document.visibilityState !== "visible") return;
+      const mid = new URLSearchParams(window.location.search).get("mid");
+      if (mid !== lastTarget) setNotificationTargetId(mid);
+      lastTarget = mid;
+      if (!mid) return;
+      void fetchPushMessageNow(mid).then((fetched) => {
+        if (!active || fetched) return;
+        void syncMessages(session, { onMessages: handleSyncedMessages }).catch(() => undefined);
+      }).catch(() => undefined);
+    };
+    recoverTarget();
+    document.addEventListener("visibilitychange", recoverTarget);
+    window.addEventListener("focus", recoverTarget);
+    window.addEventListener("online", recoverTarget);
+    window.addEventListener("popstate", recoverTarget);
+    return () => {
+      active = false;
+      document.removeEventListener("visibilitychange", recoverTarget);
+      window.removeEventListener("focus", recoverTarget);
+      window.removeEventListener("online", recoverTarget);
+      window.removeEventListener("popstate", recoverTarget);
+    };
+  }, [fetchPushMessageNow, handleSyncedMessages, retryNonce, session]);
+
+  // Do not consume a target while its message is hidden by the loading screen.
+  useEffect(() => {
+    if (loading || loadError || !notificationTargetId) return;
+    const frame = window.requestAnimationFrame(() => {
+      if (!messageRefs.current.has(notificationTargetId)) return;
+      scrollToMessage(notificationTargetId);
+      setNotificationTargetId((current) =>
+        current === notificationTargetId ? null : current,
+      );
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [loadError, loading, messages, notificationTargetId, scrollToMessage]);
 
   const memberMap = useMemo(() => {
     const m = new Map<string, FamilyMember>();
@@ -3204,10 +3224,6 @@ export default function ChatPage() {
   }
 
   const currentMember = session ? memberMap.get(session.member_id) ?? null : null;
-  const currentAvatarUrl = useCachedImage(
-    session,
-    currentMember?.avatar_url ?? null,
-  ).url;
   // Background reads from the same local image cache as chat images, so it
   // shows instantly, survives reloads, and works offline.
   const chatBackgroundUrl = useCachedImage(
@@ -3391,7 +3407,6 @@ export default function ChatPage() {
         onTouchEnd={handleHeaderTouchEnd}
       >
         <div className="min-w-0 flex-1 pr-1">
-          <div className="text-[12px] leading-4 text-slate-500">{t("chatFamily")}</div>
           <div className="truncate text-lg font-bold leading-6 text-slate-900">
             {session.family_name}
           </div>
@@ -3426,15 +3441,13 @@ export default function ChatPage() {
             aria-label={t("meTitle")}
             title={t("meTitle")}
           >
-            {currentAvatarUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={currentAvatarUrl}
-                alt=""
-                className="h-full w-full object-cover"
-                draggable={false}
-              />
-            ) : <UserIcon className="h-8 w-8" aria-hidden="true" />}
+            <MemberAvatarCircle
+              session={session}
+              avatarRef={currentMember?.avatar_url ?? null}
+              name={currentMember?.nickname ?? "?"}
+              className="h-full w-full rounded-full bg-brand-50 text-sm font-semibold text-brand-950"
+              ariaHidden
+            />
           </Link>
         </div>
       </header>
@@ -3471,6 +3484,9 @@ export default function ChatPage() {
           ...(chatBackgroundUrl
             ? {
                 backgroundImage: `linear-gradient(rgba(247, 246, 242, 0.78), rgba(247, 246, 242, 0.78)), url("${chatBackgroundUrl}")`,
+                backgroundPosition: "center",
+                backgroundRepeat: "no-repeat",
+                backgroundSize: "cover",
               }
             : {}),
         }}

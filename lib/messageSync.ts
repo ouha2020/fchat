@@ -9,6 +9,7 @@ import {
   registerCacheOpen,
   seqFromMessages,
   upsertMessagesAndSyncState,
+  upsertMessagesToCache,
 } from "@/lib/messageCache";
 import {
   listMessages,
@@ -97,11 +98,9 @@ export async function mergeRealtimeMessage(
   session: LocalSession,
   message: Message,
 ): Promise<Message[]> {
-  const messages = await upsertMessagesAndSyncState(
-    session,
-    [message],
-    syncPatchFromMessages([message]),
-  );
+  // A targeted fetch can arrive ahead of missing rows. Only an ordered sync
+  // page may advance the checkpoint used to recover those rows.
+  const messages = await upsertMessagesToCache(session, [message]);
   return messages.sort(compareCreatedAtAsc);
 }
 
@@ -112,11 +111,7 @@ export async function mergeRealtimeMessages(
   if (incoming.length === 0) {
     return loadCachedMessagesForSession(session);
   }
-  const messages = await upsertMessagesAndSyncState(
-    session,
-    incoming,
-    syncPatchFromMessages(incoming),
-  );
+  const messages = await upsertMessagesToCache(session, incoming);
   return messages.sort(compareCreatedAtAsc);
 }
 
@@ -237,17 +232,6 @@ async function runFullRefresh(
   const sorted = messages.sort(compareCreatedAtAsc);
   onMessages?.(sorted);
   return { status: "synced", messages: sorted, isHistoryPartial };
-}
-
-function syncPatchFromMessages(messages: Message[]) {
-  const latestSeq = seqFromMessages(messages);
-  if (latestSeq === null) {
-    return { lastSyncedSeq: null };
-  }
-  return {
-    ...cursorFromMessages(messages),
-    lastSyncedSeq: latestSeq,
-  };
 }
 
 function syncLockKey(session: LocalSession): string {

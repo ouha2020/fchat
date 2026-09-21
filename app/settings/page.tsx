@@ -21,7 +21,6 @@ import { clearSession, loadSession, saveSession, updateSession, type LocalSessio
 import { humanizeError } from "@/lib/errors";
 import {
   fetchFamilySettings,
-  leaveFamily,
   validateMember,
 } from "@/lib/familyService";
 import { LANGUAGE_OPTIONS } from "@/lib/i18n";
@@ -285,27 +284,6 @@ export default function SettingsPage() {
     });
   }
 
-  async function handleLeave() {
-    if (!session) return;
-    const ok = await dialog.confirm({
-      title: t("settingsLeaveFamily"),
-      message: t("settingsLeaveConfirm"),
-      danger: true,
-    });
-    if (!ok) return;
-    setBusy("leave");
-    try {
-      await leaveFamily(session);
-      clearSession();
-      await getSupabaseAuth().auth.signOut();
-      router.replace("/");
-    } catch (err) {
-      toast.error(humanizeError(err, language));
-    } finally {
-      setBusy(null);
-    }
-  }
-
   async function handleSwitch() {
     const ok = await dialog.confirm({
       title: t("settingsSwitchFamily"),
@@ -471,10 +449,6 @@ export default function SettingsPage() {
               当前身份保存在此浏览器中。如果更换手机或清除浏览器数据，可能需要重新输入家庭代码加入。
             </InfoPanel>
           )}
-
-          <Link href="/me" className="btn btn-secondary mt-3 w-full">
-            {t("meTitle")}
-          </Link>
         </SettingsSection>
 
         <SettingsSection title={t("settingsLanguage")}>
@@ -726,12 +700,6 @@ export default function SettingsPage() {
               label={t("settingsSwitchFamily")}
               disabled={!!busy}
               onClick={handleSwitch}
-            />
-            <ActionRow
-              label={busy === "leave" ? t("settingsLeaving") : t("settingsLeaveFamily")}
-              disabled={busy === "leave"}
-              danger
-              onClick={handleLeave}
             />
           </SettingsGroup>
         </SettingsSection>

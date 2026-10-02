@@ -24,7 +24,7 @@ import { useDialog } from "@/components/Dialog";
 import { useLanguage } from "@/components/LanguageProvider";
 import { useToast } from "@/components/Toast";
 import { clearSession, loadSession, saveSession, type LocalSession } from "@/lib/authLocal";
-import { humanizeError } from "@/lib/errors";
+import { humanizeError, isNetworkError } from "@/lib/errors";
 import { validateMember } from "@/lib/familyService";
 import { getJapanHoliday, type JapanHoliday } from "@/lib/japanHolidays";
 import { createGoogleMapUrl, getCurrentLocation } from "@/lib/locationService";
@@ -188,6 +188,11 @@ export default function SchedulePage() {
   );
   const seenScheduleEventIdsRef = useRef<Set<string>>(new Set());
   const syncWarningShownRef = useRef(false);
+  const refreshRetryRef = useRef({
+    failures: 0,
+    retryAt: 0,
+    noticeShown: false,
+  });
   const urlReadyRef = useRef(false);
   const pageRef = useRef<HTMLDivElement | null>(null);
   const filterDockRef = useRef<HTMLElement | null>(null);
@@ -368,10 +373,15 @@ export default function SchedulePage() {
     };
   }, [language, router, t]);
 
-  const refreshItems = useCallback(async () => {
+  const refreshItems = useCallback(async (options?: { background?: boolean }) => {
     if (!session) return;
+    const background = options?.background ?? false;
+    if (background && Date.now() < refreshRetryRef.current.retryAt) return;
     setItemsLoading(true);
     try {
+      if (typeof navigator !== "undefined" && navigator.onLine === false) {
+        throw new Error("network_offline");
+      }
       const todayStart = startOfDay(new Date());
       const todayEnd = addDays(todayStart, 1);
       const shouldReuseRangeForToday =
@@ -395,6 +405,7 @@ export default function SchedulePage() {
         rowsPromise,
         todayRowsPromise,
       ]);
+      refreshRetryRef.current = { failures: 0, retryAt: 0, noticeShown: false };
       setItems(rows);
       setMyTodayItems(todayRows);
       const currentSelectedId = selectedItemIdRef.current;
@@ -406,7 +417,19 @@ export default function SchedulePage() {
         if (refreshed) setSelectedItem(refreshed);
       }
     } catch (err) {
-      toast.error(humanizeError(err, language));
+      const retry = refreshRetryRef.current;
+      retry.failures = Math.min(retry.failures + 1, 3);
+      retry.retryAt =
+        Date.now() + SCHEDULE_FALLBACK_POLL_MS * 2 ** (retry.failures - 1);
+      if (!background || !retry.noticeShown) {
+        retry.noticeShown = true;
+        const message = humanizeError(err, language);
+        if (background && isNetworkError(err)) {
+          toast.info(message);
+        } else {
+          toast.error(message);
+        }
+      }
     } finally {
       setItemsLoading(false);
     }
@@ -613,7 +636,7 @@ export default function SchedulePage() {
       scheduleRefreshTimerRef.current = setTimeout(() => {
         pendingScheduleRefreshRef.current = false;
         scheduleRefreshTimerRef.current = null;
-        void refreshItems();
+        void refreshItems({ background: true });
         const currentSelectedId = selectedItemIdRef.current;
         if (currentSelectedId) {
           void refreshSelectedScheduleDetail(currentSelectedId);
@@ -647,6 +670,10 @@ export default function SchedulePage() {
     const refreshVisiblePage = () => {
       if (document.visibilityState === "visible") scheduleRefresh(true);
     };
+    const handleOnline = () => {
+      refreshRetryRef.current.retryAt = 0;
+      refreshVisiblePage();
+    };
     const handleServiceWorkerMessage = (event: MessageEvent) => {
       const data = event.data as ScheduleReminderMessage | null;
       if (!data || data.type !== "family-chat:schedule-reminder") return;
@@ -659,6 +686,7 @@ export default function SchedulePage() {
     };
 
     window.addEventListener("focus", refreshVisiblePage);
+    window.addEventListener("online", handleOnline);
     document.addEventListener("visibilitychange", refreshVisiblePage);
     navigator.serviceWorker?.addEventListener(
       "message",
@@ -667,6 +695,7 @@ export default function SchedulePage() {
 
     return () => {
       window.removeEventListener("focus", refreshVisiblePage);
+      window.removeEventListener("online", handleOnline);
       document.removeEventListener("visibilitychange", refreshVisiblePage);
       navigator.serviceWorker?.removeEventListener(
         "message",

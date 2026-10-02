@@ -105,15 +105,40 @@ const ERROR_MAP: Record<string, TranslationKey> = {
   chat_bootstrap_timeout: "chatLoadFailed",
 };
 
+const NETWORK_ERROR_MESSAGES: Record<Language, string> = {
+  zh: "\u6682\u65f6\u65e0\u6cd5\u8fde\u63a5\u670d\u52a1\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5\u3002",
+  ja: "\u73fe\u5728\u30b5\u30fc\u30d3\u30b9\u306b\u63a5\u7d9a\u3067\u304d\u307e\u305b\u3093\u3002\u901a\u4fe1\u74b0\u5883\u3092\u78ba\u8a8d\u3057\u3066\u3001\u3082\u3046\u4e00\u5ea6\u304a\u8a66\u3057\u304f\u3060\u3055\u3044\u3002",
+  en: "Unable to connect right now. Check your connection and try again.",
+};
+
+function getErrorMessage(message: unknown): string {
+  if (typeof message === "string") return message;
+  if (message instanceof Error) return message.message;
+  if (message && typeof message === "object" && "message" in message) {
+    return String(message.message ?? "");
+  }
+  return String(message ?? "");
+}
+
+export function isNetworkError(error: unknown): boolean {
+  const raw = getErrorMessage(error).trim().toLowerCase();
+  return (
+    raw.includes("failed to fetch") ||
+    raw.includes("networkerror when attempting to fetch resource") ||
+    raw.includes("network request failed") ||
+    raw === "load failed" ||
+    raw === "typeerror: load failed" ||
+    raw === "fetch failed" ||
+    raw === "typeerror: fetch failed" ||
+    raw === "network_offline"
+  );
+}
+
 export function humanizeError(message: unknown, language?: Language): string {
   const lang = language ?? getStoredLanguage();
   if (!message) return translate(lang, "errorFallback");
-  const raw =
-    typeof message === "string"
-      ? message
-      : message instanceof Error
-        ? message.message
-        : String((message as { message?: string }).message ?? message);
+  if (isNetworkError(message)) return NETWORK_ERROR_MESSAGES[lang];
+  const raw = getErrorMessage(message);
 
   for (const key of Object.keys(ERROR_MAP)) {
     if (raw.includes(key)) return translate(lang, ERROR_MAP[key]);

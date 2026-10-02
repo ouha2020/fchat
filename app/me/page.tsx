@@ -3,8 +3,6 @@
 import PageHeader from "@/components/ui/PageHeader";
 
 import {
-  ArrowPathIcon,
-  CameraIcon,
   CheckCircleIcon,
   ChevronRightIcon,
   Cog6ToothIcon,
@@ -18,10 +16,6 @@ import type { ReactNode } from "react";
 
 import AppLoading from "@/components/AppLoading";
 import { useDialog } from "@/components/Dialog";
-import {
-  CalendarDaysIcon,
-  UsersIcon,
-} from "@/components/ui/FamilyIcons";
 import { useLanguage } from "@/components/LanguageProvider";
 import MemberAvatarCircle from "@/components/MemberAvatarCircle";
 import { useToast } from "@/components/Toast";
@@ -47,14 +41,12 @@ export default function MePage() {
   const [session, setSession] = useState<LocalSession | null>(null);
   const [dashboard, setDashboard] = useState<PersonalDashboard | null>(null);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [avatarBusy, setAvatarBusy] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
 
   const refreshDashboard = useCallback(
     async (activeSession: LocalSession, quiet = false) => {
-      if (!quiet) setRefreshing(true);
       try {
         const todayStart = startOfDay(new Date());
         const todayEnd = addDays(todayStart, 1);
@@ -70,7 +62,6 @@ export default function MePage() {
         if (quiet) toast.error(message);
         else setLoadError(message);
       } finally {
-        if (!quiet) setRefreshing(false);
       }
     },
     [language, t, toast],
@@ -248,19 +239,14 @@ export default function MePage() {
         title={t("meTitle")}
         backLabel={t("commonBackToChat")}
         action={
-          <button
-            type="button"
-            className="btn-ghost shrink-0 gap-1.5 px-3"
-            disabled={refreshing}
-            aria-busy={refreshing}
-            onClick={() => refreshDashboard(session, false)}
+          <Link
+            href="/settings"
+            className="tool-icon-button native-press shrink-0"
+            aria-label={t("chatSettings")}
+            title={t("chatSettings")}
           >
-            <ArrowPathIcon
-              className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
-              aria-hidden="true"
-            />
-            <span>{refreshing ? t("commonLoading") : t("meRefresh")}</span>
-          </button>
+            <Cog6ToothIcon className="h-5 w-5" aria-hidden="true" />
+          </Link>
         }
       />
 
@@ -276,12 +262,21 @@ export default function MePage() {
 
         <div className="relative flex min-w-0 items-center gap-4">
           <div className="relative shrink-0">
-            <MemberAvatarCircle
-              session={session}
-              avatarRef={profile.avatar_url}
-              name={profile.nickname}
-              className="h-20 w-20 rounded-full bg-white text-2xl font-bold text-brand-700 shadow-sm ring-4 ring-white min-[390px]:h-24 min-[390px]:w-24"
-            />
+            <button
+              type="button"
+              className="native-press shrink-0 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-300 focus-visible:ring-offset-2"
+              disabled={avatarBusy}
+              onClick={() => avatarInputRef.current?.click()}
+              aria-label={profile.avatar_url ? t("meAvatarChange") : t("meAvatarUpload")}
+              title={profile.avatar_url ? t("meAvatarChange") : t("meAvatarUpload")}
+            >
+              <MemberAvatarCircle
+                session={session}
+                avatarRef={profile.avatar_url}
+                name={profile.nickname}
+                className="h-20 w-20 rounded-full bg-white text-2xl font-bold text-brand-700 shadow-sm ring-4 ring-white min-[390px]:h-24 min-[390px]:w-24"
+              />
+            </button>
             <span
               className="absolute bottom-1 right-0 h-4 w-4 rounded-full border-[3px] border-white bg-brand-500"
               aria-hidden="true"
@@ -296,9 +291,12 @@ export default function MePage() {
               {profile.nickname}
             </h2>
             <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5">
-              <span className="tone-chip tone-chip-success">
-                {roleLabel(profile.role, t)}
-              </span>
+              {profile.nickname.trim().toLocaleLowerCase() !==
+              roleLabel(profile.role, t).trim().toLocaleLowerCase() ? (
+                <span className="tone-chip tone-chip-success">
+                  {roleLabel(profile.role, t)}
+                </span>
+              ) : null}
               <span className="tone-chip tone-chip-muted">
                 {profile.is_admin ? t("commonAdmin") : t("meMember")}
               </span>
@@ -320,23 +318,8 @@ export default function MePage() {
         />
 
         <div
-          className={`relative mt-5 grid grid-cols-1 gap-2 ${
-            profile.avatar_url ? "min-[390px]:grid-cols-2" : ""
-          }`}
+          className={profile.avatar_url ? "relative mt-5 grid grid-cols-1 gap-2" : "hidden"}
         >
-          <button
-            type="button"
-            className="btn-secondary min-w-0 gap-2 bg-white/85 px-3 text-sm"
-            disabled={avatarBusy}
-            onClick={() => avatarInputRef.current?.click()}
-          >
-            <CameraIcon className="h-4 w-4" aria-hidden="true" />
-            {avatarBusy
-              ? t("commonLoading")
-              : profile.avatar_url
-                ? t("meAvatarChange")
-                : t("meAvatarUpload")}
-          </button>
           {profile.avatar_url ? (
             <button
               type="button"
@@ -360,38 +343,6 @@ export default function MePage() {
           <p className="min-w-0 break-words">{t("meIdentitySaved")}</p>
         </div>
       </section>
-
-      <nav className="grid grid-cols-3 gap-2" aria-label={t("meTitle")}>
-        <Link
-          href="/settings"
-          className="group flex min-w-0 flex-col items-center justify-center gap-1.5 rounded-2xl bg-white px-2 py-3 text-center ring-1 ring-slate-100 transition hover:-translate-y-0.5 hover:ring-brand-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-300"
-        >
-          <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-amber-50 text-amber-700">
-            <Cog6ToothIcon className="h-6 w-6" aria-hidden="true" />
-          </span>
-          <span className="min-w-0 max-w-full truncate text-xs font-semibold text-slate-700">
-            {t("chatSettings")}
-          </span>
-        </Link>
-        <Link
-          href="/members"
-          className="group flex min-w-0 flex-col items-center justify-center gap-1.5 rounded-2xl bg-white px-2 py-3 text-center ring-1 ring-slate-100 transition hover:-translate-y-0.5 hover:ring-brand-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-300"
-        >
-          <UsersIcon className="h-10 w-10" />
-          <span className="min-w-0 max-w-full truncate text-xs font-semibold text-slate-700">
-            {t("chatMembers")}
-          </span>
-        </Link>
-        <Link
-          href="/schedule"
-          className="group flex min-w-0 flex-col items-center justify-center gap-1.5 rounded-2xl bg-white px-2 py-3 text-center ring-1 ring-slate-100 transition hover:-translate-y-0.5 hover:ring-brand-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-300"
-        >
-          <CalendarDaysIcon className="h-10 w-10" />
-          <span className="min-w-0 max-w-full truncate text-xs font-semibold text-slate-700">
-            {t("scheduleTitle")}
-          </span>
-        </Link>
-      </nav>
 
       <div className="mt-7 space-y-6">
         <DashboardSection

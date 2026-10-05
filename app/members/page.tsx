@@ -21,6 +21,7 @@ import { validateMember } from "@/lib/familyService";
 import { getSupabaseAuth } from "@/lib/supabaseAuthClient";
 import { formatRelative } from "@/lib/format";
 import { listMembers } from "@/lib/memberService";
+import { captureMessageCacheContext, isMessageContextCurrent } from "@/lib/messageCacheLifecycle";
 import { getSupabase, isSupabaseConfigured } from "@/lib/supabaseClient";
 import type { FamilyMember } from "@/types/member";
 
@@ -54,6 +55,8 @@ export default function MembersPage() {
       };
     }
     const localSession = local;
+    const context = captureMessageCacheContext(local);
+    const isCurrent = () => !cancelled && isMessageContextCurrent(context);
 
     async function run() {
       try {
@@ -61,7 +64,7 @@ export default function MembersPage() {
           localSession.member_id,
           localSession.member_token,
         );
-        if (cancelled) return;
+        if (!isCurrent()) return;
         if (!fresh) {
           clearSession();
           setSession(null);
@@ -72,14 +75,14 @@ export default function MembersPage() {
         saveSession(fresh);
         setSession(fresh);
         const rows = await listMembers(fresh);
-        if (cancelled) return;
+        if (!isCurrent()) return;
         setMembers(rows);
       } catch (err) {
-        if (!cancelled) {
+        if (isCurrent()) {
           setLoadError(humanizeError(err, language) || t("chatLoadFailed"));
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (isCurrent()) setLoading(false);
       }
     }
 
@@ -92,6 +95,14 @@ export default function MembersPage() {
   // Live-sync the member list so other admins see removals immediately.
   useEffect(() => {
     if (!session) return;
+    let cancelled = false;
+    const context = captureMessageCacheContext(session);
+    const refresh = () => {
+      if (cancelled || !isMessageContextCurrent(context)) return;
+      void listMembers(session).then((rows) => {
+        if (!cancelled && isMessageContextCurrent(context)) setMembers(rows);
+      }).catch(() => undefined);
+    };
     const sb = getSupabase();
     const channel = sb
       .channel(`members-page:${session.family_id}`)
@@ -103,20 +114,15 @@ export default function MembersPage() {
           table: "family_members",
           filter: `family_id=eq.${session.family_id}`,
         },
-        () => {
-          listMembers(session)
-            .then(setMembers)
-            .catch(() => undefined);
-        },
+        refresh,
       )
       .subscribe();
     const interval = window.setInterval(() => {
       if (document.visibilityState !== "visible") return;
-      listMembers(session)
-        .then(setMembers)
-        .catch(() => undefined);
+      refresh();
     }, 10000);
     return () => {
+      cancelled = true;
       sb.removeChannel(channel);
       window.clearInterval(interval);
     };
@@ -124,6 +130,7 @@ export default function MembersPage() {
 
   async function handleRemove(target: FamilyMember) {
     if (!session) return;
+    const context = captureMessageCacheContext(session);
     if (target.id === session.member_id) {
       toast.info(t("membersCannotRemoveSelf"));
       return;
@@ -133,21 +140,23 @@ export default function MembersPage() {
       message: t("membersRemoveConfirm", { nickname: target.nickname }),
       danger: true,
     });
-    if (!ok) return;
+    if (!ok || !isMessageContextCurrent(context)) return;
     setBusyId(target.id);
     try {
       const { data } = await getSupabaseAuth().auth.getSession();
+      if (!isMessageContextCurrent(context)) return;
       if (!data.session) {
         toast.info(t("authNeedOwnerLogin"));
         router.push("/login");
         return;
       }
       await removeMemberWithAccount(session, target.id);
+      if (!isMessageContextCurrent(context)) return;
       setMembers((prev) => prev.filter((m) => m.id !== target.id));
     } catch (err) {
-      toast.error(humanizeError(err, language));
+      if (isMessageContextCurrent(context)) toast.error(humanizeError(err, language));
     } finally {
-      setBusyId(null);
+      if (isMessageContextCurrent(context)) setBusyId(null);
     }
   }
 
@@ -261,7 +270,6 @@ export default function MembersPage() {
                     aria-label={`${t("membersSendWhisper")} ${m.nickname}`}
                     title={`${t("membersSendWhisper")} ${m.nickname}`}
                   >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
                     <LockClosedIcon className="tool-icon text-violet-700" aria-hidden="true" />
                   </Link>
                   {session?.is_admin ? (

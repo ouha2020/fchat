@@ -6,6 +6,8 @@ import { mergeRealtimeMessage, mergeRealtimeMessages, syncMessages } from "@/lib
 import { makeMessage, makeSession } from "@/tests/helpers/messages";
 import type { MessageSyncState } from "@/lib/messageCache";
 import type { Message } from "@/types/message";
+import { installLocalSession } from "@/tests/helpers/localSession";
+import { invalidateMessageCacheContext, captureMessageCacheContext } from "@/lib/messageCacheLifecycle";
 
 vi.mock("@/lib/messageCache", async (importOriginal) => ({
   ...await importOriginal<typeof import("@/lib/messageCache")>(),
@@ -28,9 +30,7 @@ const notified = makeMessage({ id: "notified", family_seq: 3, updated_at: "2026-
 
 beforeEach(() => {
   vi.resetAllMocks();
-  vi.stubGlobal("window", { localStorage: {
-    getItem: vi.fn().mockReturnValue(null), setItem: vi.fn(), removeItem: vi.fn(),
-  } });
+  installLocalSession(session);
   state = {
     ownerKey: "f1:alice", familyId: "f1", memberId: "alice",
     cursorUpdatedAt: new Date().toISOString(), cursorId: "baseline",
@@ -57,6 +57,49 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("targeted message fetches preserve the recovery checkpoint", () => {
+  it("discards a late seq page after logout without persisting, emitting, or falling back", async () => {
+    let finish!: (rows: Message[]) => void;
+    const onMessages = vi.fn();
+    const arrived = new Promise<void>((resolve) => vi.mocked(listMessagesAfterSeq).mockImplementation(() => {
+      resolve(); return new Promise((done) => { finish = done; });
+    }));
+    const result = syncMessages(session, { onMessages }); await arrived;
+    invalidateMessageCacheContext(session); window.localStorage.removeItem("family-chat:session");
+    finish([missing]);
+    await expect(result).resolves.toEqual({ status: "cancelled", messages: [] });
+    expect(upsertMessagesAndSyncState).not.toHaveBeenCalled();
+    expect(onMessages).not.toHaveBeenCalled(); expect(listMessagesDelta).not.toHaveBeenCalled();
+  });
+
+  it("keeps a newer owner's synchronization lock when the old request finishes", async () => {
+    let finish!: (rows: Message[]) => void;
+    const arrived = new Promise<void>((resolve) => vi.mocked(listMessagesAfterSeq).mockImplementation(() => {
+      resolve(); return new Promise((done) => { finish = done; });
+    }));
+    const result = syncMessages(session); await arrived;
+    const key = `sync_lock:${session.family_id}:${session.member_id}`;
+    const replacement = JSON.stringify({ id: "new-operation", version: captureMessageCacheContext(session).version,
+      expiresAt: Date.now() + 15000 });
+    window.localStorage.setItem(key, replacement); finish([]); await result;
+    expect(window.localStorage.getItem(key)).toBe(replacement);
+  });
+
+  it("does not emit if the identity expires between cache completion and the UI callback", async () => {
+    vi.mocked(upsertMessagesAndSyncState).mockImplementation(async (_active, rows) => {
+      queueMicrotask(() => queueMicrotask(() => invalidateMessageCacheContext(session)));
+      return rows;
+    });
+    const onMessages = vi.fn();
+    await expect(syncMessages(session, { onMessages })).resolves.toEqual({ status: "cancelled", messages: [] });
+    expect(onMessages).not.toHaveBeenCalled(); expect(listMessagesDelta).not.toHaveBeenCalled();
+  });
+
+  it("keeps RPC data available when the persistent cache fails", async () => {
+    vi.mocked(upsertMessagesAndSyncState).mockRejectedValue(new Error("indexeddb_unavailable"));
+    const onMessages = vi.fn(); const result = await syncMessages(session, { onMessages });
+    expect(result.status).toBe("synced"); expect(result.messages.map((row) => row.id)).toContain("missing");
+    expect(onMessages).toHaveBeenCalled();
+  });
   it.each(["single", "batch"])("recovers a gap after a %s realtime fetch arrives first", async (mode) => {
     if (mode === "single") await mergeRealtimeMessage(session, notified);
     else await mergeRealtimeMessages(session, [notified]);

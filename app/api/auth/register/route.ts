@@ -1,3 +1,4 @@
+import { readJsonBody, rejectMismatchedOrigin } from "@/lib/apiSecurity";
 import { NextRequest } from "next/server";
 
 import {
@@ -10,10 +11,13 @@ import {
   validPassword,
 } from "@/lib/accountServer";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import { isRegistrationAllowed } from "@/lib/registrationServer";
 
 export async function POST(req: NextRequest) {
+  const originError = rejectMismatchedOrigin(req);
+  if (originError) return originError;
   try {
-    const body = (await req.json().catch(() => null)) as {
+    const body = (await readJsonBody(req)) as {
       email?: unknown;
       password?: unknown;
     } | null;
@@ -24,6 +28,7 @@ export async function POST(req: NextRequest) {
     if (!validEmail(email)) return jsonError("invalid_email");
     if (!password) return jsonError("password_required");
     if (!validPassword(password)) return jsonError("password_too_short");
+    if (!isRegistrationAllowed(email)) return jsonError("registration_invite_required", 403);
 
     const { data, error } = await getSupabaseAdmin().auth.admin.createUser({
       email,

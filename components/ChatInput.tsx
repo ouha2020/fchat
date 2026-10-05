@@ -104,6 +104,7 @@ export default function ChatInput({
   const safeRectRef = useRef<DOMRect | null>(null);
   const [slideOffActive, setSlideOffActive] = useState(false);
   const isHoldingRef = useRef(false);
+  const recordingRequestRef = useRef<AbortController | null>(null);
   const docPointerCleanupRef = useRef<(() => void) | null>(null);
   const whisperCandidates = members.filter(
     (member) => member.status === "active" && member.id !== currentMemberId,
@@ -116,6 +117,8 @@ export default function ChatInput({
 
   useEffect(() => {
     return () => {
+      recordingRequestRef.current?.abort();
+      recordingRequestRef.current = null;
       removeDocPointerListeners();
       cleanupRecordingState(recordingStateRef.current);
       audioRef.current?.pause();
@@ -152,15 +155,17 @@ export default function ChatInput({
   }, [recordingState]);
 
   useEffect(() => {
-    if (recordingState.status !== "recording") return;
     const visualViewport = window.visualViewport;
     let viewportFrame = 0;
 
     function discardForPrivacy() {
       const current = recordingStateRef.current;
-      if (current.status !== "recording") return;
+      if (current.status !== "recording" && !recordingRequestRef.current) return;
+      if (current.status === "uploading" || current.status === "failed") return;
+      recordingRequestRef.current?.abort();
+      recordingRequestRef.current = null;
       removeDocPointerListeners();
-      current.handle.cancel();
+      if (current.status === "recording") current.handle.cancel();
       setRecordingState({ status: "idle" });
       setPrivacyNotice(t("inputRecordingBackgroundStopped"));
     }
@@ -196,7 +201,7 @@ export default function ChatInput({
       window.removeEventListener("resize", queueViewportDiscard);
       window.removeEventListener("orientationchange", queueViewportDiscard);
     };
-  }, [recordingState.status, t]);
+  }, [t]);
 
   useEffect(() => {
     if (!actionsOpen && !whisperPickerOpen) return;
@@ -325,6 +330,11 @@ export default function ChatInput({
     function handlePointerUp(e: PointerEvent) {
       removeDocPointerListeners();
       const current = recordingStateRef.current;
+      if (current.status === "idle") {
+        recordingRequestRef.current?.abort();
+        recordingRequestRef.current = null;
+        return;
+      }
       if (current.status !== "recording" || current.stopping) return;
       if (isInZone(e.clientX, e.clientY)) {
         void stopRecording();
@@ -336,6 +346,11 @@ export default function ChatInput({
     function handlePointerCancel() {
       removeDocPointerListeners();
       const current = recordingStateRef.current;
+      if (current.status === "idle") {
+        recordingRequestRef.current?.abort();
+        recordingRequestRef.current = null;
+        return;
+      }
       if (current.status !== "recording" || current.stopping) return;
       handleCancelRecording();
     }
@@ -365,8 +380,10 @@ export default function ChatInput({
   async function handleVoicePointerDown(
     e: React.PointerEvent<HTMLButtonElement>,
   ) {
-    if (disabled || sending || recordingState.status !== "idle") return;
+    if (disabled || sending || recordingState.status !== "idle" || recordingRequestRef.current) return;
     e.preventDefault();
+    const controller = new AbortController();
+    recordingRequestRef.current = controller;
 
     safeRectRef.current = expandRect(
       e.currentTarget.getBoundingClientRect(),
@@ -379,24 +396,23 @@ export default function ChatInput({
     setWhisperPickerOpen(false);
     setPrivacyNotice(null);
 
-    if (!hasRecordingConsent()) {
-      const ok = await dialog.confirm({
-        title: t("inputRecordVoice"),
-        message: t("inputRecordingConsent"),
-      });
-      if (!ok) {
-        removeDocPointerListeners();
-        return;
-      }
-      saveRecordingConsent();
-    }
-
+    let recordingStarted = false;
     try {
-      const handle = await startRecording();
-      if (!isHoldingRef.current) {
+      if (!hasRecordingConsent()) {
+        const ok = await dialog.confirm({
+          title: t("inputRecordVoice"),
+          message: t("inputRecordingConsent"),
+        });
+        if (!ok) return;
+        saveRecordingConsent();
+      }
+      if (controller.signal.aborted) return;
+      const handle = await startRecording(controller.signal);
+      if (controller.signal.aborted || recordingRequestRef.current !== controller || !isHoldingRef.current) {
         handle.cancel();
         return;
       }
+      recordingStarted = true;
       setRecordingState({
         status: "recording",
         handle,
@@ -404,19 +420,27 @@ export default function ChatInput({
         stopping: false,
       });
     } catch (err) {
-      removeDocPointerListeners();
-      toast.error(recordingStartErrorMessage(err));
+      if (!controller.signal.aborted && recordingRequestRef.current === controller) {
+        toast.error(recordingStartErrorMessage(err));
+      }
+    } finally {
+      if (!recordingStarted && recordingRequestRef.current === controller) {
+        recordingRequestRef.current = null;
+        removeDocPointerListeners();
+      }
     }
   }
 
   async function stopRecording() {
     const current = recordingStateRef.current;
     if (current.status !== "recording" || current.stopping) return;
+    const controller = recordingRequestRef.current;
 
     removeDocPointerListeners();
     setRecordingState({ ...current, stopping: true });
     try {
       const result = await current.handle.stop();
+      if (controller?.signal.aborted || recordingRequestRef.current !== controller) return;
       if (result.durationMs < MIN_RECORD_MS) {
         toast.info(t("inputRecordingTooShort"));
         setRecordingState({ status: "idle" });
@@ -429,10 +453,12 @@ export default function ChatInput({
       try {
         await onSendAudio(result);
         revokeObjectUrl(objectUrl);
+        if (controller?.signal.aborted || recordingRequestRef.current !== controller) return;
         audioRef.current?.pause();
         audioRef.current = null;
         setRecordingState({ status: "idle" });
       } catch {
+        if (controller?.signal.aborted || recordingRequestRef.current !== controller) return;
         setRecordingState({
           status: "failed",
           result,
@@ -441,17 +467,22 @@ export default function ChatInput({
         });
       }
     } catch (err) {
+      if (controller?.signal.aborted || recordingRequestRef.current !== controller) return;
       const msg = err instanceof Error ? err.message : String(err);
       if (!msg.includes("recording_cancelled")) {
         toast.error(t("inputRecordStartError", { message: humanizeError(err, language) }));
       }
       setRecordingState({ status: "idle" });
+    } finally {
+      if (recordingRequestRef.current === controller) recordingRequestRef.current = null;
     }
   }
 
   function handleCancelRecording() {
     const current = recordingStateRef.current;
     if (current.status !== "recording" || current.stopping) return;
+    recordingRequestRef.current?.abort();
+    recordingRequestRef.current = null;
     removeDocPointerListeners();
     current.handle.cancel();
     setRecordingState({ status: "idle" });

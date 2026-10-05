@@ -15,6 +15,7 @@ import { humanizeError } from "@/lib/errors";
 import { validateMember } from "@/lib/familyService";
 import { useCachedImage } from "@/lib/imageCache";
 import { listMembers } from "@/lib/memberService";
+import { captureMessageCacheContext, isMessageContextCurrent } from "@/lib/messageCacheLifecycle";
 import { isSupabaseConfigured } from "@/lib/supabaseClient";
 import type { AlbumItem } from "@/types/album";
 import type { FamilyMember } from "@/types/member";
@@ -60,13 +61,15 @@ function AlbumContent() {
       };
     }
 
+    const context = captureMessageCacheContext(local);
+    const isCurrent = () => !cancelled && isMessageContextCurrent(context);
     async function run(localSession: LocalSession) {
       try {
         const fresh = await validateMember(
           localSession.member_id,
           localSession.member_token,
         );
-        if (cancelled) return;
+        if (!isCurrent()) return;
         if (!fresh) {
           clearSession();
           setSession(null);
@@ -81,12 +84,12 @@ function AlbumContent() {
           listMembers(fresh, { includeRemoved: true }),
           listAlbumItems(fresh, ownerId),
         ]);
-        if (cancelled) return;
+        if (!isCurrent()) return;
         setOwner(members.find((m) => m.id === ownerId) ?? null);
         setItems(albumItems);
         setLoading(false);
       } catch (err) {
-        if (cancelled) return;
+        if (!isCurrent()) return;
         setLoadError(humanizeError(err, language) || t("albumLoadFailed"));
         setLoading(false);
       }
@@ -103,27 +106,26 @@ function AlbumContent() {
   const handleRemove = useCallback(
     async (item: AlbumItem) => {
       if (!session) return;
+      const context = captureMessageCacheContext(session);
       const ok = await dialog.confirm({
         title: t("albumRemove"),
         message: t("albumRemoveConfirm"),
       });
-      if (!ok) return;
+      if (!ok || !isMessageContextCurrent(context)) return;
       try {
         await removeAlbumItem(session, item.id);
-        setItems((prev) => {
-          const next = prev.filter((i) => i.id !== item.id);
-          setLightboxIndex((current) => {
-            if (current === null) return null;
-            if (next.length === 0) return null;
-            return Math.min(current, next.length - 1);
-          });
-          return next;
+        if (!isMessageContextCurrent(context)) return;
+        const next = items.filter((i) => i.id !== item.id);
+        setItems((prev) => prev.filter((i) => i.id !== item.id));
+        setLightboxIndex((current) => {
+          if (current === null || next.length === 0) return null;
+          return Math.min(current, next.length - 1);
         });
       } catch (err) {
-        toast.error(humanizeError(err, language));
+        if (isMessageContextCurrent(context)) toast.error(humanizeError(err, language));
       }
     },
-    [session, dialog, t, toast, language],
+    [session, items, dialog, t, toast, language],
   );
 
   if (loading) {

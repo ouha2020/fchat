@@ -6,6 +6,8 @@ import { createNotificationMessageLoader } from "@/lib/notificationMessageSync";
 import { makeMessage, makeSession } from "@/tests/helpers/messages";
 import type { LocalSession } from "@/lib/authLocal";
 import type { Message } from "@/types/message";
+import { installLocalSession } from "@/tests/helpers/localSession";
+import { invalidateMessageCacheContext } from "@/lib/messageCacheLifecycle";
 
 vi.mock("@/lib/messageService", () => ({ getMessageById: vi.fn() }));
 vi.mock("@/lib/messageSync", () => ({ mergeRealtimeMessage: vi.fn() }));
@@ -13,10 +15,11 @@ vi.mock("@/lib/messageSync", () => ({ mergeRealtimeMessage: vi.fn() }));
 beforeEach(() => {
   vi.useFakeTimers();
   vi.resetAllMocks();
+  installLocalSession(makeSession());
   vi.mocked(mergeRealtimeMessage).mockResolvedValue([]);
 });
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 function setup() {
   let session: LocalSession | null = makeSession();
@@ -25,10 +28,27 @@ function setup() {
     getSession: () => session,
     onMessage,
   });
-  return { load, onMessage, setSession: (next: LocalSession | null) => { session = next; } };
+  return { load, onMessage, setSession: (next: LocalSession | null) => {
+    session = next;
+    if (next) window.localStorage.setItem("family-chat:session", JSON.stringify(next));
+    else window.localStorage.removeItem("family-chat:session");
+  } };
 }
 
 describe("notification message recovery", () => {
+  it("starts fresh recovery after logout/relogin and discards the earlier response", async () => {
+    let finish!: (message: Message) => void;
+    const message = makeMessage({ id: "same-identity-target" });
+    vi.mocked(getMessageById).mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }))
+      .mockResolvedValueOnce(message);
+    const { load, onMessage, setSession } = setup();
+    const earlier = load(message.id);
+    invalidateMessageCacheContext(makeSession()); setSession(null); setSession(makeSession());
+    const current = load(message.id); expect(current).not.toBe(earlier);
+    await expect(current).resolves.toBe(true); finish(message);
+    await expect(earlier).resolves.toBe(false);
+    expect(onMessage).toHaveBeenCalledExactlyOnceWith(message);
+  });
   it("retries a temporary miss and a network error before the polling interval", async () => {
     const message = makeMessage({ id: "notification" });
     vi.mocked(getMessageById)

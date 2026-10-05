@@ -1,3 +1,4 @@
+import { readJsonBody, rejectMismatchedOrigin } from "@/lib/apiSecurity";
 import { NextRequest } from "next/server";
 
 import {
@@ -8,9 +9,11 @@ import {
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 export async function POST(req: NextRequest) {
+  const originError = rejectMismatchedOrigin(req);
+  if (originError) return originError;
   try {
     const { user } = await requireAuthUser(req);
-    const body = (await req.json().catch(() => null)) as {
+    const body = (await readJsonBody(req)) as {
       memberId?: unknown;
       memberToken?: unknown;
       newPassword?: unknown;

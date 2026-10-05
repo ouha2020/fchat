@@ -11,6 +11,7 @@ import { setChatBackground } from "@/lib/chatBackground";
 import { getMessageById } from "@/lib/messageService";
 import { useCachedImage } from "@/lib/imageCache";
 import { safeHttpUrl } from "@/lib/security";
+import { captureMessageCacheContext, isMessageContextCurrent } from "@/lib/messageCacheLifecycle";
 
 export default function ImagePreviewPage() {
   return (
@@ -54,9 +55,10 @@ function ImagePreviewContent() {
       return;
     }
     let cancelled = false;
+    const context = captureMessageCacheContext(currentSession);
     getMessageById(currentSession, messageId)
       .then((message) => {
-        if (cancelled) return;
+        if (cancelled || !isMessageContextCurrent(context)) return;
         const ref =
           message?.message_type === "image" && !message.deleted_at
             ? message.image_url
@@ -65,7 +67,7 @@ function ImagePreviewContent() {
         if (!ref) setRefMissing(true);
       })
       .catch(() => {
-        if (cancelled) return;
+        if (cancelled || !isMessageContextCurrent(context)) return;
         setMediaRef(null);
         setRefMissing(true);
       });
@@ -88,11 +90,12 @@ function ImagePreviewContent() {
       setNotice(t("previewNeedSession"));
       return;
     }
+    const context = captureMessageCacheContext(session);
     const ok = await dialog.confirm({
       title: t("previewSetBackground"),
       message: t("previewSetBackgroundConfirm"),
     });
-    if (!ok) return;
+    if (!ok || !isMessageContextCurrent(context)) return;
     setChatBackground(session.family_id, mediaRef, messageId);
     setNotice(t("previewBackgroundSet"));
   }

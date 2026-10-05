@@ -23,7 +23,10 @@ import { clearSession, loadSession, saveSession, type LocalSession } from "@/lib
 import { updateMemberAvatar, uploadAvatar } from "@/lib/avatarService";
 import { humanizeError } from "@/lib/errors";
 import { cacheImageBlob } from "@/lib/imageCache";
+import { isMediaCacheGenerationCurrent, mediaCacheGeneration } from "@/lib/mediaCacheStore";
 import { prepareAvatarImage } from "@/lib/imageCompression";
+import { createLatestRequestGate } from "@/lib/latestRequest";
+import { captureMessageCacheContext, isMessageContextCurrent } from "@/lib/messageCacheLifecycle";
 import { validateMember } from "@/lib/familyService";
 import { notifyMemberProfileChanged } from "@/lib/memberProfileEvents";
 import { getPersonalDashboard } from "@/lib/personalDashboardService";
@@ -44,31 +47,60 @@ export default function MePage() {
   const [avatarBusy, setAvatarBusy] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
+  const avatarUploadRef = useRef<AbortController | null>(null);
+  const dashboardRequestsRef = useRef({
+    gate: createLatestRequestGate(),
+    pending: null as Promise<void> | null,
+  });
+
+  const invalidateDashboard = useCallback(() => {
+    dashboardRequestsRef.current.gate.invalidate();
+    dashboardRequestsRef.current.pending = null;
+  }, []);
+
+  useEffect(() => {
+    setAvatarBusy(false);
+    return () => {
+      avatarUploadRef.current?.abort();
+      avatarUploadRef.current = null;
+    };
+  }, [session?.family_id, session?.member_id, session?.member_token]);
 
   const refreshDashboard = useCallback(
-    async (activeSession: LocalSession, quiet = false) => {
-      try {
-        const todayStart = startOfDay(new Date());
-        const todayEnd = addDays(todayStart, 1);
-        const rows = await getPersonalDashboard(
-          activeSession,
-          todayStart,
-          todayEnd,
-          new Date(),
-        );
-        setDashboard(rows);
-      } catch (err) {
-        const message = humanizeError(err, language) || t("meLoadFailed");
-        if (quiet) toast.error(message);
-        else setLoadError(message);
-      } finally {
-      }
+    (activeSession: LocalSession, quiet = false): Promise<void> => {
+      const requests = dashboardRequestsRef.current;
+      if (requests.pending) return requests.pending;
+      const isCurrent = requests.gate.begin();
+      const request = (async () => {
+        try {
+          const todayStart = startOfDay(new Date());
+          const todayEnd = addDays(todayStart, 1);
+          const rows = await getPersonalDashboard(
+            activeSession,
+            todayStart,
+            todayEnd,
+            new Date(),
+          );
+          if (isCurrent()) setDashboard(rows);
+        } catch (err) {
+          if (!isCurrent()) return;
+          const message = humanizeError(err, language) || t("meLoadFailed");
+          if (quiet) toast.error(message);
+          else setLoadError(message);
+        }
+      })();
+      requests.pending = request;
+      void request.then(() => {
+        if (requests.pending === request) requests.pending = null;
+      });
+      return request;
     },
     [language, t, toast],
   );
 
   useEffect(() => {
     let cancelled = false;
+    invalidateDashboard();
     setLoading(true);
     setLoadError(null);
 
@@ -77,6 +109,7 @@ export default function MePage() {
       setLoadError(t("envTitle"));
       return () => {
         cancelled = true;
+        invalidateDashboard();
       };
     }
 
@@ -85,9 +118,12 @@ export default function MePage() {
       router.replace("/");
       return () => {
         cancelled = true;
+        invalidateDashboard();
       };
     }
     const localSession = local;
+    const context = captureMessageCacheContext(local);
+    const isCurrent = () => !cancelled && isMessageContextCurrent(context);
 
     async function run() {
       try {
@@ -95,7 +131,7 @@ export default function MePage() {
           localSession.member_id,
           localSession.member_token,
         );
-        if (cancelled) return;
+        if (!isCurrent()) return;
         if (!fresh) {
           clearSession();
           setLoadError(t("chatSessionExpired"));
@@ -106,19 +142,20 @@ export default function MePage() {
         setSession(fresh);
         await refreshDashboard(fresh, false);
       } catch (err) {
-        if (!cancelled) {
+        if (isCurrent()) {
           setLoadError(humanizeError(err, language) || t("meLoadFailed"));
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (isCurrent()) setLoading(false);
       }
     }
 
     void run();
     return () => {
       cancelled = true;
+      invalidateDashboard();
     };
-  }, [language, refreshDashboard, router, t]);
+  }, [invalidateDashboard, language, refreshDashboard, router, t]);
 
   useEffect(() => {
     if (!session) return;
@@ -140,17 +177,26 @@ export default function MePage() {
   }
 
   async function handleAvatarFile(file: File | null) {
-    if (!file || !session) return;
+    if (!file || !session || avatarUploadRef.current) return;
+    const controller = new AbortController();
+    avatarUploadRef.current = controller;
+    const generation = mediaCacheGeneration(session);
+    const isCurrent = () => !controller.signal.aborted && isMediaCacheGenerationCurrent(session, generation);
     setAvatarBusy(true);
     try {
       // Phone photos routinely exceed the 2MB upload cap — resize/re-encode
       // first (also converts HEIC), same as chat images.
       const prepared = await prepareAvatarImage(file);
-      const url = await uploadAvatar(session, prepared);
+      if (!isCurrent()) return;
+      const url = await uploadAvatar(session, prepared, controller.signal);
+      if (!isCurrent()) return;
       const savedUrl = await updateMemberAvatar(session, url);
+      if (!isCurrent()) return;
+      invalidateDashboard();
       // Keep a local copy of exactly the bytes we uploaded, so the new avatar
       // shows instantly everywhere without a round-trip to storage.
-      await cacheImageBlob(savedUrl ?? url, prepared).catch(() => undefined);
+      await cacheImageBlob(session, savedUrl ?? url, prepared).catch(() => undefined);
+      if (!isCurrent()) return;
       setDashboard((current) =>
         current
           ? {
@@ -169,24 +215,33 @@ export default function MePage() {
       });
       toast.success(t("meAvatarUpdated"));
     } catch (err) {
-      toast.error(humanizeError(err, language) || t("meAvatarUploadFailed"));
+      if (isCurrent()) toast.error(humanizeError(err, language) || t("meAvatarUploadFailed"));
     } finally {
-      setAvatarBusy(false);
-      if (avatarInputRef.current) avatarInputRef.current.value = "";
+      if (avatarUploadRef.current === controller) {
+        avatarUploadRef.current = null;
+        setAvatarBusy(false);
+        if (avatarInputRef.current) avatarInputRef.current.value = "";
+      }
     }
   }
 
   async function handleRemoveAvatar() {
-    if (!session || !dashboard?.profile.avatar_url) return;
+    if (!session || !dashboard?.profile.avatar_url || avatarUploadRef.current) return;
+    const generation = mediaCacheGeneration(session);
     const ok = await dialog.confirm({
       title: t("meAvatarRemove"),
       message: t("meAvatarRemoveConfirm"),
       danger: true,
     });
-    if (!ok) return;
+    if (!ok || !isMediaCacheGenerationCurrent(session, generation)) return;
+    const controller = new AbortController();
+    avatarUploadRef.current = controller;
+    const isCurrent = () => !controller.signal.aborted && isMediaCacheGenerationCurrent(session, generation);
     setAvatarBusy(true);
     try {
       await updateMemberAvatar(session, null);
+      if (!isCurrent()) return;
+      invalidateDashboard();
       setDashboard((current) =>
         current
           ? {
@@ -205,9 +260,12 @@ export default function MePage() {
       });
       toast.success(t("meAvatarRemoved"));
     } catch (err) {
-      toast.error(humanizeError(err, language) || t("meAvatarUploadFailed"));
+      if (isCurrent()) toast.error(humanizeError(err, language) || t("meAvatarUploadFailed"));
     } finally {
-      setAvatarBusy(false);
+      if (avatarUploadRef.current === controller) {
+        avatarUploadRef.current = null;
+        setAvatarBusy(false);
+      }
     }
   }
 

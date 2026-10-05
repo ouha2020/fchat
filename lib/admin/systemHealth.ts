@@ -238,7 +238,6 @@ const REQUIRED_FUNCTIONS: ExpectedFunction[] = [
   fn("issue_member_session_for_user", ["p_user_id uuid"], "auth_family_code_flow", false),
   fn("join_family", ["p_family_code text"], undefined, true),
   fn("resolve_join_family_state", ["p_family_code text"]),
-  fn("verify_pending_family_code", ["p_user_id uuid"], "auth_family_code_flow", false),
   fn("list_schedule_items_for_member", ["p_range_start timestamp with time zone"], "family_schedule_items"),
   fn("search_schedule_items_for_member", ["p_query text"], "schedule_search_filters"),
   fn("get_schedule_item_for_member", ["p_item_id uuid"], "schedule_details_editing"),
@@ -414,6 +413,7 @@ const REQUIRED_MIGRATIONS = [
   "schedule_reminder_rule_consistency",
   "system_health_consistency_checks",
   "private_chat_media_storage",
+  "revoke_legacy_family_creation",
 ];
 
 function column(table: string, columnName: string, migrationName?: string): ExpectedColumn {
@@ -539,6 +539,22 @@ export function buildSystemHealthReport(
           }),
         ];
       }),
+    },
+    {
+      id: "legacy-family-creation",
+      label: "旧版家庭创建权限",
+      checks: [check({
+        id: "legacy-family-creation:private",
+        label: "create_family() 禁止公开调用",
+        passed: !(catalog.routineGrants ?? []).some((grant) => grant.schema === "public" &&
+          grant.name === "create_family" && ["public", "anon", "authenticated"].includes(grant.grantee.toLowerCase()) &&
+          grant.privilege.toLowerCase() === "execute"),
+        severity: "critical",
+        message: "旧版 create_family 仍允许公开调用，可能绕过家庭创建者账号与邀请校验。",
+        impact: "无账号请求可能创建家庭并消耗数据库资源。",
+        suggestedFix: "执行 20261005_revoke_legacy_family_creation.sql，撤销两个旧签名的公开 execute 权限。",
+        migrationName: "revoke_legacy_family_creation",
+      })],
     },
     {
       id: "realtime",

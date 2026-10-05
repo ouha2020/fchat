@@ -78,6 +78,7 @@ const ERROR_MAP: Record<string, TranslationKey> = {
   account_already_has_family: "error_account_already_has_family",
   email_required: "error_email_required",
   invalid_email: "error_invalid_email",
+  registration_invite_required: "error_registration_invite_required",
   password_required: "error_password_required",
   password_too_short: "error_password_too_short",
   email_registered: "error_email_registered",
@@ -111,6 +112,24 @@ const NETWORK_ERROR_MESSAGES: Record<Language, string> = {
   en: "Unable to connect right now. Check your connection and try again.",
 };
 
+const UPLOAD_ERROR_MESSAGES: Record<Language, Record<string, string>> = {
+  zh: {
+    upload_timeout: "上传超时，请检查网络后重试。",
+    upload_failed: "上传失败，请稍后重试。",
+    upload_cancelled: "上传已取消。",
+  },
+  ja: {
+    upload_timeout: "アップロードがタイムアウトしました。通信環境を確認して再試行してください。",
+    upload_failed: "アップロードできませんでした。もう一度お試しください。",
+    upload_cancelled: "アップロードをキャンセルしました。",
+  },
+  en: {
+    upload_timeout: "Upload timed out. Check your connection and try again.",
+    upload_failed: "Upload failed. Please try again.",
+    upload_cancelled: "Upload cancelled.",
+  },
+};
+
 function getErrorMessage(message: unknown): string {
   if (typeof message === "string") return message;
   if (message instanceof Error) return message.message;
@@ -139,6 +158,7 @@ export function humanizeError(message: unknown, language?: Language): string {
   if (!message) return translate(lang, "errorFallback");
   if (isNetworkError(message)) return NETWORK_ERROR_MESSAGES[lang];
   const raw = getErrorMessage(message);
+  if (UPLOAD_ERROR_MESSAGES[lang][raw]) return UPLOAD_ERROR_MESSAGES[lang][raw];
 
   for (const key of Object.keys(ERROR_MAP)) {
     if (raw.includes(key)) return translate(lang, ERROR_MAP[key]);

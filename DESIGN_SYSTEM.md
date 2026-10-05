@@ -4,9 +4,9 @@
 
 ## 技术基线
 
-- Framework：Next.js 14 App Router。
+- Framework：Next.js 16 App Router。
 - Language：TypeScript，`strict: true`。
-- React：React 18，客户端页面大量使用 `"use client"`。
+- React：React 19，客户端页面大量使用 `"use client"`。
 - Styling：Tailwind CSS 3 + `app/globals.css` 全局语义类。
 - Package manager：npm，锁文件为 `package-lock.json`。
 - Icon / asset：新增 Heroicons 24px outline 系统图标，按需导入；已有角色/欢迎插画及头像继续保留。

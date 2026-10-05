@@ -1,3 +1,4 @@
+import { readJsonBody, rejectMismatchedOrigin } from "@/lib/apiSecurity";
 import { createHash } from "crypto";
 import { NextRequest } from "next/server";
 
@@ -23,8 +24,10 @@ function requestIp(req: NextRequest): string {
 }
 
 export async function POST(req: NextRequest) {
+  const originError = rejectMismatchedOrigin(req);
+  if (originError) return originError;
   try {
-    const body = (await req.json().catch(() => null)) as { email?: unknown } | null;
+    const body = (await readJsonBody(req)) as { email?: unknown } | null;
     const email = normalizeEmail(body?.email);
     if (!email) throw new Error("email_required");
     if (!validEmail(email)) throw new Error("invalid_email");
@@ -34,7 +37,7 @@ export async function POST(req: NextRequest) {
     const ipHash = sha256(requestIp(req));
     const since = new Date(Date.now() - 60 * 60 * 1000).toISOString();
 
-    const [{ count: emailCount }, { count: ipCount }] = await Promise.all([
+    const [{ count: emailCount, error: emailError }, { count: ipCount, error: ipError }] = await Promise.all([
       sb
         .from("family_code_recovery_attempts")
         .select("id", { count: "exact", head: true })
@@ -46,40 +49,39 @@ export async function POST(req: NextRequest) {
         .eq("ip_hash", ipHash)
         .gte("created_at", since),
     ]);
+    if (emailError || ipError) throw emailError ?? ipError;
 
     if ((emailCount ?? 0) >= 3 || (ipCount ?? 0) >= 10) {
-      await sb.from("family_code_recovery_attempts").insert({
-        email_hash: emailHash,
-        ip_hash: ipHash,
-        sent: false,
-      });
       return jsonOk({ ok: true });
     }
 
+    const { data: attempt, error: attemptError } = await sb.from("family_code_recovery_attempts")
+      .insert({ email_hash: emailHash, ip_hash: ipHash, sent: false }).select("id").single();
+    if (attemptError || !attempt) throw attemptError ?? new Error("recovery_failed");
+
     const { data: family, error } = await sb
       .from("families")
-      .select("id, family_code")
+      .select("id, family_code, family_code_email_sent_at")
       .eq("owner_email", email)
       .order("created_at", { ascending: true })
       .limit(1)
       .maybeSingle();
     if (error) throw error;
 
-    let sent = false;
     if (family?.family_code) {
-      await sendRecoveredFamilyCodeEmail(email, family.family_code);
-      sent = true;
-      await sb
-        .from("families")
-        .update({ family_code_email_sent_at: new Date().toISOString() })
+      const lastSent = family.family_code_email_sent_at;
+      if (lastSent && Date.now() - new Date(lastSent).getTime() < 60_000) return jsonOk({ ok: true });
+      let claim = sb.from("families").update({ family_code_email_sent_at: new Date().toISOString() })
         .eq("id", family.id);
+      claim = lastSent ? claim.eq("family_code_email_sent_at", lastSent) : claim.is("family_code_email_sent_at", null);
+      const { data: claimed, error: claimError } = await claim.select("id");
+      if (claimError) throw claimError;
+      if (!claimed?.length) return jsonOk({ ok: true });
+      await sendRecoveredFamilyCodeEmail(email, family.family_code);
+      const { error: markError } = await sb.from("family_code_recovery_attempts")
+        .update({ sent: true }).eq("id", attempt.id);
+      if (markError) throw markError;
     }
-
-    await sb.from("family_code_recovery_attempts").insert({
-      email_hash: emailHash,
-      ip_hash: ipHash,
-      sent,
-    });
     return jsonOk({ ok: true });
   } catch (error) {
     return apiError(error);

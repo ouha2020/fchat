@@ -19,6 +19,7 @@ import {
   validateMember,
 } from "@/lib/familyService";
 import { savePendingOwnerRejoin } from "@/lib/ownerRejoinPending";
+import { captureMessageCacheContext, isMessageContextCurrent } from "@/lib/messageCacheLifecycle";
 import { isSupabaseConfigured } from "@/lib/supabaseClient";
 import { getSupabaseAuth } from "@/lib/supabaseAuthClient";
 import type { FamilyRole } from "@/types/family";
@@ -44,15 +45,18 @@ export default function JoinPage() {
     async function run() {
       const local = loadSession();
       if (!local || !isSupabaseConfigured()) return;
+      const context = captureMessageCacheContext(local);
       try {
         const session = await validateMember(local.member_id, local.member_token);
-        if (cancelled) return;
+        if (cancelled || !isMessageContextCurrent(context)) return;
         if (session) {
           saveSession(session);
           router.replace("/chat");
+        } else {
+          clearSession();
         }
       } catch {
-        clearSession();
+        // A temporary network failure does not revoke the stored membership.
       }
     }
 

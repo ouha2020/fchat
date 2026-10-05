@@ -1,3 +1,4 @@
+import { readJsonBody, rejectMismatchedOrigin } from "@/lib/apiSecurity";
 import { NextRequest } from "next/server";
 
 import {
@@ -8,12 +9,16 @@ import {
   rowToSession,
 } from "@/lib/accountServer";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import { isRegistrationAllowed } from "@/lib/registrationServer";
 import { randomUUID } from "crypto";
 
 export async function POST(req: NextRequest) {
+  const originError = rejectMismatchedOrigin(req);
+  if (originError) return originError;
   try {
     const { user, email } = await requireAuthUser(req);
-    const body = (await req.json().catch(() => null)) as {
+    if (!isRegistrationAllowed(email)) throw new Error("registration_invite_required");
+    const body = (await readJsonBody(req)) as {
       familyCode?: unknown;
       familyName?: unknown;
       nickname?: unknown;

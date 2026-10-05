@@ -165,6 +165,7 @@ self.addEventListener("notificationclick", (event) => {
                   familyId,
                   messageId,
                   scheduleItemId,
+                  openedFromNotification: true,
                 }),
               );
               return focusedClient;
@@ -340,18 +341,21 @@ function buildClientPushMessage({
   familyId,
   messageId,
   scheduleItemId,
+  openedFromNotification = false,
 }) {
   if (isScheduleReminder) {
     return {
       type: SCHEDULE_REMINDER_RECEIVED,
       familyId,
       scheduleItemId,
+      ...(openedFromNotification ? { openedFromNotification: true } : {}),
     };
   }
   return {
     type: PUSH_RECEIVED,
     familyId,
     messageId,
+    ...(openedFromNotification ? { openedFromNotification: true } : {}),
   };
 }
 

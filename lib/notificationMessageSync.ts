@@ -6,6 +6,7 @@ import { getMessageById } from "@/lib/messageService";
 import { mergeRealtimeMessage } from "@/lib/messageSync";
 import { withTimeout } from "@/lib/timeout";
 import type { Message } from "@/types/message";
+import { captureMessageCacheContext, isMessageContextCurrent } from "@/lib/messageCacheLifecycle";
 
 const RETRY_DELAYS_MS = [0, 400, 1200] as const;
 const REQUEST_TIMEOUT_MS = 3000;
@@ -24,16 +25,17 @@ export function createNotificationMessageLoader({
   return function loadNotificationMessage(messageId: string): Promise<boolean> {
     const session = getSession();
     if (!session) return Promise.resolve(false);
+    const context = captureMessageCacheContext(session);
     // Keep deduplication scoped to the active identity, in memory only.
     const key = JSON.stringify([
-      session.family_id, session.member_id, session.member_token, messageId,
+      session.family_id, session.member_id, session.member_token, context.version, context.generation, messageId,
     ]);
     const existing = pending.get(key);
     if (existing) return existing;
 
     const isCurrentSession = () => {
       const current = getSession();
-      return current?.family_id === session.family_id &&
+      return isMessageContextCurrent(context) && current?.family_id === session.family_id &&
         current.member_id === session.member_id &&
         current.member_token === session.member_token;
     };
@@ -62,7 +64,7 @@ export function createNotificationMessageLoader({
         // Render before caching, even when IndexedDB is slow or the target
         // falls outside the cache's recent-message window.
         onMessage(message);
-        void mergeRealtimeMessage(session, message).catch(() => undefined);
+        void mergeRealtimeMessage(session, message, context).catch(() => undefined);
         return true;
       }
       return false;

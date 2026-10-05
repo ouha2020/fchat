@@ -34,6 +34,7 @@ export function isMessageVisibleToSession(
   message: Message,
   activeSession: LocalSession,
 ): boolean {
+  if (message.family_id !== activeSession.family_id) return false;
   if (isAssistantCardSystemMessage(message)) {
     return message.sender_member_id === activeSession.member_id;
   }
@@ -69,7 +70,23 @@ export function sortMessagesByCreatedAt(rows: Message[]): Message[] {
 
 export function mergeMessagesById(existing: Message[], incoming: Message[]): Message[] {
   const byId = new Map(existing.map((message) => [message.id, message]));
-  incoming.forEach((message) => byId.set(message.id, message));
+  incoming.forEach((message) => {
+    const current = byId.get(message.id);
+    if (current) {
+      const revision = (row: Message) => Math.max(
+        Date.parse(row.updated_at || row.created_at) || 0,
+        Date.parse(row.deleted_at || "") || 0,
+      );
+      const confirmsOptimistic = current.family_seq === null && typeof message.family_seq === "number" && !current.deleted_at;
+      if ((current.deleted_at && !message.deleted_at) || (!confirmsOptimistic && revision(current) > revision(message))) return;
+      // A same-ID server snapshot must not erase an upload's client-only state.
+      if (current.upload_status && !message.upload_status && !message.deleted_at) {
+        message = { ...message, upload_status: current.upload_status,
+          upload_progress: current.upload_progress, local_preview_url: current.local_preview_url };
+      }
+    }
+    byId.set(message.id, message);
+  });
   return sortMessagesByCreatedAt([...byId.values()]);
 }
 

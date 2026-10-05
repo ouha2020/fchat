@@ -3,6 +3,7 @@ import type { User } from "@supabase/supabase-js";
 
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import type { LocalSession } from "@/lib/authLocal";
+import { ApiRequestError, badRequest } from "@/lib/apiSecurity";
 
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const CODE_TTL_HOURS = 24;
@@ -13,7 +14,7 @@ export interface AuthUserContext {
 }
 
 export function jsonOk(body: Record<string, unknown> = {}) {
-  return NextResponse.json(body);
+  return NextResponse.json(body, { headers: { "Cache-Control": "private, no-store" } });
 }
 
 export function jsonError(error: string, status = 400) {
@@ -33,11 +34,11 @@ export async function requireAuthUser(req: NextRequest): Promise<AuthUserContext
 }
 
 export function normalizeEmail(email: unknown): string {
-  return String(email ?? "").trim().toLowerCase();
+  return typeof email === "string" ? email.trim().toLowerCase() : "";
 }
 
 export function validEmail(email: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  return email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
 export function validPassword(password: string): boolean {
@@ -87,7 +88,7 @@ export async function ensurePendingFamilyCode(
     .from("pending_family_codes")
     .select("*")
     .eq("user_id", userId)
-    .in("status", ["pending", "verified"])
+    .in("status", ["pending", "verified", "expired"])
     .order("created_at", { ascending: false })
     .limit(1);
   if (error) throw error;
@@ -95,28 +96,46 @@ export async function ensurePendingFamilyCode(
   const existing = rows?.[0] ?? null;
   if (existing) {
     const expiresAt = new Date(existing.expires_at);
-    if (expiresAt <= now) {
-      await sb
-        .from("pending_family_codes")
-        .update({ status: "expired", updated_at: now.toISOString() })
-        .eq("id", existing.id);
+    if (expiresAt <= now || existing.status === "expired") {
       if (!resend) return { status: "expired" as const };
     } else {
-      if (resend) await sendFamilyCodeEmail(email, existing.family_code);
+      if (resend) {
+        if (Date.now() - new Date(existing.updated_at).getTime() < 60_000) throw new Error("rate_limited");
+        // Compare-and-set the existing timestamp before sending. Concurrent requests
+        // cannot all send the same email, even across serverless instances.
+        const { data: claimed, error: claimError } = await sb.from("pending_family_codes")
+          .update({ updated_at: now.toISOString() }).eq("id", existing.id)
+          .eq("updated_at", existing.updated_at).select("id");
+        if (claimError) throw claimError;
+        if (!claimed?.length) throw new Error("rate_limited");
+        await sendFamilyCodeEmail(email, existing.family_code);
+      }
       return { status: existing.status as "pending" | "verified", familyCode: existing.family_code };
     }
   }
 
   const familyCode = await generateUniqueFamilyCode();
   const expiresAt = new Date(Date.now() + CODE_TTL_HOURS * 60 * 60 * 1000);
-  const { error: insertError } = await sb.from("pending_family_codes").insert({
+  const values = {
     user_id: userId,
     email,
     family_code: familyCode,
     status: "pending",
     expires_at: expiresAt.toISOString(),
-  });
-  if (insertError) throw insertError;
+    updated_at: now.toISOString(),
+  };
+  if (existing) {
+    const { data: claimed, error: claimError } = await sb.from("pending_family_codes")
+      .update(values).eq("id", existing.id).eq("updated_at", existing.updated_at).select("id");
+    if (claimError) throw claimError;
+    if (!claimed?.length) throw new Error("rate_limited");
+  } else {
+    // A stable UUID for new owners uses the existing primary key to arbitrate
+    // concurrent first requests without introducing a new table or RPC.
+    const { error: insertError } = await sb.from("pending_family_codes").insert({ id: userId, ...values });
+    if (insertError?.code === "23505") throw new Error("rate_limited");
+    if (insertError) throw insertError;
+  }
 
   await sendFamilyCodeEmail(email, familyCode);
   return { status: "sent" as const, familyCode };
@@ -189,10 +208,8 @@ export async function sendFamilyCodeEmail(email: string, familyCode: string): Pr
   });
 
   if (!res.ok) {
-    const detail = await res.text().catch(() => "");
     console.error("[family-code-email] Resend failed", {
       status: res.status,
-      body: detail.slice(0, 500),
     });
     throw new Error("email_send_failed");
   }
@@ -238,18 +255,19 @@ export async function sendRecoveredFamilyCodeEmail(
   });
 
   if (!res.ok) {
-    const detail = await res.text().catch(() => "");
     console.error("[family-code-recovery-email] Resend failed", {
       status: res.status,
-      body: detail.slice(0, 500),
     });
     throw new Error("email_send_failed");
   }
 }
 
 export function apiError(error: unknown) {
+  if (error instanceof ApiRequestError) return badRequest(error);
   const message = error instanceof Error ? error.message : String(error);
   if (message.includes("unauthorized")) return jsonError("unauthorized", 401);
+  if (message.includes("rate_limited")) return jsonError("rate_limited", 429);
+  if (message.includes("registration_invite_required")) return jsonError("registration_invite_required", 403);
   if (message.includes("email_required")) return jsonError("email_required", 400);
   if (message.includes("invalid_email")) return jsonError("invalid_email", 400);
   if (message.includes("email_send_failed")) return jsonError("email_send_failed", 502);

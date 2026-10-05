@@ -76,6 +76,8 @@ export default function OfflinePage() {
         <button id="offline-reload" type="button" className="btn-primary mt-5 w-full">
           重新加载
         </button>
+        {/* Offline recovery needs a document navigation through the Service Worker. */}
+        {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
         <a
           href="/"
           className="mt-3 inline-block w-full text-sm font-medium text-brand-600"

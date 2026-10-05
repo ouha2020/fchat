@@ -2,6 +2,7 @@
 
 import type { LocalSession } from "@/lib/authLocal";
 import type { TranslationKey } from "@/lib/i18n";
+import { assertMessageContext, captureMessageCacheContext } from "@/lib/messageCacheLifecycle";
 
 export type PushPlatform = "ios" | "android" | "desktop" | "unknown";
 
@@ -93,18 +94,23 @@ export async function subscribeToPush(
   session: LocalSession,
   preferences: PushPreferences,
 ): Promise<void> {
+  const context = captureMessageCacheContext(session);
+  assertMessageContext(context);
   const support = getPushSupportState();
   if (!support.supported) {
     throw new Error(support.reason ?? "unsupported");
   }
 
   const permission = await Notification.requestPermission();
+  assertMessageContext(context);
   if (permission !== "granted") {
     throw new Error(permission === "denied" ? "permission_denied" : "permission_default");
   }
 
   const registration = await ensureServiceWorker();
+  assertMessageContext(context);
   const existing = await registration.pushManager.getSubscription();
+  assertMessageContext(context);
   const subscription =
     existing ??
     (await registration.pushManager.subscribe({
@@ -113,9 +119,11 @@ export async function subscribeToPush(
         process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY!,
       ),
     }));
+  assertMessageContext(context);
 
   const nextPreferences = toNewMessagePushPreferences(preferences);
   await savePushSubscription(session, subscription, nextPreferences);
+  assertMessageContext(context);
   savePushPreferences(session, nextPreferences);
 }
 
@@ -124,6 +132,8 @@ export async function savePushSubscription(
   subscription: PushSubscription,
   preferences: PushPreferences,
 ): Promise<void> {
+  const context = captureMessageCacheContext(session);
+  assertMessageContext(context);
   const response = await fetch("/api/push/subscribe", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -136,12 +146,16 @@ export async function savePushSubscription(
       preferences,
     }),
   });
+  assertMessageContext(context);
   if (!response.ok) throw new Error("push_subscribe_failed");
 }
 
 export async function unsubscribePush(session: LocalSession): Promise<void> {
+  const context = captureMessageCacheContext(session);
+  assertMessageContext(context);
   const subscription = await getCurrentPushSubscription();
-  await fetch("/api/push/unsubscribe", {
+  assertMessageContext(context);
+  const response = await fetch("/api/push/unsubscribe", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -149,7 +163,9 @@ export async function unsubscribePush(session: LocalSession): Promise<void> {
       memberToken: session.member_token,
       endpoint: subscription?.endpoint ?? null,
     }),
-  }).catch(() => undefined);
+  });
+  assertMessageContext(context);
+  if (!response.ok) throw new Error("push_unsubscribe_failed");
   await subscription?.unsubscribe().catch(() => undefined);
 }
 
@@ -220,6 +236,7 @@ export interface ServerSubscriptionInfo {
 export async function fetchPushDiagnostics(
   session: LocalSession,
 ): Promise<PushDiagnostics> {
+  const context = captureMessageCacheContext(session);
   const permission =
     typeof Notification === "undefined" ? "unsupported" : Notification.permission;
 
@@ -251,17 +268,20 @@ export async function fetchPushDiagnostics(
   let presence: PushDiagnostics["presence"] = null;
 
   try {
-    const params = new URLSearchParams({
-      memberId: session.member_id,
-      memberToken: session.member_token,
+    assertMessageContext(context);
+    const resp = await fetch("/api/push/diagnostics", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify({ memberId: session.member_id, memberToken: session.member_token }),
     });
-    const resp = await fetch(`/api/push/diagnostics?${params.toString()}`);
     if (resp.ok) {
       const data = (await resp.json()) as {
         ok: boolean;
         subscriptions: ServerSubscriptionInfo[];
         presence: PushDiagnostics["presence"];
       };
+      assertMessageContext(context);
       serverSubscriptions = data.subscriptions ?? [];
       presence = data.presence ?? null;
     }
@@ -344,12 +364,16 @@ export async function checkPushSubscriptionHealth(
   session: LocalSession,
   options: { force?: boolean } = {},
 ): Promise<"ok" | "resubscribed" | "expired" | "no_subscription"> {
+  const context = captureMessageCacheContext(session);
+  assertMessageContext(context);
   if (!("serviceWorker" in navigator)) return "no_subscription";
 
   const registration = await navigator.serviceWorker.getRegistration("/");
+  assertMessageContext(context);
   if (!registration) return "no_subscription";
 
   const subscription = await registration.pushManager.getSubscription();
+  assertMessageContext(context);
   if (!subscription) return "no_subscription";
 
   if (subscription.expirationTime && subscription.expirationTime < Date.now()) {
@@ -357,7 +381,7 @@ export async function checkPushSubscriptionHealth(
     return "expired";
   }
 
-  const healthKey = `${session.member_id}:${subscription.endpoint}`;
+  const healthKey = `${session.family_id}:${session.member_id}:${context.version}:${subscription.endpoint}`;
   const now = Date.now();
   const previousSaveAt = lastHealthSaveAt.get(healthKey) ?? 0;
   if (!options.force && now - previousSaveAt < HEALTH_CHECK_DEBOUNCE_MS) {
@@ -366,7 +390,9 @@ export async function checkPushSubscriptionHealth(
 
   const prefs = getPushPreferences(session);
   await savePushSubscription(session, subscription, prefs);
+  assertMessageContext(context);
   lastHealthSaveAt.set(healthKey, Date.now());
+  if (lastHealthSaveAt.size > 256) lastHealthSaveAt.delete(lastHealthSaveAt.keys().next().value!);
   return options.force ? "resubscribed" : "ok";
 }
 

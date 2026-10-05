@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+
 import type { LocalSession } from "@/lib/authLocal";
 import { useCachedImage } from "@/lib/imageCache";
 
@@ -11,6 +13,7 @@ interface Props {
   className?: string;
   /** Set when the member's name is already visible right next to the avatar. */
   ariaHidden?: boolean;
+  mediaActive?: boolean;
 }
 
 export default function MemberAvatarCircle({
@@ -19,10 +22,13 @@ export default function MemberAvatarCircle({
   name,
   className = "",
   ariaHidden,
+  mediaActive = true,
 }: Props) {
   // Avatars read from the local image cache: once loaded (or seeded on
   // upload) they show instantly and never re-download.
-  const avatarUrl = useCachedImage(session, avatarRef).url;
+  const avatarUrl = useCachedImage(session, avatarRef, { enabled: mediaActive }).url;
+  const [failedAvatarUrl, setFailedAvatarUrl] = useState<string | null>(null);
+  const showAvatar = Boolean(avatarUrl && avatarUrl !== failedAvatarUrl);
   // Spread iterates code points, so emoji nicknames keep their first glyph
   // intact instead of a broken surrogate half.
   const placeholder = ([...name][0] ?? "?").toUpperCase();
@@ -30,15 +36,16 @@ export default function MemberAvatarCircle({
   return (
     <div
       aria-hidden={ariaHidden}
-      className={`flex shrink-0 items-center justify-center overflow-hidden ${className}`}
+      className={`flex shrink-0 items-center justify-center overflow-hidden rounded-full ${className}`}
     >
-      {avatarUrl ? (
+      {showAvatar ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
-          src={avatarUrl}
+          src={avatarUrl ?? undefined}
           alt=""
-          className="h-full w-full object-cover"
+          className="block h-full w-full rounded-full object-cover"
           draggable={false}
+          onError={() => setFailedAvatarUrl(avatarUrl)}
         />
       ) : (
         placeholder

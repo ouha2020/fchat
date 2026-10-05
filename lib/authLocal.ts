@@ -1,6 +1,8 @@
 "use client";
 
 import type { FamilyRole } from "@/types/family";
+import { clearImageCacheForSession } from "@/lib/mediaCacheStore";
+import { invalidateMessageCacheContext, messageIdentityMatches } from "@/lib/messageCacheLifecycle";
 
 const STORAGE_KEY = "family-chat:session";
 const DEVICE_ID_KEY = "family-chat:device-id";
@@ -36,6 +38,13 @@ export function loadSession(): LocalSession | null {
 
 export function saveSession(session: LocalSession): void {
   if (typeof window === "undefined") return;
+  const previous = loadSession();
+  if (!messageIdentityMatches(previous, session)) invalidateMessageCacheContext(session);
+  if (previous && (
+    previous.family_id !== session.family_id ||
+    previous.member_id !== session.member_id ||
+    previous.member_token !== session.member_token
+  )) clearLocalMemberCaches(previous);
   const next = { ...session, device_id: session.device_id ?? getOrCreateDeviceId() };
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
   writeCookie(MEMBER_ID_COOKIE, next.member_id);
@@ -53,16 +62,21 @@ export function updateSession(patch: Partial<LocalSession>): LocalSession | null
 export function clearSession(): void {
   if (typeof window === "undefined") return;
   const current = loadSession();
-  if (current) {
-    import("@/lib/messageCache")
-      .then(({ clearMessageCacheForSession }) =>
-        clearMessageCacheForSession(current),
-      )
-      .catch(() => undefined);
-  }
+  if (current) clearLocalMemberCaches(current);
   window.localStorage.removeItem(STORAGE_KEY);
   expireCookie(MEMBER_ID_COOKIE);
   expireCookie(MEMBER_TOKEN_COOKIE);
+}
+
+function clearLocalMemberCaches(session: LocalSession): void {
+  invalidateMessageCacheContext(session);
+  void clearImageCacheForSession(session, true);
+  import("@/lib/messageCache")
+    .then(({ clearMessageCacheForSession }) => clearMessageCacheForSession(session, true))
+    .catch(() => undefined);
+  import("@/lib/mediaClient")
+    .then(({ clearSignedMediaCacheForSession }) => clearSignedMediaCacheForSession(session))
+    .catch(() => undefined);
 }
 
 export function getOrCreateDeviceId(): string {

@@ -40,9 +40,9 @@ HomeTree / FamilyChat 是一个移动端优先的家庭沟通 Web/PWA 应用。
 
 ## 技术栈
 
-- Next.js 14 App Router
+- Next.js 16 App Router
 - TypeScript
-- React 18
+- React 19
 - Tailwind CSS
 - Supabase Auth
 - Supabase PostgreSQL
@@ -57,13 +57,15 @@ HomeTree / FamilyChat 是一个移动端优先的家庭沟通 Web/PWA 应用。
 ```bash
 npm install
 npm run dev          # localhost:3000，需要 .env.local
-npm run lint         # next lint
-npm run typecheck    # tsc --noEmit
+npm run lint         # ESLint CLI
+npm run typecheck    # next typegen + tsc --noEmit
+npm run test         # Vitest 单元与回归测试
+npm run test:e2e     # Playwright 浏览器回归（合成数据、本地隔离服务）
 npm run build        # production build
 git diff --check
 ```
 
-当前项目没有自动化 `npm run test` 脚本。验证以 `lint`、`typecheck`、`build`、`git diff --check` 和本地/真机手动回归为主。
+当前项目使用 Vitest 单元/回归测试与 Playwright 浏览器回归。验证以 `lint`、`typecheck`、`test`、`test:e2e`、`build`、`git diff --check` 和本地/真机手动回归为主；尚无 `test:lhci` 脚本。浏览器回归使用合成家庭、模拟 RPC/Realtime 和独立本地服务，不访问生产库；运行方法及真机/权限验证边界见 `docs/browser-regression.md`。
 
 ## 环境变量
 
@@ -170,7 +172,7 @@ Push payload 禁止包含：
 - member token
 - Auth token
 
-React 18 注意事项：
+React 19 注意事项：
 
 - 不要在 `setState` updater 内依赖同步副作用。
 - Realtime 回调中的副作用必须放在 updater 外部，并用 `useRef` Set 去重。
@@ -213,13 +215,14 @@ Service Worker 相关改动必须同时检查：
 
 ## Storage 规则
 
-当前图片、语音、头像使用现有 public bucket。
+当前 canonical schema 与 `20260614_private_chat_media_storage.sql` migration 将图片、语音、头像使用的 bucket 设为 private。生产是否已应用必须通过 `/admin/system-health` 或 SQL 对账。
 
 重要安全边界：
 
 - 无关成员不能通过消息/RPC拿到媒体 URL。
-- 但 public bucket 的 URL 一旦外泄，本阶段不保证外部不可访问。
-- 不要把 Storage URL 当成强私密边界。
+- 媒体引用使用 `storage://`，旧 public URL 仅作为兼容输入；访问通过 `/api/media/sign` 校验 active 成员及对应消息 recipient、日程记录 recipient、头像路径或相册归属后签名。
+- 已签发 URL 在过期前仍可被持有者使用，不要把签名 URL 当成即时撤销的权限边界。
+- 本地图片缓存必须按家庭和成员隔离、限制容量；退出或切换身份时清理，旧下载不得重新写入已退出身份的缓存。
 
 上传相关改动必须校验：
 
@@ -300,6 +303,7 @@ UI 重构必须先遵守本文件，再读取并执行以下治理文档：
 ```bash
 npm run lint
 npm run typecheck
+npm run test
 npm run build
 git diff --check
 ```
@@ -362,3 +366,13 @@ UI 改动必须检查：
 - 下一步建议
 
 如果某项验证无法本地完成，必须明确说明原因和需要的手动验证步骤。
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

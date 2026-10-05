@@ -10,6 +10,7 @@ import { useToast } from "@/components/Toast";
 import { ensureFamilyCode } from "@/lib/accountClient";
 import { clearSession, loadSession, saveSession } from "@/lib/authLocal";
 import { safeRestoreSession } from "@/lib/familyService";
+import { captureMessageCacheContext, isMessageContextCurrent } from "@/lib/messageCacheLifecycle";
 import { getSupabaseAuth } from "@/lib/supabaseAuthClient";
 import { isSupabaseConfigured } from "@/lib/supabaseClient";
 
@@ -23,8 +24,9 @@ export default function HomePage() {
     async function run() {
       const local = loadSession();
       if (!local || !isSupabaseConfigured()) return;
+      const context = captureMessageCacheContext(local);
       const result = await safeRestoreSession(local.member_id, local.member_token);
-      if (cancelled) return;
+      if (cancelled || !isMessageContextCurrent(context)) return;
       if (result.status === "valid") {
         saveSession(result.session);
         router.replace("/chat");

@@ -5,6 +5,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -30,13 +31,16 @@ interface ToastContextValue {
 const ToastContext = createContext<ToastContextValue | null>(null);
 
 let nextId = 0;
+const MAX_VISIBLE_TOASTS = 3;
 
 export default function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const activeToastsRef = useRef<Map<number, ToastItem>>(new Map());
   const timersRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
 
   const remove = useCallback((id: number) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
+    activeToastsRef.current.delete(id);
+    setToasts(Array.from(activeToastsRef.current.values()));
     const timer = timersRef.current.get(id);
     if (timer) {
       clearTimeout(timer);
@@ -46,8 +50,17 @@ export default function ToastProvider({ children }: { children: ReactNode }) {
 
   const add = useCallback(
     (message: string, type: ToastType = "info") => {
+      const active = activeToastsRef.current;
+      for (const item of active.values()) {
+        if (item.message === message && item.type === type) return;
+      }
+      if (active.size >= MAX_VISIBLE_TOASTS) {
+        const oldestId = active.keys().next().value;
+        if (oldestId !== undefined) remove(oldestId);
+      }
       const id = nextId++;
-      setToasts((prev) => [...prev, { id, message, type }]);
+      active.set(id, { id, message, type });
+      setToasts(Array.from(active.values()));
       const timer = setTimeout(() => remove(id), 4000);
       timersRef.current.set(id, timer);
     },
@@ -61,12 +74,15 @@ export default function ToastProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const value: ToastContextValue = {
-    toast: add,
-    success: useCallback((msg: string) => add(msg, "success"), [add]),
-    error: useCallback((msg: string) => add(msg, "error"), [add]),
-    info: useCallback((msg: string) => add(msg, "info"), [add]),
-  };
+  const value = useMemo<ToastContextValue>(
+    () => ({
+      toast: add,
+      success: (msg: string) => add(msg, "success"),
+      error: (msg: string) => add(msg, "error"),
+      info: (msg: string) => add(msg, "info"),
+    }),
+    [add],
+  );
 
   return (
     <ToastContext.Provider value={value}>

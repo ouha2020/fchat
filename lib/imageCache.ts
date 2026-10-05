@@ -6,6 +6,13 @@ import type { LocalSession } from "@/lib/authLocal";
 import { resolveMediaUrl, type ResolvedMedia } from "@/lib/mediaClient";
 import { isStorageBackedMediaRef } from "@/lib/mediaRefs";
 import { safeHttpUrl } from "@/lib/security";
+import {
+  isMediaCacheGenerationCurrent,
+  mediaCacheGeneration,
+  readCachedImageBlob,
+  writeCachedImageBlob,
+} from "@/lib/mediaCacheStore";
+export { mediaCacheKey } from "@/lib/mediaCacheStore";
 
 // Chat images live in Supabase Storage and are fetched through short-lived
 // signed URLs that rotate every few minutes. Without a persistent copy the
@@ -13,50 +20,10 @@ import { safeHttpUrl } from "@/lib/security";
 // and every app restart — wasteful, and a broken image whenever the network
 // blips. We keep the decoded bytes in the Cache API keyed by the *stable*
 // storage ref (not the rotating signed URL), so a downloaded image is served
-// locally from then on and never re-fetched.
-
-const MEDIA_CACHE_NAME = "family-chat-media-v1";
-// Synthetic, same-shape key so Cache API treats each ref as one stable entry
-// regardless of which signed URL happened to deliver the bytes.
-const CACHE_KEY_ORIGIN = "https://media-cache.internal/";
-
-export function mediaCacheKey(ref: string): string {
-  return CACHE_KEY_ORIGIN + encodeURIComponent(ref);
-}
+// locally until it is evicted or the member signs out.
 
 function cacheApiAvailable(): boolean {
   return typeof caches !== "undefined";
-}
-
-async function readCachedBlob(ref: string): Promise<Blob | null> {
-  if (!cacheApiAvailable()) return null;
-  try {
-    const cache = await caches.open(MEDIA_CACHE_NAME);
-    const hit = await cache.match(mediaCacheKey(ref));
-    if (!hit) return null;
-    const blob = await hit.blob();
-    return blob.size > 0 ? blob : null;
-  } catch {
-    return null;
-  }
-}
-
-async function writeCachedBlob(ref: string, blob: Blob): Promise<void> {
-  if (!cacheApiAvailable() || blob.size === 0) return;
-  try {
-    const cache = await caches.open(MEDIA_CACHE_NAME);
-    await cache.put(
-      mediaCacheKey(ref),
-      new Response(blob, {
-        headers: {
-          "content-type": blob.type || "application/octet-stream",
-        },
-      }),
-    );
-  } catch {
-    // Best-effort: a full quota or private-mode restriction must never break
-    // display — we simply fall back to serving the signed URL directly.
-  }
 }
 
 /**
@@ -65,11 +32,12 @@ async function writeCachedBlob(ref: string, blob: Blob): Promise<void> {
  * instantly with no re-download.
  */
 export async function cacheImageBlob(
+  session: LocalSession,
   ref: string,
   blob: Blob,
 ): Promise<void> {
   if (!isStorageBackedMediaRef(ref)) return;
-  await writeCachedBlob(ref, blob);
+  await writeCachedImageBlob(session, ref, blob);
 }
 
 function directMediaUrl(ref: string | null | undefined): string | null {
@@ -80,6 +48,7 @@ function directMediaUrl(ref: string | null | undefined): string | null {
 interface CachedImageOptions {
   messageId?: string | null;
   contextEventId?: string | null;
+  enabled?: boolean;
 }
 
 export interface CachedImage extends ResolvedMedia {
@@ -141,11 +110,13 @@ export function useCachedImage(
 ): CachedImage {
   const messageId = options.messageId ?? null;
   const contextEventId = options.contextEventId ?? null;
+  const enabled = options.enabled ?? true;
   const [media, setMedia] = useState<CachedImage>(() =>
     initialCachedMedia(ref),
   );
 
   useEffect(() => {
+    if (!enabled) return;
     let cancelled = false;
     let objectUrl: string | null = null;
 
@@ -163,13 +134,17 @@ export function useCachedImage(
         cancelled = true;
       };
     }
+    const generation = mediaCacheGeneration(session);
+    const isCurrent = () => !cancelled && isMediaCacheGenerationCurrent(session, generation);
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 30_000);
 
     setMedia({ url: null, status: "loading", progress: null });
 
     (async () => {
       // 1. Local hit: display immediately, zero network.
-      const cached = await readCachedBlob(ref as string);
-      if (cancelled) return;
+      const cached = await readCachedImageBlob(session, ref as string, generation);
+      if (!isCurrent()) return;
       if (cached) {
         objectUrl = URL.createObjectURL(cached);
         setMedia({ url: objectUrl, status: "ready", progress: null });
@@ -187,7 +162,7 @@ export function useCachedImage(
           messageId,
           contextEventId,
         });
-        if (cancelled) return;
+        if (!isCurrent()) return;
         if (!signed) {
           setMedia({ url: null, status: "error", progress: null });
           return;
@@ -197,8 +172,8 @@ export function useCachedImage(
           return;
         }
 
-        const res = await fetch(signed);
-        if (cancelled) return;
+        const res = await fetch(signed, { signal: controller.signal });
+        if (!isCurrent()) return;
         if (!res.ok) {
           // Serve the signed URL directly so the image still shows this time.
           setMedia({ url: signed, status: "ready", progress: null });
@@ -207,19 +182,19 @@ export function useCachedImage(
         const blob = await downloadBlobWithProgress(
           res,
           (fraction) => {
-            if (!cancelled) {
+            if (isCurrent()) {
               setMedia({ url: null, status: "loading", progress: fraction });
             }
           },
-          () => cancelled,
+          () => !isCurrent(),
         );
-        if (cancelled) return;
-        await writeCachedBlob(ref as string, blob);
-        if (cancelled) return;
+        if (!isCurrent()) return;
+        await writeCachedImageBlob(session, ref as string, blob, generation);
+        if (!isCurrent()) return;
         objectUrl = URL.createObjectURL(blob);
         setMedia({ url: objectUrl, status: "ready", progress: 1 });
       } catch {
-        if (cancelled) return;
+        if (!isCurrent()) return;
         // Download/caching failed. If we got a signed URL, still show the image
         // through it; only fall back to an error when we never got a URL.
         setMedia(
@@ -228,13 +203,15 @@ export function useCachedImage(
             : { url: null, status: "error", progress: null },
         );
       }
-    })();
+    })().finally(() => window.clearTimeout(timeout));
 
     return () => {
       cancelled = true;
+      controller.abort();
+      window.clearTimeout(timeout);
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [session, ref, messageId, contextEventId]);
+  }, [session, ref, messageId, contextEventId, enabled]);
 
   return media;
 }

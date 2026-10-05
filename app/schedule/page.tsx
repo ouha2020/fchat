@@ -24,9 +24,11 @@ import { useDialog } from "@/components/Dialog";
 import { useLanguage } from "@/components/LanguageProvider";
 import { useToast } from "@/components/Toast";
 import { clearSession, loadSession, saveSession, type LocalSession } from "@/lib/authLocal";
-import { humanizeError } from "@/lib/errors";
+import { humanizeError, isNetworkError } from "@/lib/errors";
 import { validateMember } from "@/lib/familyService";
 import { getJapanHoliday, type JapanHoliday } from "@/lib/japanHolidays";
+import { createLatestRequestGate } from "@/lib/latestRequest";
+import { captureMessageCacheContext, isMessageContextCurrent } from "@/lib/messageCacheLifecycle";
 import { createGoogleMapUrl, getCurrentLocation } from "@/lib/locationService";
 import { useResolvedMedia } from "@/lib/mediaClient";
 import { listMembers } from "@/lib/memberService";
@@ -182,15 +184,50 @@ export default function SchedulePage() {
   const [deleteScope, setDeleteScope] =
     useState<ScheduleRecurrenceScope>("single");
   const selectedItemIdRef = useRef<string | null>(null);
+  const detailTargetIdRef = useRef<string | null>(null);
+  const detailOpeningRef = useRef(false);
+  const editModeRef = useRef(false);
+  const detailVisitRef = useRef(0);
+  const itemsRequestPendingRef = useRef(false);
+  const readRequestsRef = useRef({
+    items: createLatestRequestGate(),
+    detail: createLatestRequestGate(),
+    backgroundDetail: createLatestRequestGate(),
+    collaboration: createLatestRequestGate(),
+    context: createLatestRequestGate(),
+    reminder: createLatestRequestGate(),
+  });
   const pendingScheduleRefreshRef = useRef(false);
   const scheduleRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
   const seenScheduleEventIdsRef = useRef<Set<string>>(new Set());
   const syncWarningShownRef = useRef(false);
+  const refreshRetryRef = useRef({
+    failures: 0,
+    retryAt: 0,
+    noticeShown: false,
+  });
   const urlReadyRef = useRef(false);
   const pageRef = useRef<HTMLDivElement | null>(null);
   const filterDockRef = useRef<HTMLElement | null>(null);
+
+  const invalidateDetailReads = useCallback(() => {
+    const gates = readRequestsRef.current;
+    gates.detail.invalidate();
+    gates.backgroundDetail.invalidate();
+    gates.collaboration.invalidate();
+    gates.context.invalidate();
+    gates.reminder.invalidate();
+    detailTargetIdRef.current = null;
+    detailOpeningRef.current = false;
+    detailVisitRef.current += 1;
+  }, []);
+
+  useEffect(() => () => {
+    readRequestsRef.current.items.invalidate();
+    invalidateDetailReads();
+  }, [invalidateDetailReads, session]);
 
   // The bottom-docked filter panel's height varies (expanded fields stack
   // vertically on narrow screens; the active-filter notice adds a row).
@@ -243,6 +280,10 @@ export default function SchedulePage() {
   useEffect(() => {
     selectedItemIdRef.current = selectedItem?.id ?? null;
   }, [selectedItem?.id]);
+
+  useEffect(() => {
+    editModeRef.current = editMode;
+  }, [editMode]);
 
   useEffect(() => {
     if (hasActiveFilters) setFiltersOpen(true);
@@ -333,6 +374,8 @@ export default function SchedulePage() {
       };
     }
     const localSession = local;
+    const context = captureMessageCacheContext(local);
+    const isCurrent = () => !cancelled && isMessageContextCurrent(context);
 
     async function run() {
       try {
@@ -340,7 +383,7 @@ export default function SchedulePage() {
           localSession.member_id,
           localSession.member_token,
         );
-        if (cancelled) return;
+        if (!isCurrent()) return;
         if (!fresh) {
           clearSession();
           setLoadError(t("chatSessionExpired"));
@@ -351,14 +394,14 @@ export default function SchedulePage() {
         setSession(fresh);
         setForm(defaultFormState(fresh));
         const rows = await listMembers(fresh);
-        if (cancelled) return;
+        if (!isCurrent()) return;
         setMembers(rows);
       } catch (err) {
-        if (!cancelled) {
+        if (isCurrent()) {
           setLoadError(humanizeError(err, language) || t("chatLoadFailed"));
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (isCurrent()) setLoading(false);
       }
     }
 
@@ -368,10 +411,18 @@ export default function SchedulePage() {
     };
   }, [language, router, t]);
 
-  const refreshItems = useCallback(async () => {
+  const refreshItems = useCallback(async (options?: { background?: boolean }) => {
     if (!session) return;
+    const background = options?.background ?? false;
+    if (background && Date.now() < refreshRetryRef.current.retryAt) return;
+    if (background && itemsRequestPendingRef.current) return;
+    const isCurrent = readRequestsRef.current.items.begin();
+    itemsRequestPendingRef.current = true;
     setItemsLoading(true);
     try {
+      if (typeof navigator !== "undefined" && navigator.onLine === false) {
+        throw new Error("network_offline");
+      }
       const todayStart = startOfDay(new Date());
       const todayEnd = addDays(todayStart, 1);
       const shouldReuseRangeForToday =
@@ -395,9 +446,11 @@ export default function SchedulePage() {
         rowsPromise,
         todayRowsPromise,
       ]);
+      if (!isCurrent()) return;
+      refreshRetryRef.current = { failures: 0, retryAt: 0, noticeShown: false };
       setItems(rows);
       setMyTodayItems(todayRows);
-      const currentSelectedId = selectedItemIdRef.current;
+      const currentSelectedId = detailTargetIdRef.current;
       if (currentSelectedId) {
         const refreshed =
           rows.find((item) => item.id === currentSelectedId) ??
@@ -406,9 +459,25 @@ export default function SchedulePage() {
         if (refreshed) setSelectedItem(refreshed);
       }
     } catch (err) {
-      toast.error(humanizeError(err, language));
+      if (!isCurrent()) return;
+      const retry = refreshRetryRef.current;
+      retry.failures = Math.min(retry.failures + 1, 3);
+      retry.retryAt =
+        Date.now() + SCHEDULE_FALLBACK_POLL_MS * 2 ** (retry.failures - 1);
+      if (!background || !retry.noticeShown) {
+        retry.noticeShown = true;
+        const message = humanizeError(err, language);
+        if (background && isNetworkError(err)) {
+          toast.info(message);
+        } else {
+          toast.error(message);
+        }
+      }
     } finally {
-      setItemsLoading(false);
+      if (isCurrent()) {
+        itemsRequestPendingRef.current = false;
+        setItemsLoading(false);
+      }
     }
   }, [
     assigneeFilter,
@@ -445,34 +514,46 @@ export default function SchedulePage() {
   );
 
   const refreshCollaboration = useCallback(
-    async (scheduleItemId: string) => {
+    async (scheduleItemId: string, options?: { silent?: boolean }) => {
       if (!session || !scheduleItemId || !isUuid(scheduleItemId)) return;
+      if (detailTargetIdRef.current !== scheduleItemId) return;
+      const isLatest = readRequestsRef.current.collaboration.begin();
+      const isCurrent = () => isLatest() && detailTargetIdRef.current === scheduleItemId;
       setCollaborationLoading(true);
       try {
         const data = await getScheduleCollaboration(session, scheduleItemId);
+        if (!isCurrent()) return;
         setCollaboration(data);
       } catch (err) {
+        if (!isCurrent()) return;
+        if (options?.silent) return;
         setCollaboration(null);
         toast.error(humanizeError(err, language) || t("scheduleItemUnavailable"));
       } finally {
-        setCollaborationLoading(false);
+        if (isCurrent()) setCollaborationLoading(false);
       }
     },
     [language, session, t, toast],
   );
 
   const refreshContextEvents = useCallback(
-    async (scheduleItemId: string) => {
+    async (scheduleItemId: string, options?: { silent?: boolean }) => {
       if (!session || !scheduleItemId || !isUuid(scheduleItemId)) return;
+      if (detailTargetIdRef.current !== scheduleItemId) return;
+      const isLatest = readRequestsRef.current.context.begin();
+      const isCurrent = () => isLatest() && detailTargetIdRef.current === scheduleItemId;
       setContextEventsLoading(true);
       try {
         const rows = await listScheduleContextEvents(session, scheduleItemId);
+        if (!isCurrent()) return;
         setContextEvents(rows);
       } catch (err) {
+        if (!isCurrent()) return;
+        if (options?.silent) return;
         setContextEvents([]);
         toast.error(humanizeError(err, language) || t("scheduleItemUnavailable"));
       } finally {
-        setContextEventsLoading(false);
+        if (isCurrent()) setContextEventsLoading(false);
       }
     },
     [language, session, t, toast],
@@ -481,17 +562,22 @@ export default function SchedulePage() {
   const refreshReminderStatus = useCallback(
     async (scheduleItemId: string, options?: { silent?: boolean }) => {
       if (!session || !scheduleItemId || !isUuid(scheduleItemId)) return;
+      if (detailTargetIdRef.current !== scheduleItemId) return;
+      const isLatest = readRequestsRef.current.reminder.begin();
+      const isCurrent = () => isLatest() && detailTargetIdRef.current === scheduleItemId;
       setReminderStatusLoading(true);
       try {
         const data = await getScheduleReminderStatus(session, scheduleItemId);
+        if (!isCurrent()) return;
         setReminderStatus(data);
       } catch (err) {
+        if (!isCurrent()) return;
         setReminderStatus(null);
         if (!options?.silent) {
           toast.error(humanizeError(err, language));
         }
       } finally {
-        setReminderStatusLoading(false);
+        if (isCurrent()) setReminderStatusLoading(false);
       }
     },
     [language, session, toast],
@@ -505,6 +591,30 @@ export default function SchedulePage() {
         toast.error(t("scheduleItemUnavailable"));
         return;
       }
+      const changingItem = detailTargetIdRef.current !== scheduleItemId;
+      if (changingItem) invalidateDetailReads();
+      else readRequestsRef.current.backgroundDetail.invalidate();
+      detailTargetIdRef.current = scheduleItemId;
+      detailOpeningRef.current = true;
+      const isLatest = readRequestsRef.current.detail.begin();
+      const isCurrent = () => isLatest() && detailTargetIdRef.current === scheduleItemId;
+      if (changingItem) {
+        setCollaboration(null);
+        setContextEvents([]);
+        setReminderStatus(null);
+        setCollaborationLoading(false);
+        setContextEventsLoading(false);
+        setReminderStatusLoading(false);
+        setCommentText("");
+        setContextVisibility("family");
+        setContextRecipientId("");
+        setDeclineNote("");
+        setShowDeclineNote(false);
+        setEditScope("single");
+        setDeleteScope("single");
+        editModeRef.current = false;
+        setEditMode(false);
+      }
       if (updateUrl) {
         setQueryItemId(scheduleItemId);
       }
@@ -513,15 +623,14 @@ export default function SchedulePage() {
         items.find((item) => item.id === scheduleItemId) ??
         myTodayItems.find((item) => item.id === scheduleItemId) ??
         null;
-      if (cached) {
-        setSelectedItem(cached);
-        setEditMode(false);
-      }
+      if (changingItem) setSelectedItem(cached);
 
       setDetailLoading(true);
       try {
         const fresh = await getScheduleItem(session, scheduleItemId);
+        if (!isCurrent()) return;
         if (!fresh) {
+          detailTargetIdRef.current = null;
           setSelectedItem(null);
           setEditMode(false);
           clearItemParam();
@@ -529,30 +638,30 @@ export default function SchedulePage() {
           return;
         }
         setSelectedItem(fresh);
-        setEditForm(formStateFromItem(fresh));
-        setCommentText("");
-        setContextVisibility("family");
-        setContextRecipientId("");
-        setDeclineNote("");
-        setShowDeclineNote(false);
+        if (!editModeRef.current) setEditForm(formStateFromItem(fresh));
         await Promise.all([
           refreshCollaboration(fresh.id),
           refreshContextEvents(fresh.id),
           refreshReminderStatus(fresh.id),
         ]);
-        setEditScope("single");
-        setDeleteScope("single");
-        setEditMode(false);
+        if (!isCurrent()) return;
       } catch (err) {
+        if (!isCurrent()) return;
+        detailTargetIdRef.current = null;
+        setSelectedItem(null);
         toast.error(humanizeError(err, language) || t("scheduleItemUnavailable"));
         clearItemParam();
       } finally {
-        setDetailLoading(false);
+        if (isLatest()) {
+          detailOpeningRef.current = false;
+          setDetailLoading(false);
+        }
       }
     },
     [
       clearItemParam,
       items,
+      invalidateDetailReads,
       language,
       myTodayItems,
       refreshCollaboration,
@@ -565,33 +674,43 @@ export default function SchedulePage() {
   );
 
   const closeDetails = useCallback(() => {
+    invalidateDetailReads();
     setSelectedItem(null);
     setCollaboration(null);
     setContextEvents([]);
     setReminderStatus(null);
     setEditMode(false);
+    setDetailLoading(false);
+    setCollaborationLoading(false);
+    setContextEventsLoading(false);
+    setReminderStatusLoading(false);
     clearItemParam();
-  }, [clearItemParam]);
+  }, [clearItemParam, invalidateDetailReads]);
 
   const refreshSelectedScheduleDetail = useCallback(
     async (scheduleItemId: string) => {
       if (!session || !scheduleItemId || !isUuid(scheduleItemId)) return;
+      if (detailOpeningRef.current || detailTargetIdRef.current !== scheduleItemId) return;
+      const isLatest = readRequestsRef.current.backgroundDetail.begin();
+      const isCurrent = () => isLatest() && detailTargetIdRef.current === scheduleItemId;
       try {
         const fresh = await getScheduleItem(session, scheduleItemId);
+        if (!isCurrent()) return;
         if (!fresh) {
-          setSelectedItem(null);
-          setReminderStatus(null);
-          setEditMode(false);
-          clearItemParam();
+          closeDetails();
           return;
         }
         setSelectedItem(fresh);
-        await refreshReminderStatus(fresh.id, { silent: true });
+        await Promise.all([
+          refreshCollaboration(fresh.id, { silent: true }),
+          refreshContextEvents(fresh.id, { silent: true }),
+          refreshReminderStatus(fresh.id, { silent: true }),
+        ]);
       } catch {
         // Background fallback refresh should not interrupt the schedule UI.
       }
     },
-    [clearItemParam, refreshReminderStatus, session],
+    [closeDetails, refreshCollaboration, refreshContextEvents, refreshReminderStatus, session],
   );
 
   const scheduleRefresh = useCallback(
@@ -613,7 +732,7 @@ export default function SchedulePage() {
       scheduleRefreshTimerRef.current = setTimeout(() => {
         pendingScheduleRefreshRef.current = false;
         scheduleRefreshTimerRef.current = null;
-        void refreshItems();
+        void refreshItems({ background: true });
         const currentSelectedId = selectedItemIdRef.current;
         if (currentSelectedId) {
           void refreshSelectedScheduleDetail(currentSelectedId);
@@ -625,11 +744,20 @@ export default function SchedulePage() {
 
   useEffect(() => {
     void refreshItems();
+    const gate = readRequestsRef.current.items;
+    return () => {
+      gate.invalidate();
+      itemsRequestPendingRef.current = false;
+      if (scheduleRefreshTimerRef.current) {
+        clearTimeout(scheduleRefreshTimerRef.current);
+        scheduleRefreshTimerRef.current = null;
+      }
+    };
   }, [refreshItems]);
 
   useEffect(() => {
     if (!session || !queryItemId) return;
-    if (selectedItemIdRef.current === queryItemId) return;
+    if (detailTargetIdRef.current === queryItemId) return;
     void openScheduleItem(queryItemId, false);
   }, [openScheduleItem, queryItemId, session]);
 
@@ -647,6 +775,10 @@ export default function SchedulePage() {
     const refreshVisiblePage = () => {
       if (document.visibilityState === "visible") scheduleRefresh(true);
     };
+    const handleOnline = () => {
+      refreshRetryRef.current.retryAt = 0;
+      refreshVisiblePage();
+    };
     const handleServiceWorkerMessage = (event: MessageEvent) => {
       const data = event.data as ScheduleReminderMessage | null;
       if (!data || data.type !== "family-chat:schedule-reminder") return;
@@ -659,6 +791,7 @@ export default function SchedulePage() {
     };
 
     window.addEventListener("focus", refreshVisiblePage);
+    window.addEventListener("online", handleOnline);
     document.addEventListener("visibilitychange", refreshVisiblePage);
     navigator.serviceWorker?.addEventListener(
       "message",
@@ -667,6 +800,7 @@ export default function SchedulePage() {
 
     return () => {
       window.removeEventListener("focus", refreshVisiblePage);
+      window.removeEventListener("online", handleOnline);
       document.removeEventListener("visibilitychange", refreshVisiblePage);
       navigator.serviceWorker?.removeEventListener(
         "message",
@@ -703,12 +837,6 @@ export default function SchedulePage() {
           seen.add(eventId);
           if (seen.size > 500) seen.clear();
 
-          if (
-            row.schedule_item_id &&
-            row.schedule_item_id === selectedItemIdRef.current
-          ) {
-            void openScheduleItem(row.schedule_item_id, false);
-          }
           scheduleRefresh(false);
         },
       )
@@ -726,7 +854,7 @@ export default function SchedulePage() {
     return () => {
       void sb.removeChannel(channel);
     };
-  }, [openScheduleItem, scheduleRefresh, session, t, toast]);
+  }, [scheduleRefresh, session, t, toast]);
 
   useEffect(() => {
     if (!session) return;
@@ -802,6 +930,7 @@ export default function SchedulePage() {
 
   async function handleSaveEdit() {
     if (!session || !selectedItem) return;
+    const visit = detailVisitRef.current;
     setBusy(`edit:${selectedItem.id}`);
     try {
       const startsAt = localDateTimeToIso(editForm.date, editForm.time);
@@ -834,16 +963,19 @@ export default function SchedulePage() {
         ? await replaceScheduleItemRecurrence(session, payload)
         : (await updateScheduleItem(session, payload), selectedItem.id);
       await refreshItems();
-      await openScheduleItem(savedItemId, false);
+      if (detailVisitRef.current === visit && detailTargetIdRef.current === selectedItem.id) {
+        editModeRef.current = false;
+        setEditMode(false);
+        await openScheduleItem(savedItemId, false);
+      }
       if (assigneeChanged) {
         notifyScheduleCollaboration(savedItemId, "assigned");
       }
-      setEditMode(false);
       toast.success(t("scheduleSaveSuccess"));
     } catch (err) {
       toast.error(humanizeError(err, language) || t("scheduleUpdateFailed"));
     } finally {
-      setBusy(null);
+      setBusy((current) => current === `edit:${selectedItem.id}` ? null : current);
     }
   }
 
@@ -877,10 +1009,8 @@ export default function SchedulePage() {
     try {
       await deleteScheduleItem(session, item.id, recurrenceScope);
       await refreshItems();
-      if (selectedItem?.id === item.id) {
-        setSelectedItem(null);
-        setEditMode(false);
-        clearItemParam();
+      if (detailTargetIdRef.current === item.id) {
+        closeDetails();
       }
       toast.success(t("scheduleDeleteSuccess"));
     } catch (err) {
@@ -910,6 +1040,8 @@ export default function SchedulePage() {
 
   async function handleAddComment() {
     if (!session || !selectedItem) return;
+    const visit = detailVisitRef.current;
+    const submittedText = commentText;
     setBusy(`comment:${selectedItem.id}`);
     try {
       const fallbackRecipient = resolveContextRecipient(selectedItem);
@@ -921,7 +1053,9 @@ export default function SchedulePage() {
           contextVisibility === "private" ? fallbackRecipient : null,
         text_content: commentText.trim(),
       });
-      setCommentText("");
+      if (detailVisitRef.current === visit && detailTargetIdRef.current === selectedItem.id) {
+        setCommentText((current) => current === submittedText ? "" : current);
+      }
       await refreshContextEvents(selectedItem.id);
       notifyScheduleCollaboration(
         selectedItem.id,
@@ -932,7 +1066,7 @@ export default function SchedulePage() {
     } catch (err) {
       toast.error(humanizeError(err, language));
     } finally {
-      setBusy(null);
+      setBusy((current) => current === `comment:${selectedItem.id}` ? null : current);
     }
   }
 
@@ -970,12 +1104,14 @@ export default function SchedulePage() {
     blob: Blob,
     mimeType: string,
     durationMs: number,
+    signal?: AbortSignal,
   ) {
-    if (!session || !selectedItem) return;
+    if (!session || !selectedItem || signal?.aborted) return;
     setBusy(`comment:${selectedItem.id}`);
     try {
       const fallbackRecipient = resolveContextRecipient(selectedItem);
-      const url = await uploadChatAudio(session, blob, mimeType);
+      const url = await uploadChatAudio(session, blob, mimeType, signal);
+      if (signal?.aborted) return;
       const contextEventId = await createScheduleContextEvent(session, {
         schedule_item_id: selectedItem.id,
         event_type: "audio",
@@ -985,17 +1121,21 @@ export default function SchedulePage() {
         audio_url: url,
         audio_duration_ms: durationMs,
       });
-      await refreshContextEvents(selectedItem.id);
+      // A committed record still needs its notification when the drawer closes.
       notifyScheduleCollaboration(
         selectedItem.id,
         "commented",
         contextEventId,
       );
+      if (signal?.aborted) return;
+      await refreshContextEvents(selectedItem.id);
+      if (signal?.aborted) return;
       toast.success(t("scheduleCommentSuccess"));
     } catch (err) {
+      if (signal?.aborted) return;
       toast.error(humanizeError(err, language) || t("inputAudioSendFailed"));
     } finally {
-      setBusy(null);
+      setBusy((current) => current === `comment:${selectedItem.id}` ? null : current);
     }
   }
 
@@ -1022,6 +1162,7 @@ export default function SchedulePage() {
 
   async function handleRespondAssignment(response: "accepted" | "declined") {
     if (!session || !selectedItem) return;
+    const visit = detailVisitRef.current;
     setBusy(`response:${selectedItem.id}`);
     try {
       await respondScheduleAssignment(
@@ -1030,16 +1171,18 @@ export default function SchedulePage() {
         response,
         response === "declined" ? declineNote : null,
       );
-      setDeclineNote("");
-      setShowDeclineNote(false);
-      await openScheduleItem(selectedItem.id, false);
+      if (detailVisitRef.current === visit && detailTargetIdRef.current === selectedItem.id) {
+        setDeclineNote("");
+        setShowDeclineNote(false);
+        await openScheduleItem(selectedItem.id, false);
+      }
       scheduleRefresh(true);
       notifyScheduleCollaboration(selectedItem.id, response);
       toast.success(t("scheduleRespondSuccess"));
     } catch (err) {
       toast.error(humanizeError(err, language));
     } finally {
-      setBusy(null);
+      setBusy((current) => current === `response:${selectedItem.id}` ? null : current);
     }
   }
 
@@ -1446,9 +1589,13 @@ export default function SchedulePage() {
           onEdit={() => {
             setEditForm(formStateFromItem(selectedItem, reminderStatus));
             setEditScope("single");
+            editModeRef.current = true;
             setEditMode(true);
           }}
-          onCancelEdit={() => setEditMode(false)}
+          onCancelEdit={() => {
+            editModeRef.current = false;
+            setEditMode(false);
+          }}
           onEditFormChange={(next) => {
             setEditForm(next);
             if (
@@ -1700,7 +1847,7 @@ function ScheduleDetailPanel({
   onShowDeclineNoteChange: (value: boolean) => void;
   onAddComment: () => void;
   onAddLocation: () => Promise<void>;
-  onAddAudio: (blob: Blob, mimeType: string, durationMs: number) => Promise<void>;
+  onAddAudio: (blob: Blob, mimeType: string, durationMs: number, signal?: AbortSignal) => Promise<void>;
   onDeleteComment: (commentId: string) => void;
   onRespondAssignment: (response: "accepted" | "declined") => void;
   onEdit: () => void;
@@ -1717,6 +1864,7 @@ function ScheduleDetailPanel({
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const commentInputRef = useRef<HTMLTextAreaElement>(null);
   const recordingHandleRef = useRef<RecordingHandle | null>(null);
+  const recordingRequestRef = useRef<AbortController | null>(null);
   const recordingPointerHeldRef = useRef(false);
   const recordingTimeoutRef = useRef<number | null>(null);
   const titleId = `schedule-detail-title-${item.id}`;
@@ -1827,31 +1975,41 @@ function ScheduleDetailPanel({
 
   async function stopScheduleRecording(cancel = false) {
     clearRecordingTimeout();
+    recordingPointerHeldRef.current = false;
     const handle = recordingHandleRef.current;
-    if (!handle) return;
+    const controller = recordingRequestRef.current;
+    if (cancel || !handle) {
+      controller?.abort();
+      recordingRequestRef.current = null;
+      recordingHandleRef.current = null;
+      handle?.cancel();
+      setRecordingActive(false);
+      return;
+    }
     recordingHandleRef.current = null;
     setRecordingActive(false);
 
-    if (cancel) {
-      handle.cancel();
-      return;
-    }
-
     try {
       const result = await handle.stop();
+      if (controller?.signal.aborted || recordingRequestRef.current !== controller) return;
       if (result.durationMs < SCHEDULE_MIN_RECORD_MS) {
         setComposerNotice(t("inputRecordingTooShort"));
         return;
       }
-      await onAddAudio(result.blob, result.mimeType, result.durationMs);
+      await onAddAudio(result.blob, result.mimeType, result.durationMs, controller?.signal);
     } catch (err) {
+      if (controller?.signal.aborted || recordingRequestRef.current !== controller) return;
       setComposerNotice(humanizeError(err, language) || t("inputAudioSendFailed"));
+    } finally {
+      if (recordingRequestRef.current === controller) recordingRequestRef.current = null;
     }
   }
 
   async function handleVoicePointerDown(event: PointerEvent<HTMLButtonElement>) {
-    if (composerBusy || recordingActive) return;
+    if (composerBusy || recordingActive || recordingRequestRef.current) return;
     event.preventDefault();
+    const controller = new AbortController();
+    recordingRequestRef.current = controller;
     const target = event.currentTarget;
     const pointerId = event.pointerId;
     recordingPointerHeldRef.current = true;
@@ -1860,7 +2018,15 @@ function ScheduleDetailPanel({
     setWhisperPickerOpen(false);
 
     try {
-      const handle = await startRecording();
+      const handle = await startRecording(controller.signal);
+      if (controller.signal.aborted || recordingRequestRef.current !== controller || !recordingPointerHeldRef.current) {
+        if (recordingRequestRef.current === controller) {
+          recordingRequestRef.current = null;
+          controller.abort();
+        }
+        handle.cancel();
+        return;
+      }
       recordingHandleRef.current = handle;
       setRecordingActive(true);
       try {
@@ -1871,16 +2037,16 @@ function ScheduleDetailPanel({
       recordingTimeoutRef.current = window.setTimeout(() => {
         void stopScheduleRecording(false);
       }, SCHEDULE_MAX_RECORD_MS);
-      if (!recordingPointerHeldRef.current) {
-        void stopScheduleRecording(false);
-      }
     } catch (err) {
-      setComposerNotice(
-        humanizeError(err, language) ||
-          t("inputRecordStartError", {
-            message: err instanceof Error ? err.message : t("commonUnknownMember"),
-          }),
-      );
+      if (!controller.signal.aborted && recordingRequestRef.current === controller) {
+        recordingRequestRef.current = null;
+        setComposerNotice(
+          humanizeError(err, language) ||
+            t("inputRecordStartError", {
+              message: err instanceof Error ? err.message : t("commonUnknownMember"),
+            }),
+        );
+      }
     }
   }
 
@@ -1901,10 +2067,13 @@ function ScheduleDetailPanel({
     setWhisperPickerOpen(false);
     setConversationExpanded(false);
     setComposerNotice(null);
+    setRecordingActive(false);
   }, [item.id]);
 
   useEffect(() => {
     return () => {
+      recordingRequestRef.current?.abort();
+      recordingRequestRef.current = null;
       if (recordingTimeoutRef.current) {
         window.clearTimeout(recordingTimeoutRef.current);
         recordingTimeoutRef.current = null;
@@ -1913,7 +2082,54 @@ function ScheduleDetailPanel({
       recordingHandleRef.current?.cancel();
       recordingHandleRef.current = null;
     };
-  }, []);
+  }, [item.id]);
+
+  useEffect(() => {
+    const visualViewport = window.visualViewport;
+    let frame = 0;
+    function cancelForPrivacy() {
+      if (!recordingRequestRef.current) return;
+      if (!recordingHandleRef.current && !recordingPointerHeldRef.current) return;
+      recordingRequestRef.current.abort();
+      recordingRequestRef.current = null;
+      recordingPointerHeldRef.current = false;
+      recordingHandleRef.current?.cancel();
+      recordingHandleRef.current = null;
+      if (recordingTimeoutRef.current) {
+        window.clearTimeout(recordingTimeoutRef.current);
+        recordingTimeoutRef.current = null;
+      }
+      setRecordingActive(false);
+      setComposerNotice(t("inputRecordingBackgroundStopped"));
+    }
+    const onVisibility = () => {
+      if (document.visibilityState !== "visible") cancelForPrivacy();
+    };
+    const onViewportChange = () => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        cancelForPrivacy();
+      });
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("blur", cancelForPrivacy);
+    window.addEventListener("pagehide", cancelForPrivacy);
+    window.addEventListener("resize", onViewportChange);
+    window.addEventListener("orientationchange", onViewportChange);
+    visualViewport?.addEventListener("resize", onViewportChange);
+    visualViewport?.addEventListener("scroll", onViewportChange);
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("blur", cancelForPrivacy);
+      window.removeEventListener("pagehide", cancelForPrivacy);
+      window.removeEventListener("resize", onViewportChange);
+      window.removeEventListener("orientationchange", onViewportChange);
+      visualViewport?.removeEventListener("resize", onViewportChange);
+      visualViewport?.removeEventListener("scroll", onViewportChange);
+    };
+  }, [t]);
 
   useEffect(() => {
     const visualViewport = window.visualViewport;
@@ -2746,8 +2962,10 @@ function ScheduleDetailPanel({
                         onPointerUp={handleVoicePointerUp}
                         onPointerCancel={handleVoicePointerCancel}
                         onPointerLeave={() => {
+                          const wasHolding = recordingPointerHeldRef.current;
                           recordingPointerHeldRef.current = false;
                           if (recordingActive) void stopScheduleRecording(false);
+                          else if (wasHolding) void stopScheduleRecording(true);
                         }}
                       ><MicrophoneIcon className="h-8 w-8" aria-hidden="true" /></button>
                       <textarea

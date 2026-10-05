@@ -9,7 +9,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 
 import AppLoading from "@/components/AppLoading";
 import ChatInput from "@/components/ChatInput";
-import ChatMessage from "@/components/ChatMessage";
+import ChatMessageRow, { type ChatMessageActions } from "@/components/ChatMessageRow";
 import MemberAvatarCircle from "@/components/MemberAvatarCircle";
 import type { AssistantCardEdit } from "@/components/AssistantActionCard";
 import EffectOverlay from "@/components/EffectOverlay";
@@ -62,6 +62,8 @@ import {
   readMemberProfileChanged,
 } from "@/lib/memberProfileEvents";
 import { resolveMediaUrl } from "@/lib/mediaClient";
+import { captureMessageCacheContext, isMessageContextCurrent, messageIdentityMatches,
+  watchMessageContext, type MessageCacheContext } from "@/lib/messageCacheLifecycle";
 import { fileExtFromRef, triggerBlobDownload } from "@/lib/download";
 import {
   filterVisibleMessages,
@@ -100,7 +102,7 @@ import {
   requestMessagePush,
   updatePushPresence,
 } from "@/lib/pushNotificationService";
-import { safeGoogleMapsUrl } from "@/lib/security";
+import { isUuid, safeGoogleMapsUrl } from "@/lib/security";
 import type { RecordingResult } from "@/lib/recordingService";
 import { sendScheduleCollaborationNotification } from "@/lib/scheduleCollaborationClient";
 import { resolveScheduleCreationNotification } from "@/lib/scheduleCollaborationPolicy";
@@ -191,6 +193,7 @@ interface PushReceivedMessage {
   type?: string;
   familyId?: string | null;
   messageId?: string | null;
+  openedFromNotification?: boolean;
   scheduleItemId?: string | null;
   oldEndpoint?: string | null;
   newEndpoint?: string | null;
@@ -774,6 +777,18 @@ export default function ChatPage() {
   // preview object URLs (to revoke), both keyed by the temporary message id.
   const pendingImageFilesRef = useRef<Map<string, File>>(new Map());
   const previewObjectUrlsRef = useRef<Map<string, string>>(new Map());
+  const imageUploadsRef = useRef<Map<string, AbortController>>(new Map());
+  const audioUploadRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    const imageUploads = imageUploadsRef.current;
+    return () => {
+      imageUploads.forEach((controller) => controller.abort());
+      imageUploads.clear();
+      audioUploadRef.current?.abort();
+      audioUploadRef.current = null;
+    };
+  }, [session?.member_id]);
   const audioDownloadingRef = useRef(false);
   const cachedMessageLimitRef = useRef(INITIAL_CACHED_MESSAGE_LIMIT);
   const loadingOlderMessagesRef = useRef(false);
@@ -784,6 +799,7 @@ export default function ChatPage() {
   const isNearBottomRef = useRef(true);
   const reachedHistoryStartRef = useRef(false);
   const bottomScrollTimeoutsRef = useRef<number[]>([]);
+  const bottomScrollRequestRef = useRef(0);
   const isIOSRef = useRef(false);
   const membersRef = useRef<FamilyMember[]>([]);
   useEffect(() => {
@@ -829,6 +845,15 @@ export default function ChatPage() {
   const scrollToMessage = useCallback((messageId: string) => {
     const el = messageRefs.current.get(messageId);
     if (!el) return;
+    // Explicit history/notification targets take precedence over queued bottom-follow work.
+    bottomScrollRequestRef.current += 1;
+    bottomScrollTimeoutsRef.current.forEach((id) => window.clearTimeout(id));
+    bottomScrollTimeoutsRef.current = [];
+    suppressBottomScrollUntilRef.current = Date.now() + 1500;
+    isNearBottomRef.current = false;
+    didInitialScrollRef.current = true;
+    forceImmediateBottomScrollRef.current = false;
+    preserveScrollRef.current = null;
     el.scrollIntoView({ block: "center", behavior: "smooth" });
     setHighlightedMessageId(messageId);
     window.setTimeout(() => {
@@ -952,6 +977,18 @@ export default function ChatPage() {
       sessionRef.current = null;
     };
   }, [session]);
+  useEffect(() => {
+    if (!session) return;
+    const context = captureMessageCacheContext(session);
+    const retire = () => {
+      sessionRef.current = null;
+      setSession(null);
+      setMessages([]);
+      router.replace("/");
+    };
+    if (!isMessageContextCurrent(context)) { retire(); return; }
+    return watchMessageContext(context, retire);
+  }, [router, session]);
   useEffect(() => {
     if (!session) return;
     let lastAppliedProfileChange = "";
@@ -1085,24 +1122,39 @@ export default function ChatPage() {
     [tryTriggerEffect],
   );
 
+  const applyMessageRows = useCallback((next: Message[], context: MessageCacheContext) => {
+    const activeSession = sessionRef.current;
+    if (!messageIdentityMatches(activeSession, context.identity) || !isMessageContextCurrent(context)) return;
+    const visible = filterVisibleMessages(next, activeSession!);
+    setMessages((previous) => mergeMessagesById(previous, visible));
+  }, []);
+
   const handleSyncedMessages = useCallback(
     (next: Message[]) => {
       const activeSession = sessionRef.current;
-      const visible = activeSession
-        ? filterVisibleMessages(next, activeSession)
-        : next;
+      if (!activeSession) return;
+      const context = captureMessageCacheContext(activeSession);
+      if (!isMessageContextCurrent(context)) return;
+      const visible = filterVisibleMessages(next, activeSession);
       const knownIds = knownMessageIdsRef.current;
       const unseenMessages = visible.filter((message) => !knownIds.has(message.id));
-      setMessages((prev) => mergeMessagesById(prev, visible));
+      unseenMessages.forEach((message) => knownIds.add(message.id));
+      applyMessageRows(visible, context);
       unseenMessages.forEach(handleIncomingMessageSideEffects);
       if (activeSession && hasAssistantCardMessage(visible)) {
         listAssistantActionCards(activeSession)
-          .then(setAssistantCards)
+          .then((cards) => { if (isMessageContextCurrent(context)) setAssistantCards(cards); })
           .catch(() => undefined);
       }
     },
-    [handleIncomingMessageSideEffects],
+    [applyMessageRows, handleIncomingMessageSideEffects],
   );
+
+  const cacheMessage = useCallback((owner: LocalSession, message: Message, context: MessageCacheContext) => {
+    void mergeRealtimeMessage(owner, message, context)
+      .then((next) => applyMessageRows(next, context))
+      .catch(() => undefined);
+  }, [applyMessageRows]);
 
   const flushDeliveredReports = useCallback(async () => {
     const activeSession = sessionRef.current;
@@ -1273,19 +1325,24 @@ export default function ChatPage() {
     async (messageId: string): Promise<boolean> => {
       const activeSession = sessionRef.current;
       if (!activeSession) return false;
+      const context = captureMessageCacheContext(activeSession);
       const incoming = await getMessageById(activeSession, messageId);
+      if (!isMessageContextCurrent(context)) return false;
       if (!incoming) return false;
       if (!isMessageVisibleToSession(incoming, activeSession)) return false;
-      const next = await mergeRealtimeMessage(activeSession, incoming);
-      handleSyncedMessages(next);
+      handleSyncedMessages([incoming]);
+      const next = await mergeRealtimeMessage(activeSession, incoming, context);
+      if (!isMessageContextCurrent(context)) return false;
+      applyMessageRows(next, context);
       return true;
     },
-    [handleSyncedMessages],
+    [applyMessageRows, handleSyncedMessages],
   );
 
   const flushRealtimeMessages = useCallback(async () => {
     const activeSession = sessionRef.current;
     if (!activeSession) return;
+    const context = captureMessageCacheContext(activeSession);
 
     const pendingIds = pendingRealtimeMessageIdsRef.current;
     const messageIds = [...pendingIds].slice(0, 100);
@@ -1294,27 +1351,31 @@ export default function ChatPage() {
 
     try {
       const incoming = await getMessagesByIds(activeSession, messageIds);
+      if (!isMessageContextCurrent(context)) return;
       const visible = incoming.filter((message) =>
         isMessageVisibleToSession(message, activeSession),
       );
       if (visible.length === 0) return;
 
-      const next = await mergeRealtimeMessages(activeSession, visible);
-      handleSyncedMessages(next);
+      handleSyncedMessages(visible);
+      const next = await mergeRealtimeMessages(activeSession, visible, context);
+      if (!isMessageContextCurrent(context)) return;
+      applyMessageRows(next, context);
     } catch {
+      if (!isMessageContextCurrent(context)) return;
       if (document.visibilityState !== "visible") return;
       await syncMessages(activeSession, { onMessages: handleSyncedMessages }).catch(
         () => undefined,
       );
     } finally {
-      if (pendingIds.size > 0 && !realtimeBatchTimerRef.current) {
+      if (isMessageContextCurrent(context) && pendingIds.size > 0 && !realtimeBatchTimerRef.current) {
         realtimeBatchTimerRef.current = window.setTimeout(() => {
           realtimeBatchTimerRef.current = null;
           flushRealtimeMessages().catch(() => undefined);
         }, REALTIME_BATCH_FLUSH_MS);
       }
     }
-  }, [handleSyncedMessages]);
+  }, [applyMessageRows, handleSyncedMessages]);
 
   const scheduleRealtimeBatchFetch = useCallback(
     (messageId: string) => {
@@ -1379,8 +1440,16 @@ export default function ChatPage() {
       if (window.location.pathname !== "/chat") return;
 
       if (data.messageId) {
+        if (!isUuid(data.messageId)) return;
         const targetId = new URLSearchParams(window.location.search).get("mid");
-        if (targetId === data.messageId) setNotificationTargetId(data.messageId);
+        if (data.openedFromNotification === true) {
+          const targetUrl = new URL(window.location.href);
+          targetUrl.searchParams.set("mid", data.messageId);
+          window.history.replaceState(null, "", targetUrl);
+          setNotificationTargetId(data.messageId);
+        } else if (targetId === data.messageId) {
+          setNotificationTargetId(data.messageId);
+        }
         fetchPushMessageNow(data.messageId)
           .then((fetched) => { if (!fetched) syncVisibleMessages(); })
           .catch(syncVisibleMessages);
@@ -1608,6 +1677,7 @@ export default function ChatPage() {
 
   const refreshChatData = useCallback(async (forceFullRefresh = false) => {
     if (!session) return;
+    const context = captureMessageCacheContext(session);
     try {
       const [syncResult, mems, important, cards] = await Promise.all([
         forceFullRefresh
@@ -1617,13 +1687,14 @@ export default function ChatPage() {
         listImportantNotifications(session),
         listAssistantActionCards(session).catch(() => []),
       ]);
+      if (!isMessageContextCurrent(context)) return;
       if (syncResult.messages.length > 0) handleSyncedMessages(syncResult.messages);
       setMembers(mems);
       setImportantNotifications(important);
       setAssistantCards(cards);
       setError(null);
     } catch (err) {
-      setError(humanizeError(err, language));
+      if (isMessageContextCurrent(context)) setError(humanizeError(err, language));
     }
   }, [handleSyncedMessages, language, session]);
 
@@ -1631,6 +1702,7 @@ export default function ChatPage() {
     const activeSession = sessionRef.current;
     const scroller = scrollRef.current;
     if (!activeSession || !scroller || loadingOlderMessagesRef.current) return;
+    const context = captureMessageCacheContext(activeSession);
 
     const nextLimit = cachedMessageLimitRef.current + CACHED_MESSAGE_PAGE_SIZE;
     loadingOlderMessagesRef.current = true;
@@ -1643,12 +1715,13 @@ export default function ChatPage() {
 
     try {
       const currentMessages = messagesRef.current;
-      const cached = await loadCachedMessagesForSession(activeSession, nextLimit);
+      const cached = await loadCachedMessagesForSession(activeSession, nextLimit, context).catch(() => []);
+      if (!isMessageContextCurrent(context)) return;
       const visible = filterVisibleMessages(cached, activeSession);
       let merged = mergeMessagesById(visible, currentMessages);
       if (merged.length > currentMessages.length) {
         cachedMessageLimitRef.current = nextLimit;
-        setMessages(merged);
+        setMessages((current) => mergeMessagesById(current, merged));
         return;
       }
 
@@ -1666,6 +1739,7 @@ export default function ChatPage() {
         oldest.id,
         CACHED_MESSAGE_PAGE_SIZE,
       );
+      if (!isMessageContextCurrent(context)) return;
       if (older.length < CACHED_MESSAGE_PAGE_SIZE) {
         reachedHistoryStartRef.current = true;
       }
@@ -1677,12 +1751,14 @@ export default function ChatPage() {
         preserveScrollRef.current = null;
         return;
       }
-      setMessages(merged);
+      setMessages((current) => mergeMessagesById(current, merged));
     } catch {
-      preserveScrollRef.current = null;
+      if (isMessageContextCurrent(context)) preserveScrollRef.current = null;
     } finally {
-      loadingOlderMessagesRef.current = false;
-      setLoadingOlderMessages(false);
+      if (isMessageContextCurrent(context)) {
+        loadingOlderMessagesRef.current = false;
+        setLoadingOlderMessages(false);
+      }
     }
   }, []);
 
@@ -1731,10 +1807,11 @@ export default function ChatPage() {
         router.replace("/");
         return;
       }
+      const context = captureMessageCacheContext(local);
       let fresh: LocalSession | null = null;
       try {
         const restored = await safeRestoreSession(local.member_id, local.member_token);
-        if (cancelled) return;
+        if (cancelled || !isMessageContextCurrent(context)) return;
         if (restored.status === "expired") {
           clearSession();
           setSession(null);
@@ -1755,7 +1832,7 @@ export default function ChatPage() {
         cachedMessageLimitRef.current = INITIAL_CACHED_MESSAGE_LIMIT;
         noteMessageCacheOpen(fresh).catch(() => undefined);
       } catch (err) {
-        if (!cancelled) {
+        if (!cancelled && isMessageContextCurrent(context)) {
           setLoadError(humanizeError(err, language) || t("chatLoadFailed"));
           setLoading(false);
         }
@@ -1764,8 +1841,8 @@ export default function ChatPage() {
 
       let hadCachedMessages = false;
       try {
-        const cached = await loadCachedMessagesForSession(fresh).catch(() => []);
-        if (cancelled) return;
+        const cached = await loadCachedMessagesForSession(fresh, INITIAL_CACHED_MESSAGE_LIMIT, context).catch(() => []);
+        if (cancelled || !isMessageContextCurrent(context)) return;
         hadCachedMessages = cached.length > 0;
         if (hadCachedMessages) {
           const visible = filterVisibleMessages(cached, fresh);
@@ -1782,7 +1859,7 @@ export default function ChatPage() {
           CHAT_BOOTSTRAP_DATA_TIMEOUT_MS,
           "chat_bootstrap_timeout",
         );
-        if (cancelled) return;
+        if (cancelled || !isMessageContextCurrent(context)) return;
         setMembers(mems);
         setImportantNotifications(important);
         setAssistantCards(cards);
@@ -1794,7 +1871,7 @@ export default function ChatPage() {
           syncMessages(fresh, {
             forceFullRefresh: true,
             onMessages: (next) => {
-              if (!cancelled) {
+              if (!cancelled && isMessageContextCurrent(context)) {
                 const visible = filterVisibleMessages(next, fresh);
                 setMessages((current) => mergeMessagesById(current, visible));
               }
@@ -1803,20 +1880,20 @@ export default function ChatPage() {
           CHAT_BOOTSTRAP_DATA_TIMEOUT_MS,
           "chat_bootstrap_timeout",
         );
-        if (cancelled) return;
+        if (cancelled || !isMessageContextCurrent(context)) return;
         if (syncResult.messages.length > 0) {
           const visible = filterVisibleMessages(syncResult.messages, fresh);
           setMessages((current) => mergeMessagesById(visible, current));
         }
         setLoadError(null);
       } catch (err) {
-        if (!cancelled) {
+        if (!cancelled && isMessageContextCurrent(context)) {
           if (!hadCachedMessages && messagesRef.current.length === 0) {
             setLoadError(humanizeError(err, language) || t("chatLoadFailed"));
           }
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled && isMessageContextCurrent(context)) setLoading(false);
       }
     }
     void run();
@@ -1850,7 +1927,6 @@ export default function ChatPage() {
       )
       .subscribe((status) => {
         if (typeof window !== "undefined") {
-          // eslint-disable-next-line no-console
           console.log(`[realtime message events] ${status}`);
         }
         if (
@@ -1979,13 +2055,16 @@ export default function ChatPage() {
   ]);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    const request = ++bottomScrollRequestRef.current;
     bottomScrollTimeoutsRef.current.forEach((id) => window.clearTimeout(id));
     bottomScrollTimeoutsRef.current = [];
 
     const primaryBehavior: ScrollBehavior =
       isIOSRef.current && behavior === "smooth" ? "auto" : behavior;
 
-    const scroll = (mode: ScrollBehavior = "auto") => {
+    const scroll = (mode: ScrollBehavior = "auto", follow = false) => {
+      if (request !== bottomScrollRequestRef.current) return;
+      if (follow && !isNearBottomRef.current) return;
       const scroller = scrollRef.current;
       if (!scroller) return;
       scroller.scrollTo({
@@ -1996,10 +2075,10 @@ export default function ChatPage() {
 
     requestAnimationFrame(() => {
       scroll(primaryBehavior);
-      requestAnimationFrame(() => scroll("auto"));
+      requestAnimationFrame(() => scroll("auto", true));
     });
     [180, 520].forEach((delay) => {
-      const id = window.setTimeout(() => scroll("auto"), delay);
+      const id = window.setTimeout(() => scroll("auto", true), delay);
       bottomScrollTimeoutsRef.current.push(id);
     });
   }, []);
@@ -2016,8 +2095,18 @@ export default function ChatPage() {
       isNearBottomRef.current = distanceFromBottom < 120;
     };
     measure();
-    scroller.addEventListener("scroll", measure, { passive: true });
-    return () => scroller.removeEventListener("scroll", measure);
+    const handleScroll = () => {
+      measure();
+      if (isNearBottomRef.current) return;
+      // Reading history supersedes every frame/timer from an earlier send.
+      // Do this on scroll events, not the initial measurement before the
+      // first forced bottom position has been applied.
+      bottomScrollRequestRef.current += 1;
+      bottomScrollTimeoutsRef.current.forEach((id) => window.clearTimeout(id));
+      bottomScrollTimeoutsRef.current = [];
+    };
+    scroller.addEventListener("scroll", handleScroll, { passive: true });
+    return () => scroller.removeEventListener("scroll", handleScroll);
   }, [loading]);
 
   // Auto scroll to bottom on new messages — but only when the user is already
@@ -2066,10 +2155,12 @@ export default function ChatPage() {
       // Content grows when images/audio bubbles finish loading — only follow
       // it when the user is already at the bottom.
       const shouldStickToBottom = isNearBottomRef.current;
+      const request = bottomScrollRequestRef.current;
       window.cancelAnimationFrame(frame);
       frame = window.requestAnimationFrame(() => {
         if (Date.now() < suppressBottomScrollUntilRef.current) return;
-        if (!shouldStickToBottom) return;
+        if (!shouldStickToBottom || !isNearBottomRef.current ||
+          request !== bottomScrollRequestRef.current) return;
         scrollToBottom("auto");
       });
     });
@@ -2091,10 +2182,12 @@ export default function ChatPage() {
       // Scroller resizes when the keyboard opens/closes — keep the newest
       // message in view only if the user was already reading it.
       const shouldStickToBottom = isNearBottomRef.current;
+      const request = bottomScrollRequestRef.current;
       window.cancelAnimationFrame(frame);
       frame = window.requestAnimationFrame(() => {
         if (Date.now() < suppressBottomScrollUntilRef.current) return;
-        if (shouldStickToBottom) scrollToBottom("auto");
+        if (shouldStickToBottom && isNearBottomRef.current &&
+          request === bottomScrollRequestRef.current) scrollToBottom("auto");
       });
     });
 
@@ -2393,8 +2486,9 @@ export default function ChatPage() {
 
   function pushOptimistic(
     partial: Pick<Message, "id" | "message_type"> & Partial<Message>,
+    context: MessageCacheContext,
   ) {
-    if (!session) return;
+    if (!session || !isMessageContextCurrent(context)) return;
     forceImmediateBottomScrollRef.current = true;
     const now = new Date().toISOString();
     const optimistic: Message = {
@@ -2425,21 +2519,21 @@ export default function ChatPage() {
       if (prev.some((m) => m.id === partial.id)) return prev;
       return [...prev, optimistic];
     });
-    mergeRealtimeMessage(session, optimistic)
-      .then(setMessages)
-      .catch(() => undefined);
+    cacheMessage(session, optimistic, context);
     scrollToBottom("auto");
   }
 
   async function handleDeleteMessage(messageId: string) {
     if (!session) return;
+    const context = captureMessageCacheContext(session);
     const ok = await dialog.confirm({
       title: t("importantRecallMessage"),
       message: t("chatDeleteConfirm"),
     });
-    if (!ok) return;
+    if (!ok || !isMessageContextCurrent(context)) return;
     try {
       await deleteMessage(session, messageId);
+      if (!isMessageContextCurrent(context)) return;
       const updatedAt = new Date().toISOString();
       const current = messages.find((m) => m.id === messageId);
       const patched: Message | null = current
@@ -2457,12 +2551,10 @@ export default function ChatPage() {
         }),
       );
       if (patched) {
-        mergeRealtimeMessage(session, patched)
-          .then(setMessages)
-          .catch(() => undefined);
+        cacheMessage(session, patched, context);
       }
     } catch (err) {
-      toast.error(humanizeError(err, language));
+      if (isMessageContextCurrent(context)) toast.error(humanizeError(err, language));
     }
   }
 
@@ -2824,6 +2916,8 @@ export default function ChatPage() {
 
   function handleSelectImportant(notification: ImportantNotification) {
     if (!session) return;
+    const context = captureMessageCacheContext(session);
+    if (!isMessageContextCurrent(context)) return;
     const next = dismissImportantNotification(
       session.family_id,
       session.member_id,
@@ -2832,9 +2926,7 @@ export default function ChatPage() {
     setDismissedImportantIds(next);
 
     if (notification.message && !messages.some((m) => m.id === notification.message_id)) {
-      mergeRealtimeMessage(session, notification.message as Message)
-        .then(setMessages)
-        .catch(() => undefined);
+      cacheMessage(session, notification.message as Message, context);
       setMessages((prev) => {
         if (prev.some((m) => m.id === notification.message_id)) return prev;
         return [...prev, notification.message as Message].sort(
@@ -2842,7 +2934,7 @@ export default function ChatPage() {
             new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
         );
       });
-      window.setTimeout(() => scrollToMessage(notification.message_id), 60);
+      window.setTimeout(() => { if (isMessageContextCurrent(context)) scrollToMessage(notification.message_id); }, 60);
       return;
     }
 
@@ -2887,6 +2979,8 @@ export default function ChatPage() {
 
   async function handleSendText(text: string): Promise<boolean> {
     if (!session) return false;
+    const context = captureMessageCacheContext(session);
+    if (!isMessageContextCurrent(context)) return false;
     const explicitAssistantText = assistantDraftFromText(text) ?? keeperDraftFromText(text);
     const isAssistantAddressed = !whisperTarget && (keeperMode || explicitAssistantText !== null);
     const assistantText = keeperMode ? text.trim() : explicitAssistantText ?? text;
@@ -2969,6 +3063,8 @@ export default function ChatPage() {
         effect_caption: eff?.caption ?? null,
         recipient_member_id: whisperTarget?.id ?? null,
       });
+      requestMessagePush(session, id);
+      if (!isMessageContextCurrent(context)) return true;
       pushOptimistic({
         id,
         message_type: "text",
@@ -2976,15 +3072,14 @@ export default function ChatPage() {
         effect_id: eff?.id ?? null,
         effect_caption: eff?.caption ?? null,
         recipient_member_id: whisperTarget?.id ?? null,
-      });
-      requestMessagePush(session, id);
+      }, context);
       tryTriggerEffect(id, eff);
       return true;
     } catch (err) {
-      toast.error(humanizeError(err, language));
+      if (isMessageContextCurrent(context)) toast.error(humanizeError(err, language));
       return false;
     } finally {
-      setSending(false);
+      if (isMessageContextCurrent(context)) setSending(false);
     }
   }
 
@@ -3059,6 +3154,11 @@ export default function ChatPage() {
     recipientId: string | null,
   ) {
     if (!session) return;
+    const context = captureMessageCacheContext(session);
+    if (!isMessageContextCurrent(context)) return;
+    if (imageUploadsRef.current.has(tempId)) return;
+    const controller = new AbortController();
+    imageUploadsRef.current.set(tempId, controller);
     setMessages((prev) =>
       prev.map((m) =>
         m.id === tempId
@@ -3068,21 +3168,26 @@ export default function ChatPage() {
     );
     try {
       const { url, blob } = await uploadChatImage(session, file, (fraction) => {
+        if (!isMessageContextCurrent(context)) return;
         setMessages((prev) =>
           prev.map((m) =>
             m.id === tempId ? { ...m, upload_progress: fraction } : m,
           ),
         );
-      });
+      }, controller.signal);
+      if (controller.signal.aborted || !isMessageContextCurrent(context)) return;
       // Seed the local cache with the exact uploaded bytes so the real bubble
       // renders instantly (no re-download, no flash) once we swap the id.
-      await cacheImageBlob(url, blob).catch(() => undefined);
+      await cacheImageBlob(session, url, blob).catch(() => undefined);
+      if (controller.signal.aborted || !isMessageContextCurrent(context)) return;
       const id = await sendMessage(session, {
         type: "image",
         image_url: url,
         content: t("chatImageMessage"),
         recipient_member_id: recipientId,
       });
+      requestMessagePush(session, id);
+      if (controller.signal.aborted || !isMessageContextCurrent(context)) return;
       pendingImageFilesRef.current.delete(tempId);
       const now = new Date().toISOString();
       const realMessage: Message = {
@@ -3114,18 +3219,20 @@ export default function ChatPage() {
         if (withoutTemp.some((m) => m.id === id)) return withoutTemp;
         return [...withoutTemp, realMessage];
       });
-      mergeRealtimeMessage(session, realMessage)
-        .then(setMessages)
-        .catch(() => undefined);
-      requestMessagePush(session, id);
+      cacheMessage(session, realMessage, context);
       releasePreviewUrl(tempId);
     } catch (err) {
+      if (controller.signal.aborted || !isMessageContextCurrent(context)) return;
       setMessages((prev) =>
         prev.map((m) =>
           m.id === tempId ? { ...m, upload_status: "failed" } : m,
         ),
       );
       toast.error(humanizeError(err, language));
+    } finally {
+      if (imageUploadsRef.current.get(tempId) === controller) {
+        imageUploadsRef.current.delete(tempId);
+      }
     }
   }
 
@@ -3161,16 +3268,23 @@ export default function ChatPage() {
 
   async function handleSendAudio(result: RecordingResult) {
     if (!session) return;
+    const context = captureMessageCacheContext(session);
+    if (!isMessageContextCurrent(context)) return;
     if (result.blob.size > 2 * 1024 * 1024) {
       throw new Error("audio_too_large");
     }
     setSending(true);
+    const controller = new AbortController();
+    audioUploadRef.current = controller;
     try {
       const url = await uploadChatAudio(
         session,
         result.blob,
         result.mimeType,
+        controller.signal,
       );
+      if (!isMessageContextCurrent(context)) return;
+      if (controller.signal.aborted) throw new Error("upload_cancelled");
       const id = await sendMessage(session, {
         type: "audio",
         audio_url: url,
@@ -3178,6 +3292,8 @@ export default function ChatPage() {
         content: t("chatAudioMessage"),
         recipient_member_id: whisperTarget?.id ?? null,
       });
+      requestMessagePush(session, id);
+      if (!isMessageContextCurrent(context)) return;
       pushOptimistic({
         id,
         message_type: "audio",
@@ -3185,18 +3301,23 @@ export default function ChatPage() {
         audio_duration_ms: result.durationMs,
         content: t("chatAudioMessage"),
         recipient_member_id: whisperTarget?.id ?? null,
-      });
-      requestMessagePush(session, id);
+      }, context);
     } finally {
-      setSending(false);
+      if (audioUploadRef.current === controller) {
+        audioUploadRef.current = null;
+        if (isMessageContextCurrent(context)) setSending(false);
+      }
     }
   }
 
   async function handleSendLocation() {
     if (!session) return;
+    const context = captureMessageCacheContext(session);
+    if (!isMessageContextCurrent(context)) return;
     setSending(true);
     try {
       const fix = await getCurrentLocation();
+      if (!isMessageContextCurrent(context)) return;
       const mapUrl = createGoogleMapUrl(fix.latitude, fix.longitude);
       const id = await sendMessage(session, {
         type: "location",
@@ -3206,6 +3327,8 @@ export default function ChatPage() {
         map_url: mapUrl,
         recipient_member_id: whisperTarget?.id ?? null,
       });
+      requestMessagePush(session, id);
+      if (!isMessageContextCurrent(context)) return;
       pushOptimistic({
         id,
         message_type: "location",
@@ -3214,12 +3337,11 @@ export default function ChatPage() {
         longitude: fix.longitude,
         map_url: mapUrl,
         recipient_member_id: whisperTarget?.id ?? null,
-      });
-      requestMessagePush(session, id);
+      }, context);
     } catch (err) {
-      toast.error(humanizeError(err, language) || t("chatLocationError"));
+      if (isMessageContextCurrent(context)) toast.error(humanizeError(err, language) || t("chatLocationError"));
     } finally {
-      setSending(false);
+      if (isMessageContextCurrent(context)) setSending(false);
     }
   }
 
@@ -3231,6 +3353,21 @@ export default function ChatPage() {
     chatBackgroundSource?.mediaRef ?? null,
     { messageId: chatBackgroundSource?.messageId ?? null },
   ).url;
+
+  const messageActionsRef = useRef<ChatMessageActions>({});
+  useLayoutEffect(() => {
+    messageActionsRef.current = {
+      onConfirmAssistantCard: handleConfirmAssistantCard,
+      onCancelAssistantCard: handleCancelAssistantCard,
+      onSubmitAssistantCardEdit: handleSubmitAssistantCardEdit,
+      onOpenAssistantSchedule: handleOpenAssistantSchedule,
+      onCompleteAssistantTask: (card) => handleAssistantTaskAction(card, "complete"),
+      onSnoozeAssistantTask: (card) => handleAssistantTaskAction(card, "snooze"),
+      onRequestActions: openMessageActions,
+      onReplayEffect: handleReplayEffect,
+      onRetryUpload: handleRetryImageUpload,
+    };
+  });
 
   if (!isSupabaseConfigured()) {
     return (
@@ -3472,6 +3609,7 @@ export default function ChatPage() {
 
       <div
         ref={scrollRef}
+        data-chat-scroll
         onScroll={handleMessagesScroll}
         onTouchStart={handleMessagesTouchStart}
         onTouchEnd={handleMessagesTouchEnd}
@@ -3509,18 +3647,11 @@ export default function ChatPage() {
               const isMine = m.sender_member_id === session.member_id;
               const canOpenActions = !m.deleted_at || importantByMessageId.has(m.id);
               return (
-                <div
+                <ChatMessageRow
                   key={m.id}
-                  ref={(el) => {
-                    if (el) {
-                      messageRefs.current.set(m.id, el);
-                    } else {
-                      messageRefs.current.delete(m.id);
-                    }
-                  }}
-                  className="rounded-3xl"
-                >
-                  <ChatMessage
+                  messageNodes={messageRefs}
+                  actionsRef={messageActionsRef}
+                  canOpenActions={canOpenActions}
                     session={session}
                     message={m}
                     sender={
@@ -3541,21 +3672,7 @@ export default function ChatPage() {
                       assistantCardsByMessageId.get(m.id)?.id
                     }
                     currentMemberId={session.member_id}
-                    onConfirmAssistantCard={handleConfirmAssistantCard}
-                    onCancelAssistantCard={handleCancelAssistantCard}
-                    onSubmitAssistantCardEdit={handleSubmitAssistantCardEdit}
-                    onOpenAssistantSchedule={handleOpenAssistantSchedule}
-                    onCompleteAssistantTask={(card) =>
-                      handleAssistantTaskAction(card, "complete")
-                    }
-                    onSnoozeAssistantTask={(card) =>
-                      handleAssistantTaskAction(card, "snooze")
-                    }
-                    onRequestActions={canOpenActions ? openMessageActions : undefined}
-                    onReplayEffect={handleReplayEffect}
-                    onRetryUpload={handleRetryImageUpload}
                   />
-                </div>
               );
             })
           )}
@@ -3588,7 +3705,6 @@ export default function ChatPage() {
           className="mx-auto flex h-10 w-full max-w-3xl items-center justify-between gap-2 border-t border-violet-100/70 bg-violet-50/90 px-3 text-sm text-violet-800 shadow-[0_-10px_24px_rgba(88,70,118,0.08)] backdrop-blur-xl sm:px-4"
         >
           <div className="flex min-w-0 items-center gap-2">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
             <LockClosedIcon className="h-5 w-5 shrink-0" aria-hidden="true" />
             <span className="truncate font-semibold">
               {t("whisperModeLabel", { nickname: whisperTarget.nickname })}

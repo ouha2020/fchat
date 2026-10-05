@@ -5,12 +5,14 @@ import type { LocalSession } from "./authLocal";
 import { prepareChatImage } from "@/lib/imageCompression";
 import { isSafeOutgoingMediaRef } from "@/lib/mediaRefs";
 import { safeGoogleMapsUrl } from "@/lib/security";
+import { uploadMediaViaApi } from "@/lib/uploadClient";
 import {
   audioBlobSchema,
   imageFileSchema,
   textMessageSchema,
 } from "@/lib/validation";
 import type { Message, MessageType } from "@/types/message";
+import { normalizeMessage } from "@/lib/messageNormalization";
 
 const IMAGE_EXT_BY_MIME: Record<string, string> = {
   "image/jpeg": "jpg",
@@ -216,6 +218,7 @@ export async function uploadChatImage(
   session: LocalSession,
   file: File,
   onProgress?: (fraction: number) => void,
+  signal?: AbortSignal,
 ): Promise<ChatImageUpload> {
   const preparedFile = await prepareChatImage(file);
   imageFileSchema.parse(preparedFile);
@@ -227,7 +230,7 @@ export async function uploadChatImage(
   form.append("memberId", session.member_id);
   form.append("memberToken", session.member_token);
   form.append("file", preparedFile, `image.${ext}`);
-  const url = await uploadViaApi("/api/upload/image", form, onProgress);
+  const url = await uploadMediaViaApi("/api/upload/image", form, { onProgress, signal });
   return { url, blob: preparedFile };
 }
 
@@ -248,6 +251,7 @@ export async function uploadChatAudio(
   session: LocalSession,
   blob: Blob,
   mimeType: string,
+  signal?: AbortSignal,
 ): Promise<string> {
   audioBlobSchema.parse(blob);
   const contentType = normalizeMime(mimeType);
@@ -259,7 +263,7 @@ export async function uploadChatAudio(
   form.append("memberId", session.member_id);
   form.append("memberToken", session.member_token);
   form.append("file", file);
-  return uploadViaApi("/api/upload/audio", form);
+  return uploadMediaViaApi("/api/upload/audio", form, { signal });
 }
 
 function normalizeMime(mimeType: string): string {
@@ -311,68 +315,8 @@ function validateOutgoingMessage(input: SendMessageInput): void {
   }
 }
 
-async function uploadViaApi(
-  path: string,
-  form: FormData,
-  onProgress?: (fraction: number) => void,
-): Promise<string> {
-  // XMLHttpRequest (not fetch) so we can report real upload progress to the
-  // optimistic image bubble via the upload.onprogress event.
-  return new Promise<string>((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open("POST", path);
-    xhr.responseType = "json";
-    if (onProgress && xhr.upload) {
-      xhr.upload.onprogress = (event) => {
-        if (event.lengthComputable && event.total > 0) {
-          onProgress(Math.min(1, event.loaded / event.total));
-        }
-      };
-    }
-    xhr.onload = () => {
-      const payload = (xhr.response ?? null) as
-        | { url?: string; error?: string }
-        | null;
-      if (xhr.status < 200 || xhr.status >= 300) {
-        reject(new Error(payload?.error ?? "upload_failed"));
-        return;
-      }
-      if (!payload?.url || !isSafeOutgoingMediaRef(payload.url)) {
-        reject(new Error("upload_failed"));
-        return;
-      }
-      resolve(payload.url);
-    };
-    xhr.onerror = () => reject(new Error("upload_failed"));
-    xhr.ontimeout = () => reject(new Error("upload_failed"));
-    xhr.send(form);
-  });
-}
-
 function uniqueMessageIds(messageIds: string[]): string[] {
   return [...new Set(messageIds.filter(Boolean))].slice(0, 300);
 }
 
-export function normalizeMessage(message: Message): Message {
-  return {
-    ...message,
-    family_seq: normalizeFamilySeq(message.family_seq),
-    recipient_member_id: message.recipient_member_id ?? null,
-    system_event_type: message.system_event_type ?? null,
-    system_event_payload: message.system_event_payload ?? null,
-    updated_at:
-      message.updated_at ??
-      message.deleted_at ??
-      message.created_at ??
-      new Date(0).toISOString(),
-  };
-}
-
-function normalizeFamilySeq(value: Message["family_seq"] | string | undefined): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-}
+export { normalizeMessage } from "@/lib/messageNormalization";

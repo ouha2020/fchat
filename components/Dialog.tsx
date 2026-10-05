@@ -86,61 +86,85 @@ type ModalState =
 
 export default function DialogProvider({ children }: { children: ReactNode }) {
   const [modal, setModal] = useState<ModalState>({ type: "none" });
+  const modalRef = useRef<ModalState>({ type: "none" });
+  const modalKeyRef = useRef(0);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
+
+  const showModal = useCallback((next: Exclude<ModalState, { type: "none" }>) => {
+    // Capture before child autoFocus runs, and retain the trigger on replacement.
+    if (modalRef.current.type === "none") {
+      returnFocusRef.current = document.activeElement instanceof HTMLElement
+        ? document.activeElement : null;
+    }
+    cancelModal(modalRef.current);
+    modalRef.current = next;
+    modalKeyRef.current += 1;
+    setModal(next);
+  }, []);
+
+  useEffect(() => () => cancelModal(modalRef.current), []);
 
   const confirm = useCallback(
     (opts: ConfirmOptions) =>
       new Promise<boolean>((resolve) =>
-        setModal({ type: "confirm", opts, resolve }),
+        showModal({ type: "confirm", opts, resolve }),
       ),
-    [],
+    [showModal],
   );
 
   const alert = useCallback(
     (opts: { title: string; message: string }) =>
       new Promise<void>((resolve) =>
-        setModal({
+        showModal({
           type: "alert",
           title: opts.title,
           message: opts.message,
           resolve,
         }),
       ),
-    [],
+    [showModal],
   );
 
   const prompt = useCallback(
     (opts: PromptOptions) =>
       new Promise<string | null>((resolve) =>
-        setModal({ type: "prompt", opts, resolve }),
+        showModal({ type: "prompt", opts, resolve }),
       ),
-    [],
+    [showModal],
   );
 
   const adminPassword = useCallback(
     () =>
       new Promise<AdminPasswordResult | null>((resolve) =>
-        setModal({ type: "adminPassword", resolve }),
+        showModal({ type: "adminPassword", resolve }),
       ),
-    [],
+    [showModal],
   );
 
   const resetAdminPassword = useCallback(
     () =>
       new Promise<ResetAdminPasswordResult | null>((resolve) =>
-        setModal({ type: "resetAdminPassword", resolve }),
+        showModal({ type: "resetAdminPassword", resolve }),
       ),
-    [],
+    [showModal],
   );
 
   const accountPassword = useCallback(
     () =>
       new Promise<AccountPasswordResult | null>((resolve) =>
-        setModal({ type: "accountPassword", resolve }),
+        showModal({ type: "accountPassword", resolve }),
       ),
-    [],
+    [showModal],
   );
 
-  const close = useCallback(() => setModal({ type: "none" }), []);
+  const close = useCallback(() => {
+    modalRef.current = { type: "none" };
+    setModal({ type: "none" });
+  }, []);
+  const dismiss = useCallback(() => {
+    cancelModal(modalRef.current);
+    close();
+  }, [close]);
 
   const value: DialogContextValue = {
     confirm,
@@ -155,7 +179,7 @@ export default function DialogProvider({ children }: { children: ReactNode }) {
     <DialogContext.Provider value={value}>
       {children}
       {modal.type !== "none" && (
-        <Backdrop label={getModalLabel(modal)} onClose={close}>
+        <Backdrop key={modalKeyRef.current} label={getModalLabel(modal)} onClose={dismiss} returnFocusTarget={returnFocusRef.current}>
           {modal.type === "confirm" && (
             <ConfirmDialogBody
               opts={modal.opts}
@@ -214,6 +238,21 @@ export default function DialogProvider({ children }: { children: ReactNode }) {
   );
 }
 
+function cancelModal(modal: ModalState): void {
+  switch (modal.type) {
+    case "none":
+      return;
+    case "confirm":
+      modal.resolve(false);
+      return;
+    case "alert":
+      modal.resolve();
+      return;
+    default:
+      modal.resolve(null);
+  }
+}
+
 export function useDialog(): DialogContextValue {
   const ctx = useContext(DialogContext);
   if (!ctx)
@@ -249,10 +288,12 @@ function Backdrop({
   children,
   label,
   onClose,
+  returnFocusTarget,
 }: {
   children: ReactNode;
   label: string;
   onClose: () => void;
+  returnFocusTarget: HTMLElement | null;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const [viewportStyle, setViewportStyle] = useState<CSSProperties>({
@@ -260,10 +301,43 @@ function Backdrop({
   });
 
   useEffect(() => {
-    const restoreTarget =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
+    const restoreTarget = returnFocusTarget;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const focusableElements = () =>
+      Array.from(panelRef.current?.querySelectorAll<HTMLElement>(
+        'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])',
+      ) ?? []).filter((element) => element.getClientRects().length > 0);
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const elements = focusableElements();
+      const first = elements[0];
+      const last = elements[elements.length - 1];
+      const active = document.activeElement;
+      if (!first || !last) {
+        event.preventDefault();
+        panelRef.current?.focus();
+      } else if (event.shiftKey && (active === first || !elements.includes(active as HTMLElement))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (active === last || !elements.includes(active as HTMLElement))) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    const containFocus = (event: FocusEvent) => {
+      if (event.target instanceof Node && !panelRef.current?.contains(event.target)) {
+        panelRef.current?.focus({ preventScroll: true });
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown, true);
+    document.addEventListener("focusin", containFocus);
     const frame = window.requestAnimationFrame(() => {
       if (
         panelRef.current &&
@@ -274,9 +348,12 @@ function Backdrop({
     });
     return () => {
       window.cancelAnimationFrame(frame);
-      restoreTarget?.focus({ preventScroll: true });
+      document.removeEventListener("keydown", handleKeyDown, true);
+      document.removeEventListener("focusin", containFocus);
+      document.body.style.overflow = previousOverflow;
+      if (restoreTarget?.isConnected) restoreTarget.focus({ preventScroll: true });
     };
-  }, []);
+  }, [onClose, returnFocusTarget]);
 
   useEffect(() => {
     const visualViewport = window.visualViewport;

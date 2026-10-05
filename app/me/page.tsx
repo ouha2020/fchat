@@ -3,8 +3,6 @@
 import PageHeader from "@/components/ui/PageHeader";
 
 import {
-  ArrowPathIcon,
-  CameraIcon,
   CheckCircleIcon,
   ChevronRightIcon,
   Cog6ToothIcon,
@@ -18,10 +16,6 @@ import type { ReactNode } from "react";
 
 import AppLoading from "@/components/AppLoading";
 import { useDialog } from "@/components/Dialog";
-import {
-  CalendarDaysIcon,
-  UsersIcon,
-} from "@/components/ui/FamilyIcons";
 import { useLanguage } from "@/components/LanguageProvider";
 import MemberAvatarCircle from "@/components/MemberAvatarCircle";
 import { useToast } from "@/components/Toast";
@@ -29,7 +23,10 @@ import { clearSession, loadSession, saveSession, type LocalSession } from "@/lib
 import { updateMemberAvatar, uploadAvatar } from "@/lib/avatarService";
 import { humanizeError } from "@/lib/errors";
 import { cacheImageBlob } from "@/lib/imageCache";
+import { isMediaCacheGenerationCurrent, mediaCacheGeneration } from "@/lib/mediaCacheStore";
 import { prepareAvatarImage } from "@/lib/imageCompression";
+import { createLatestRequestGate } from "@/lib/latestRequest";
+import { captureMessageCacheContext, isMessageContextCurrent } from "@/lib/messageCacheLifecycle";
 import { validateMember } from "@/lib/familyService";
 import { notifyMemberProfileChanged } from "@/lib/memberProfileEvents";
 import { getPersonalDashboard } from "@/lib/personalDashboardService";
@@ -47,37 +44,63 @@ export default function MePage() {
   const [session, setSession] = useState<LocalSession | null>(null);
   const [dashboard, setDashboard] = useState<PersonalDashboard | null>(null);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [avatarBusy, setAvatarBusy] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
+  const avatarUploadRef = useRef<AbortController | null>(null);
+  const dashboardRequestsRef = useRef({
+    gate: createLatestRequestGate(),
+    pending: null as Promise<void> | null,
+  });
+
+  const invalidateDashboard = useCallback(() => {
+    dashboardRequestsRef.current.gate.invalidate();
+    dashboardRequestsRef.current.pending = null;
+  }, []);
+
+  useEffect(() => {
+    setAvatarBusy(false);
+    return () => {
+      avatarUploadRef.current?.abort();
+      avatarUploadRef.current = null;
+    };
+  }, [session?.family_id, session?.member_id, session?.member_token]);
 
   const refreshDashboard = useCallback(
-    async (activeSession: LocalSession, quiet = false) => {
-      if (!quiet) setRefreshing(true);
-      try {
-        const todayStart = startOfDay(new Date());
-        const todayEnd = addDays(todayStart, 1);
-        const rows = await getPersonalDashboard(
-          activeSession,
-          todayStart,
-          todayEnd,
-          new Date(),
-        );
-        setDashboard(rows);
-      } catch (err) {
-        const message = humanizeError(err, language) || t("meLoadFailed");
-        if (quiet) toast.error(message);
-        else setLoadError(message);
-      } finally {
-        if (!quiet) setRefreshing(false);
-      }
+    (activeSession: LocalSession, quiet = false): Promise<void> => {
+      const requests = dashboardRequestsRef.current;
+      if (requests.pending) return requests.pending;
+      const isCurrent = requests.gate.begin();
+      const request = (async () => {
+        try {
+          const todayStart = startOfDay(new Date());
+          const todayEnd = addDays(todayStart, 1);
+          const rows = await getPersonalDashboard(
+            activeSession,
+            todayStart,
+            todayEnd,
+            new Date(),
+          );
+          if (isCurrent()) setDashboard(rows);
+        } catch (err) {
+          if (!isCurrent()) return;
+          const message = humanizeError(err, language) || t("meLoadFailed");
+          if (quiet) toast.error(message);
+          else setLoadError(message);
+        }
+      })();
+      requests.pending = request;
+      void request.then(() => {
+        if (requests.pending === request) requests.pending = null;
+      });
+      return request;
     },
     [language, t, toast],
   );
 
   useEffect(() => {
     let cancelled = false;
+    invalidateDashboard();
     setLoading(true);
     setLoadError(null);
 
@@ -86,6 +109,7 @@ export default function MePage() {
       setLoadError(t("envTitle"));
       return () => {
         cancelled = true;
+        invalidateDashboard();
       };
     }
 
@@ -94,9 +118,12 @@ export default function MePage() {
       router.replace("/");
       return () => {
         cancelled = true;
+        invalidateDashboard();
       };
     }
     const localSession = local;
+    const context = captureMessageCacheContext(local);
+    const isCurrent = () => !cancelled && isMessageContextCurrent(context);
 
     async function run() {
       try {
@@ -104,7 +131,7 @@ export default function MePage() {
           localSession.member_id,
           localSession.member_token,
         );
-        if (cancelled) return;
+        if (!isCurrent()) return;
         if (!fresh) {
           clearSession();
           setLoadError(t("chatSessionExpired"));
@@ -115,19 +142,20 @@ export default function MePage() {
         setSession(fresh);
         await refreshDashboard(fresh, false);
       } catch (err) {
-        if (!cancelled) {
+        if (isCurrent()) {
           setLoadError(humanizeError(err, language) || t("meLoadFailed"));
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (isCurrent()) setLoading(false);
       }
     }
 
     void run();
     return () => {
       cancelled = true;
+      invalidateDashboard();
     };
-  }, [language, refreshDashboard, router, t]);
+  }, [invalidateDashboard, language, refreshDashboard, router, t]);
 
   useEffect(() => {
     if (!session) return;
@@ -149,17 +177,26 @@ export default function MePage() {
   }
 
   async function handleAvatarFile(file: File | null) {
-    if (!file || !session) return;
+    if (!file || !session || avatarUploadRef.current) return;
+    const controller = new AbortController();
+    avatarUploadRef.current = controller;
+    const generation = mediaCacheGeneration(session);
+    const isCurrent = () => !controller.signal.aborted && isMediaCacheGenerationCurrent(session, generation);
     setAvatarBusy(true);
     try {
       // Phone photos routinely exceed the 2MB upload cap — resize/re-encode
       // first (also converts HEIC), same as chat images.
       const prepared = await prepareAvatarImage(file);
-      const url = await uploadAvatar(session, prepared);
+      if (!isCurrent()) return;
+      const url = await uploadAvatar(session, prepared, controller.signal);
+      if (!isCurrent()) return;
       const savedUrl = await updateMemberAvatar(session, url);
+      if (!isCurrent()) return;
+      invalidateDashboard();
       // Keep a local copy of exactly the bytes we uploaded, so the new avatar
       // shows instantly everywhere without a round-trip to storage.
-      await cacheImageBlob(savedUrl ?? url, prepared).catch(() => undefined);
+      await cacheImageBlob(session, savedUrl ?? url, prepared).catch(() => undefined);
+      if (!isCurrent()) return;
       setDashboard((current) =>
         current
           ? {
@@ -178,24 +215,33 @@ export default function MePage() {
       });
       toast.success(t("meAvatarUpdated"));
     } catch (err) {
-      toast.error(humanizeError(err, language) || t("meAvatarUploadFailed"));
+      if (isCurrent()) toast.error(humanizeError(err, language) || t("meAvatarUploadFailed"));
     } finally {
-      setAvatarBusy(false);
-      if (avatarInputRef.current) avatarInputRef.current.value = "";
+      if (avatarUploadRef.current === controller) {
+        avatarUploadRef.current = null;
+        setAvatarBusy(false);
+        if (avatarInputRef.current) avatarInputRef.current.value = "";
+      }
     }
   }
 
   async function handleRemoveAvatar() {
-    if (!session || !dashboard?.profile.avatar_url) return;
+    if (!session || !dashboard?.profile.avatar_url || avatarUploadRef.current) return;
+    const generation = mediaCacheGeneration(session);
     const ok = await dialog.confirm({
       title: t("meAvatarRemove"),
       message: t("meAvatarRemoveConfirm"),
       danger: true,
     });
-    if (!ok) return;
+    if (!ok || !isMediaCacheGenerationCurrent(session, generation)) return;
+    const controller = new AbortController();
+    avatarUploadRef.current = controller;
+    const isCurrent = () => !controller.signal.aborted && isMediaCacheGenerationCurrent(session, generation);
     setAvatarBusy(true);
     try {
       await updateMemberAvatar(session, null);
+      if (!isCurrent()) return;
+      invalidateDashboard();
       setDashboard((current) =>
         current
           ? {
@@ -214,9 +260,12 @@ export default function MePage() {
       });
       toast.success(t("meAvatarRemoved"));
     } catch (err) {
-      toast.error(humanizeError(err, language) || t("meAvatarUploadFailed"));
+      if (isCurrent()) toast.error(humanizeError(err, language) || t("meAvatarUploadFailed"));
     } finally {
-      setAvatarBusy(false);
+      if (avatarUploadRef.current === controller) {
+        avatarUploadRef.current = null;
+        setAvatarBusy(false);
+      }
     }
   }
 
@@ -248,19 +297,14 @@ export default function MePage() {
         title={t("meTitle")}
         backLabel={t("commonBackToChat")}
         action={
-          <button
-            type="button"
-            className="btn-ghost shrink-0 gap-1.5 px-3"
-            disabled={refreshing}
-            aria-busy={refreshing}
-            onClick={() => refreshDashboard(session, false)}
+          <Link
+            href="/settings"
+            className="tool-icon-button native-press shrink-0"
+            aria-label={t("chatSettings")}
+            title={t("chatSettings")}
           >
-            <ArrowPathIcon
-              className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
-              aria-hidden="true"
-            />
-            <span>{refreshing ? t("commonLoading") : t("meRefresh")}</span>
-          </button>
+            <Cog6ToothIcon className="h-5 w-5" aria-hidden="true" />
+          </Link>
         }
       />
 
@@ -276,12 +320,21 @@ export default function MePage() {
 
         <div className="relative flex min-w-0 items-center gap-4">
           <div className="relative shrink-0">
-            <MemberAvatarCircle
-              session={session}
-              avatarRef={profile.avatar_url}
-              name={profile.nickname}
-              className="h-20 w-20 rounded-full bg-white text-2xl font-bold text-brand-700 shadow-sm ring-4 ring-white min-[390px]:h-24 min-[390px]:w-24"
-            />
+            <button
+              type="button"
+              className="native-press shrink-0 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-300 focus-visible:ring-offset-2"
+              disabled={avatarBusy}
+              onClick={() => avatarInputRef.current?.click()}
+              aria-label={profile.avatar_url ? t("meAvatarChange") : t("meAvatarUpload")}
+              title={profile.avatar_url ? t("meAvatarChange") : t("meAvatarUpload")}
+            >
+              <MemberAvatarCircle
+                session={session}
+                avatarRef={profile.avatar_url}
+                name={profile.nickname}
+                className="h-20 w-20 rounded-full bg-white text-2xl font-bold text-brand-700 shadow-sm ring-4 ring-white min-[390px]:h-24 min-[390px]:w-24"
+              />
+            </button>
             <span
               className="absolute bottom-1 right-0 h-4 w-4 rounded-full border-[3px] border-white bg-brand-500"
               aria-hidden="true"
@@ -296,9 +349,12 @@ export default function MePage() {
               {profile.nickname}
             </h2>
             <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5">
-              <span className="tone-chip tone-chip-success">
-                {roleLabel(profile.role, t)}
-              </span>
+              {profile.nickname.trim().toLocaleLowerCase() !==
+              roleLabel(profile.role, t).trim().toLocaleLowerCase() ? (
+                <span className="tone-chip tone-chip-success">
+                  {roleLabel(profile.role, t)}
+                </span>
+              ) : null}
               <span className="tone-chip tone-chip-muted">
                 {profile.is_admin ? t("commonAdmin") : t("meMember")}
               </span>
@@ -320,23 +376,8 @@ export default function MePage() {
         />
 
         <div
-          className={`relative mt-5 grid grid-cols-1 gap-2 ${
-            profile.avatar_url ? "min-[390px]:grid-cols-2" : ""
-          }`}
+          className={profile.avatar_url ? "relative mt-5 grid grid-cols-1 gap-2" : "hidden"}
         >
-          <button
-            type="button"
-            className="btn-secondary min-w-0 gap-2 bg-white/85 px-3 text-sm"
-            disabled={avatarBusy}
-            onClick={() => avatarInputRef.current?.click()}
-          >
-            <CameraIcon className="h-4 w-4" aria-hidden="true" />
-            {avatarBusy
-              ? t("commonLoading")
-              : profile.avatar_url
-                ? t("meAvatarChange")
-                : t("meAvatarUpload")}
-          </button>
           {profile.avatar_url ? (
             <button
               type="button"
@@ -360,38 +401,6 @@ export default function MePage() {
           <p className="min-w-0 break-words">{t("meIdentitySaved")}</p>
         </div>
       </section>
-
-      <nav className="grid grid-cols-3 gap-2" aria-label={t("meTitle")}>
-        <Link
-          href="/settings"
-          className="group flex min-w-0 flex-col items-center justify-center gap-1.5 rounded-2xl bg-white px-2 py-3 text-center ring-1 ring-slate-100 transition hover:-translate-y-0.5 hover:ring-brand-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-300"
-        >
-          <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-amber-50 text-amber-700">
-            <Cog6ToothIcon className="h-6 w-6" aria-hidden="true" />
-          </span>
-          <span className="min-w-0 max-w-full truncate text-xs font-semibold text-slate-700">
-            {t("chatSettings")}
-          </span>
-        </Link>
-        <Link
-          href="/members"
-          className="group flex min-w-0 flex-col items-center justify-center gap-1.5 rounded-2xl bg-white px-2 py-3 text-center ring-1 ring-slate-100 transition hover:-translate-y-0.5 hover:ring-brand-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-300"
-        >
-          <UsersIcon className="h-10 w-10" />
-          <span className="min-w-0 max-w-full truncate text-xs font-semibold text-slate-700">
-            {t("chatMembers")}
-          </span>
-        </Link>
-        <Link
-          href="/schedule"
-          className="group flex min-w-0 flex-col items-center justify-center gap-1.5 rounded-2xl bg-white px-2 py-3 text-center ring-1 ring-slate-100 transition hover:-translate-y-0.5 hover:ring-brand-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-300"
-        >
-          <CalendarDaysIcon className="h-10 w-10" />
-          <span className="min-w-0 max-w-full truncate text-xs font-semibold text-slate-700">
-            {t("scheduleTitle")}
-          </span>
-        </Link>
-      </nav>
 
       <div className="mt-7 space-y-6">
         <DashboardSection

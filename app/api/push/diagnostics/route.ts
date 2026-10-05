@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { rejectMismatchedOrigin } from "@/lib/apiSecurity";
+import { badRequest, readJsonBody, rejectMismatchedOrigin } from "@/lib/apiSecurity";
 import { validateMemberCredentials } from "@/lib/memberAuthServer";
 import { summarizePushEndpoint } from "@/lib/pushEndpointServer";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
@@ -8,14 +8,26 @@ import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET(request: Request) {
+export async function POST(request: Request) {
   const originError = rejectMismatchedOrigin(request);
   if (originError) return originError;
 
-  const url = new URL(request.url);
-  const memberId = url.searchParams.get("memberId");
-  const memberToken = url.searchParams.get("memberToken");
+  let body: { memberId?: unknown; memberToken?: unknown };
+  try {
+    body = await readJsonBody(request);
+    if (!body || typeof body !== "object") return badRequest(null);
+  } catch (error) {
+    return badRequest(error);
+  }
 
+  try {
+    return await diagnostics(body.memberId, body.memberToken);
+  } catch {
+    return NextResponse.json({ error: "diagnostics_failed" }, { status: 500 });
+  }
+}
+
+async function diagnostics(memberId: unknown, memberToken: unknown) {
   const member = await validateMemberCredentials(memberId, memberToken);
   if (!member) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -64,5 +76,5 @@ export async function GET(request: Request) {
     }),
     presence: presence ?? null,
     memberId: member.member_id,
-  });
+  }, { headers: { "Cache-Control": "private, no-store" } });
 }

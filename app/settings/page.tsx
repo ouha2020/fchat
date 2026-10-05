@@ -24,6 +24,7 @@ import {
   validateMember,
 } from "@/lib/familyService";
 import { LANGUAGE_OPTIONS } from "@/lib/i18n";
+import { captureMessageCacheContext, isMessageContextCurrent } from "@/lib/messageCacheLifecycle";
 import {
   fetchPushDiagnostics,
   pushNotificationErrorMessage,
@@ -59,13 +60,15 @@ export default function SettingsPage() {
 
   async function loadDiagnostics() {
     if (!session) return;
+    const context = captureMessageCacheContext(session);
     setDiagLoading(true);
     try {
-      setDiagnostics(await fetchPushDiagnostics(session));
+      const result = await fetchPushDiagnostics(session);
+      if (isMessageContextCurrent(context)) setDiagnostics(result);
     } catch {
       // ignore
     } finally {
-      setDiagLoading(false);
+      if (isMessageContextCurrent(context)) setDiagLoading(false);
     }
   }
 
@@ -87,7 +90,6 @@ export default function SettingsPage() {
         }
       }
       if (!shown) {
-        // eslint-disable-next-line no-new
         new Notification(t("settingsPushTitle"), {
           body: t("settingsPushDiagnosticsTestSuccess"),
           icon: "/icon.png",
@@ -120,6 +122,8 @@ export default function SettingsPage() {
       };
     }
     const localSession = local;
+    const context = captureMessageCacheContext(local);
+    const isCurrent = () => !cancelled && isMessageContextCurrent(context);
 
     async function run() {
       try {
@@ -127,7 +131,7 @@ export default function SettingsPage() {
           localSession.member_id,
           localSession.member_token,
         );
-        if (cancelled) return;
+        if (!isCurrent()) return;
         if (!fresh) {
           clearSession();
           setSession(null);
@@ -138,7 +142,7 @@ export default function SettingsPage() {
         saveSession(fresh);
         setSession(fresh);
         const row = await fetchFamilySettings(fresh);
-        if (cancelled) return;
+        if (!isCurrent()) return;
         if (row) {
           setJoinOn(row.join_enabled);
           const active = loadSession();
@@ -151,11 +155,11 @@ export default function SettingsPage() {
           }
         }
       } catch (err) {
-        if (!cancelled) {
+        if (isCurrent()) {
           setLoadError(humanizeError(err, language) || t("chatLoadFailed"));
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (isCurrent()) setLoading(false);
       }
     }
 
@@ -177,7 +181,10 @@ export default function SettingsPage() {
       toast.info(t("settingsAdminOnly"));
       return;
     }
+    const context = captureMessageCacheContext(session);
+    if (!isMessageContextCurrent(context)) return;
     const { data } = await getSupabaseAuth().auth.getSession();
+    if (!isMessageContextCurrent(context)) return;
     if (!data.session) {
       toast.info(t("authNeedOwnerLogin"));
       router.push("/login");
@@ -187,21 +194,23 @@ export default function SettingsPage() {
     try {
       await fn();
     } catch (err) {
-      toast.error(humanizeError(err, language));
+      if (isMessageContextCurrent(context)) toast.error(humanizeError(err, language));
     } finally {
-      setBusy(null);
+      if (isMessageContextCurrent(context)) setBusy(null);
     }
   }
 
   async function loadReminderHealth() {
     if (!session?.is_admin) return;
+    const context = captureMessageCacheContext(session);
     setReminderHealthLoading(true);
     try {
-      setReminderHealth(await getScheduleReminderHealth(session));
+      const result = await getScheduleReminderHealth(session);
+      if (isMessageContextCurrent(context)) setReminderHealth(result);
     } catch (err) {
-      toast.error(humanizeError(err, language));
+      if (isMessageContextCurrent(context)) toast.error(humanizeError(err, language));
     } finally {
-      setReminderHealthLoading(false);
+      if (isMessageContextCurrent(context)) setReminderHealthLoading(false);
     }
   }
 
@@ -210,18 +219,21 @@ export default function SettingsPage() {
       toast.info(t("settingsAdminOnly"));
       return;
     }
+    const context = captureMessageCacheContext(session);
     const { data } = await getSupabaseAuth().auth.getSession();
+    if (!isMessageContextCurrent(context)) return;
     if (!data.session) {
       toast.info(t("authNeedOwnerLogin"));
       router.push("/login");
       return;
     }
     const result = await dialog.accountPassword();
-    if (!result) return;
+    if (!result || !isMessageContextCurrent(context)) return;
 
     setBusy("changeAccountPassword");
     try {
       await updateAccountPassword(result.newPassword);
+      if (!isMessageContextCurrent(context)) return;
       toast.success(t("settingsAccountPasswordChanged"));
       await getSupabaseAuth().auth.signOut();
       router.replace("/login?reset=1");
@@ -234,15 +246,17 @@ export default function SettingsPage() {
 
   async function handleRename() {
     if (!session) return;
+    const context = captureMessageCacheContext(session);
     const newName = await dialog.prompt({
       title: t("settingsRenameFamily"),
       message: t("settingsRenamePrompt"),
       defaultValue: session.family_name,
       validate: (v) => (!v.trim() ? t("error_family_name_required") : null),
     });
-    if (!newName || !newName.trim()) return;
+    if (!newName || !newName.trim() || !isMessageContextCurrent(context)) return;
     await withOwnerAccount(t("settingsRenameFamily"), async () => {
       await updateFamilyNameWithAccount(session, newName.trim());
+      if (!isMessageContextCurrent(context)) return;
       const next = updateSession({ family_name: newName.trim() });
       if (next) setSession(next);
     });
@@ -250,14 +264,16 @@ export default function SettingsPage() {
 
   async function handleResetCode() {
     if (!session) return;
+    const context = captureMessageCacheContext(session);
     const ok = await dialog.confirm({
       title: t("settingsResetCode"),
       message: t("settingsResetCodeConfirm"),
       danger: true,
     });
-    if (!ok) return;
+    if (!ok || !isMessageContextCurrent(context)) return;
     await withOwnerAccount(t("settingsResetCode"), async () => {
       const newCode = await resetFamilyCodeWithAccount(session);
+      if (!isMessageContextCurrent(context)) return;
       const next = updateSession({ family_code: newCode });
       if (next) setSession(next);
     });
@@ -278,18 +294,22 @@ export default function SettingsPage() {
 
   async function handleToggleJoin(next: boolean) {
     if (!session) return;
+    const context = captureMessageCacheContext(session);
     await withOwnerAccount(next ? t("settingsEnableJoin") : t("settingsDisableJoin"), async () => {
       await setJoinEnabledWithAccount(session, next);
+      if (!isMessageContextCurrent(context)) return;
       setJoinOn(next);
     });
   }
 
   async function handleSwitch() {
+    if (!session) return;
+    const context = captureMessageCacheContext(session);
     const ok = await dialog.confirm({
       title: t("settingsSwitchFamily"),
       message: t("settingsSwitchConfirm"),
     });
-    if (!ok) return;
+    if (!ok || !isMessageContextCurrent(context)) return;
     clearSession();
     await getSupabaseAuth().auth.signOut();
     router.replace("/");

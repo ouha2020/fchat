@@ -27,7 +27,8 @@ function pickMimeType(): string {
   return "";
 }
 
-export async function startRecording(): Promise<RecordingHandle> {
+export async function startRecording(signal?: AbortSignal): Promise<RecordingHandle> {
+  if (signal?.aborted) throw new Error("recording_cancelled");
   if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
     throw new Error("recording_unsupported");
   }
@@ -36,6 +37,10 @@ export async function startRecording(): Promise<RecordingHandle> {
   }
 
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  if (signal?.aborted) {
+    stream.getTracks().forEach((track) => track.stop());
+    throw new Error("recording_cancelled");
+  }
   const mimeType = pickMimeType();
   let recorder: MediaRecorder;
   try {
@@ -60,6 +65,7 @@ export async function startRecording(): Promise<RecordingHandle> {
   const startedAt = Date.now();
 
   function teardown() {
+    signal?.removeEventListener("abort", cancel);
     stream.getTracks().forEach((track) => track.stop());
   }
 
@@ -129,6 +135,15 @@ export async function startRecording(): Promise<RecordingHandle> {
     recorder.stop();
   }
 
+  function cancel() {
+    if (stopped) return;
+    cancelled = true;
+    teardown();
+    requestStop();
+  }
+
+  signal?.addEventListener("abort", cancel, { once: true });
+
   return {
     startedAt,
     stop(): Promise<RecordingResult> {
@@ -144,11 +159,7 @@ export async function startRecording(): Promise<RecordingHandle> {
       requestStop();
       return stopPromise;
     },
-    cancel() {
-      cancelled = true;
-      teardown();
-      requestStop();
-    },
+    cancel,
   };
 }
 

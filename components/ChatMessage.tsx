@@ -102,12 +102,13 @@ function MediaProgressRing({
   );
 }
 
-interface Props {
+export interface ChatMessageProps {
   session: LocalSession;
   message: Message;
   sender: FamilyMember | null;
   recipient?: FamilyMember | null;
   isMine: boolean;
+  mediaActive?: boolean;
   highlighted?: boolean;
   assistantCard?: AssistantActionCard | null;
   assistantCardSubmitting?: boolean;
@@ -135,6 +136,7 @@ export default function ChatMessage({
   sender,
   recipient,
   isMine,
+  mediaActive = true,
   highlighted,
   assistantCard,
   assistantCardSubmitting,
@@ -148,7 +150,7 @@ export default function ChatMessage({
   onRequestActions,
   onReplayEffect,
   onRetryUpload,
-}: Props) {
+}: ChatMessageProps) {
   const { language, t } = useLanguage();
   const actionHandlers = useLongPress(
     (point) => onRequestActions?.(message, point),
@@ -267,7 +269,7 @@ export default function ChatMessage({
     <div
       className={`flex w-full gap-2 ${isMine ? "flex-row-reverse" : "flex-row"}`}
     >
-      <MemberAvatar session={session} sender={sender} isMine={isMine} />
+      <MemberAvatar session={session} sender={sender} isMine={isMine} mediaActive={mediaActive} />
       <div
         className={`flex ${messageBodyWidthClass} flex-col gap-1 ${
           isMine ? "items-end" : "items-start"
@@ -297,6 +299,7 @@ export default function ChatMessage({
           message={message}
           session={session}
           isMine={isMine}
+          mediaActive={mediaActive}
           highlighted={highlighted}
           actionHandlers={actionHandlers}
           actionClass={actionClass}
@@ -317,15 +320,18 @@ function MemberAvatar({
   session,
   sender,
   isMine,
+  mediaActive,
 }: {
   session: LocalSession;
   sender: FamilyMember | null;
   isMine: boolean;
+  mediaActive: boolean;
 }) {
   const { t } = useLanguage();
   const avatar = (
     <MemberAvatarCircle
       session={session}
+      mediaActive={mediaActive}
       avatarRef={sender?.avatar_url ?? null}
       name={sender?.nickname ?? "?"}
       className={`h-8 w-8 rounded-full text-sm font-semibold sm:h-9 sm:w-9 sm:text-base ${
@@ -417,6 +423,7 @@ function Bubble({
   message,
   session,
   isMine,
+  mediaActive,
   isPrivate,
   highlighted,
   actionHandlers,
@@ -427,6 +434,7 @@ function Bubble({
   message: Message;
   session: LocalSession;
   isMine: boolean;
+  mediaActive: boolean;
   isPrivate: boolean;
   highlighted?: boolean;
   actionHandlers: ReturnType<typeof useLongPress>;
@@ -450,7 +458,7 @@ function Bubble({
   const imageMedia = useCachedImage(
     session,
     message.message_type === "image" ? message.image_url : null,
-    { messageId: message.id },
+    { messageId: message.id, enabled: mediaActive },
   );
   const [audioRefreshKey, setAudioRefreshKey] = useState(0);
   const audioMedia = useResolvedMedia(
@@ -460,6 +468,7 @@ function Bubble({
       messageId: message.id,
       refreshKey: audioRefreshKey,
       forceRefresh: audioRefreshKey > 0,
+      enabled: mediaActive,
     },
   );
   const imageUrl = imageMedia.url;
@@ -722,7 +731,6 @@ function WhisperInlineLabel({ className = "" }: { className?: string }) {
 
 function WhisperIcon() {
   return (
-    // eslint-disable-next-line @next/next/no-img-element
     <LockClosedIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
   );
 }

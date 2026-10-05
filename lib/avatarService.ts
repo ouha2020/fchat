@@ -1,27 +1,18 @@
 import type { LocalSession } from "@/lib/authLocal";
-import { isSafeMediaRef } from "@/lib/mediaRefs";
 import { getSupabase } from "@/lib/supabaseClient";
+import { uploadMediaViaApi } from "@/lib/uploadClient";
 
 export async function uploadAvatar(
   session: LocalSession,
   file: File,
+  signal?: AbortSignal,
 ): Promise<string> {
   const form = new FormData();
   form.set("memberId", session.member_id);
   form.set("memberToken", session.member_token);
   form.set("file", file);
 
-  const res = await fetch("/api/upload/avatar", {
-    method: "POST",
-    body: form,
-  });
-  const payload = (await res.json().catch(() => null)) as
-    | { url?: string; error?: string }
-    | null;
-  if (!res.ok || !payload?.url || !isSafeMediaRef(payload.url)) {
-    throw new Error(payload?.error ?? "avatar_upload_failed");
-  }
-  return payload.url;
+  return uploadMediaViaApi("/api/upload/avatar", form, { signal });
 }
 
 export async function updateMemberAvatar(

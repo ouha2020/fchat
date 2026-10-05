@@ -1,8 +1,14 @@
 "use client";
 
 import type { LocalSession } from "@/lib/authLocal";
-import { normalizeMessage } from "@/lib/messageService";
+import { normalizeMessage } from "@/lib/messageNormalization";
 import type { Message } from "@/types/message";
+import { mergeMessagesById } from "@/lib/messageList";
+import {
+  assertMessageContext, captureMessageCacheContext, currentMessageCacheVersion,
+  invalidateMessageCacheContext, isMessageContextCurrent, watchMessageContext,
+  type MessageCacheContext,
+} from "@/lib/messageCacheLifecycle";
 
 const DB_NAME = "family-chat-cache";
 const DB_VERSION = 1;
@@ -12,6 +18,7 @@ const MIN_RETAINED_MESSAGES = 100;
 const MAX_RETAINED_MESSAGES = 1000;
 
 export interface MessageSyncState {
+  cacheVersion?: string;
   ownerKey: string;
   familyId: string;
   memberId: string;
@@ -25,6 +32,7 @@ export interface MessageSyncState {
 }
 
 interface CachedMessageRecord extends Message {
+  cacheVersion: string;
   cacheKey: string;
   ownerKey: string;
 }
@@ -50,79 +58,93 @@ export function messageOwnerKey(session: Pick<LocalSession, "family_id" | "membe
 export async function loadCachedMessages(
   session: LocalSession,
   limit = MIN_RETAINED_MESSAGES,
+  context = captureMessageCacheContext(session),
 ): Promise<Message[]> {
+  assertMessageContext(context);
+  if (!context.version) return [];
   const db = await openDb();
+  assertMessageContext(context);
   const ownerKey = messageOwnerKey(session);
   const records = await readOwnerMessages(db, ownerKey);
-  return records
+  assertMessageContext(context);
+  const current = records.filter((record) => record.cacheVersion === context.version);
+  return current
     .map(recordToMessage)
     .sort(compareCreatedAtAsc)
-    .slice(Math.max(0, records.length - limit));
+    .slice(Math.max(0, current.length - limit));
 }
 
-export async function getSyncState(session: LocalSession): Promise<MessageSyncState | null> {
+export async function getSyncState(session: LocalSession, context = captureMessageCacheContext(session)): Promise<MessageSyncState | null> {
+  assertMessageContext(context);
+  if (!context.version) return null;
   const db = await openDb();
+  assertMessageContext(context);
   const tx = db.transaction(SYNC_STORE, "readonly");
-  return requestToPromise<MessageSyncState | undefined>(
+  const state = await requestToPromise<MessageSyncState | undefined>(
     tx.objectStore(SYNC_STORE).get(messageOwnerKey(session)),
-  ).then((state) => state ?? null);
+  );
+  assertMessageContext(context);
+  return state?.cacheVersion === context.version ? state : null;
 }
 
-export async function registerCacheOpen(session: LocalSession): Promise<MessageSyncState> {
+export async function registerCacheOpen(session: LocalSession, context = captureMessageCacheContext(session)): Promise<MessageSyncState> {
+  assertMessageContext(context);
+  if (!context.version) return defaultSyncState(session);
   const db = await openDb();
+  assertMessageContext(context);
   const ownerKey = messageOwnerKey(session);
   let next = defaultSyncState(session);
   await runTransaction(db, [SYNC_STORE], "readwrite", (tx) => {
     const store = tx.objectStore(SYNC_STORE);
     const request = store.get(ownerKey);
     request.onsuccess = () => {
-      const existing = request.result as MessageSyncState | undefined;
+      if (!guardTransaction(tx, context)) return;
+      const raw = request.result as MessageSyncState | undefined;
+      const existing = raw?.cacheVersion === context.version ? raw : undefined;
       next = {
         ...defaultSyncState(session),
         ...existing,
+        cacheVersion: context.version!,
         openCount: (existing?.openCount ?? 0) + 1,
         updatedAt: new Date().toISOString(),
       };
       store.put(next);
     };
-  });
+  }, context);
   return next;
 }
 
 export async function upsertMessagesToCache(
   session: LocalSession,
   messages: Message[],
+  context = captureMessageCacheContext(session),
 ): Promise<Message[]> {
-  return upsertMessagesAndSyncState(session, messages, undefined);
+  return upsertMessagesAndSyncState(session, messages, undefined, context);
 }
 
 export async function upsertMessagesAndSyncState(
   session: LocalSession,
   messages: Message[],
   patch?: SyncStatePatch,
+  context = captureMessageCacheContext(session),
 ): Promise<Message[]> {
+  assertMessageContext(context);
+  if (!context.version) return [];
   const db = await openDb();
+  assertMessageContext(context);
   const ownerKey = messageOwnerKey(session);
   await runTransaction(db, [MESSAGE_STORE, SYNC_STORE], "readwrite", (tx) => {
     const messageStore = tx.objectStore(MESSAGE_STORE);
     const stateStore = tx.objectStore(SYNC_STORE);
 
-    messages.forEach((message) => {
-      const normalized = normalizeMessage(message);
-      const record: CachedMessageRecord = {
-        ...normalized,
-        ownerKey,
-        cacheKey: `${ownerKey}:${normalized.id}`,
-      };
-      messageStore.put(record);
-    });
-
-    const prune = () => queuePruneOwnerMessages(messageStore, ownerKey);
-
-    if (patch) {
+    const finishWrites = () => {
+      const prune = () => queuePruneOwnerMessages(messageStore, ownerKey, tx, context);
+      if (!patch) { prune(); return; }
       const stateRequest = stateStore.get(ownerKey);
       stateRequest.onsuccess = () => {
-        const existing = stateRequest.result as MessageSyncState | undefined;
+        if (!guardTransaction(tx, context)) return;
+        const raw = stateRequest.result as MessageSyncState | undefined;
+        const existing = raw?.cacheVersion === context.version ? raw : undefined;
         const patchedLastSyncedSeq =
           patch.lastSyncedSeq === undefined
             ? existing?.lastSyncedSeq ?? null
@@ -131,30 +153,53 @@ export async function upsertMessagesAndSyncState(
           ...defaultSyncState(session),
           ...existing,
           ...patch,
+          cacheVersion: context.version!,
           lastSyncedSeq: patchedLastSyncedSeq,
           updatedAt: new Date().toISOString(),
         };
         stateStore.put(next);
         prune();
       };
-    } else {
-      prune();
-    }
-  });
-  return loadCachedMessages(session);
+    };
+    let pending = messages.length;
+    if (!pending) finishWrites();
+    messages.forEach((message) => {
+      const normalized = normalizeMessage(message);
+      const cacheKey = `${ownerKey}:${normalized.id}`;
+      const request = messageStore.get(cacheKey);
+      request.onsuccess = () => {
+        if (!guardTransaction(tx, context)) return;
+        const current = request.result as CachedMessageRecord | undefined;
+        const merged = current?.cacheVersion === context.version
+          ? mergeMessagesById([current], [normalized])[0] : normalized;
+        const { local_preview_url: _preview, upload_status: _status, upload_progress: _progress, ...persisted } = merged;
+        messageStore.put({ ...persisted, ownerKey, cacheKey, cacheVersion: context.version! } satisfies CachedMessageRecord);
+        pending -= 1;
+        if (!pending) finishWrites();
+      };
+    });
+  }, context);
+  return loadCachedMessages(session, MIN_RETAINED_MESSAGES, context);
 }
 
-export async function clearMessageCacheForSession(session: LocalSession): Promise<void> {
+export async function clearMessageCacheForSession(session: LocalSession, alreadyInvalidated = false): Promise<void> {
+  if (!alreadyInvalidated) invalidateMessageCacheContext(session);
   const db = await openDb();
   const ownerKey = messageOwnerKey(session);
   await runTransaction(db, [MESSAGE_STORE, SYNC_STORE], "readwrite", (tx) => {
     const messageStore = tx.objectStore(MESSAGE_STORE);
     const request = messageStore.index("ownerKey").getAll(IDBKeyRange.only(ownerKey));
     request.onsuccess = () => {
+      const version = currentMessageCacheVersion(session);
       (request.result as CachedMessageRecord[]).forEach((record) =>
-        messageStore.delete(record.cacheKey),
+        { if (!version || record.cacheVersion !== version) messageStore.delete(record.cacheKey); },
       );
-      tx.objectStore(SYNC_STORE).delete(ownerKey);
+      const stateStore = tx.objectStore(SYNC_STORE);
+      const stateRequest = stateStore.get(ownerKey);
+      stateRequest.onsuccess = () => {
+        const state = stateRequest.result as MessageSyncState | undefined;
+        if (state && state.cacheVersion !== currentMessageCacheVersion(session)) stateStore.delete(ownerKey);
+      };
     };
   });
 }
@@ -203,7 +248,7 @@ function defaultSyncState(session: LocalSession): MessageSyncState {
 }
 
 function recordToMessage(record: CachedMessageRecord): Message {
-  const { cacheKey: _cacheKey, ownerKey: _ownerKey, ...message } = record;
+  const { cacheKey: _cacheKey, ownerKey: _ownerKey, cacheVersion: _version, ...message } = record;
   return normalizeMessage(message);
 }
 
@@ -227,8 +272,12 @@ async function openDb(): Promise<IDBDatabase> {
           db.createObjectStore(SYNC_STORE, { keyPath: "ownerKey" });
         }
       };
-      request.onerror = () => reject(request.error ?? new Error("indexeddb_open_failed"));
-      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => { dbPromise = null; reject(request.error ?? new Error("indexeddb_open_failed")); };
+      request.onblocked = () => { dbPromise = null; reject(new Error("indexeddb_open_blocked")); };
+      request.onsuccess = () => {
+        request.result.onversionchange = () => { request.result.close(); dbPromise = null; };
+        resolve(request.result);
+      };
     });
   }
   return dbPromise;
@@ -254,10 +303,17 @@ async function readOwnerMessagesFromStore(
 function queuePruneOwnerMessages(
   store: IDBObjectStore,
   ownerKey: string,
+  tx: IDBTransaction,
+  context: MessageCacheContext,
 ): void {
   const request = store.index("ownerKey").getAll(IDBKeyRange.only(ownerKey));
   request.onsuccess = () => {
-    const records = request.result as CachedMessageRecord[];
+    if (!guardTransaction(tx, context)) return;
+    const records = (request.result as CachedMessageRecord[]).filter((record) => {
+      if (record.cacheVersion === context.version) return true;
+      store.delete(record.cacheKey);
+      return false;
+    });
     if (records.length <= MAX_RETAINED_MESSAGES) return;
 
     records
@@ -286,12 +342,21 @@ function runTransaction(
   stores: string[],
   mode: IDBTransactionMode,
   queue: (tx: IDBTransaction) => void,
+  context?: MessageCacheContext,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
+    if (context) assertMessageContext(context);
     const tx = db.transaction(stores, mode);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error ?? new Error("indexeddb_transaction_failed"));
-    tx.onabort = () => reject(tx.error ?? new Error("indexeddb_transaction_aborted"));
-    queue(tx);
+    const unwatch = context ? watchMessageContext(context, () => { try { tx.abort(); } catch { /* already settled */ } }) : () => {};
+    tx.oncomplete = () => { unwatch(); if (context && !isMessageContextCurrent(context)) reject(new Error("message_operation_cancelled")); else resolve(); };
+    tx.onerror = () => { unwatch(); reject(tx.error ?? new Error("indexeddb_transaction_failed")); };
+    tx.onabort = () => { unwatch(); reject(new Error(context && !isMessageContextCurrent(context) ? "message_operation_cancelled" : "indexeddb_transaction_aborted")); };
+    try { queue(tx); } catch (error) { unwatch(); tx.abort(); reject(error); }
   });
+}
+
+function guardTransaction(tx: IDBTransaction, context: MessageCacheContext): boolean {
+  if (isMessageContextCurrent(context)) return true;
+  try { tx.abort(); } catch { /* An invalidation listener may already have aborted it. */ }
+  return false;
 }

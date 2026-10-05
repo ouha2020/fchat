@@ -37,6 +37,36 @@ describe("sortMessagesByCreatedAt", () => {
 });
 
 describe("mergeMessagesById", () => {
+  it("keeps 1000 loaded rows when a recent cache snapshot and a new message arrive", () => {
+    const history = Array.from({ length: 1000 }, (_, index) => makeMessage({ id: `history-${index}` }));
+    const incoming = [...history.slice(-100), makeMessage({ id: "sent" })];
+    const merged = mergeMessagesById(history, incoming);
+    expect(merged).toHaveLength(1001);
+    expect(new Set(merged.map((row) => row.id))).toEqual(new Set([...history.map((row) => row.id), "sent"]));
+  });
+
+  it("does not restore recalled content from a late snapshot", () => {
+    const deleted = makeMessage({ id: "recall", deleted_at: "2026-07-01T00:01:00Z", content: null });
+    expect(mergeMessagesById([deleted], [makeMessage({ id: deleted.id })])[0]).toEqual(deleted);
+  });
+
+  it("rejects an older edited snapshot", () => {
+    const current = makeMessage({ id: "edit", updated_at: "2026-07-01T00:01:00Z", content: "current" });
+    expect(mergeMessagesById([current], [makeMessage({ id: current.id })])[0]).toEqual(current);
+  });
+
+  it("keeps a pending upload's preview and status across server snapshots", () => {
+    const upload = makeMessage({ id: "pending", upload_status: "failed", local_preview_url: "blob:synthetic", upload_progress: 0.5 });
+    expect(mergeMessagesById([upload], [makeMessage({ id: upload.id })])[0]).toMatchObject({
+      upload_status: "failed", local_preview_url: "blob:synthetic", upload_progress: 0.5,
+    });
+  });
+
+  it("accepts authoritative seq metadata even when an optimistic timestamp is later", () => {
+    const optimistic = makeMessage({ id: "sent", updated_at: "2026-07-01T00:01:00Z" });
+    const server = makeMessage({ id: optimistic.id, family_seq: 42 });
+    expect(mergeMessagesById([optimistic], [server])[0]).toEqual(server);
+  });
   it("unions distinct messages and sorts the result", () => {
     const a = makeMessage({ id: "a", created_at: "2026-07-01T01:00:00.000Z" });
     const b = makeMessage({ id: "b", created_at: "2026-07-01T02:00:00.000Z" });
